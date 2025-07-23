@@ -14,5 +14,5 @@ other_scripts
 model/
 data/
 *.whl
-r2_gaussian/submodules/
 *.png
+r2_gaussian/submodules/simple-knn
