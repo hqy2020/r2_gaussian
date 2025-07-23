@@ -1,13 +1,11 @@
-#
+###############################################################
 # Copyright (C) 2023, Inria
 # GRAPHDECO research group, https://team.inria.fr/graphdeco
 # All rights reserved.
 #
-# This software is free for non-commercial, research and evaluation use
-# under the terms of the LICENSE.md file.
-#
-# For inquiries contact  george.drettakis@inria.fr
-#
+# 本软件仅限非商业、科研和评估用途，具体条款见 LICENSE.md 文件。
+# 如有疑问请联系 george.drettakis@inria.fr
+###############################################################
 
 import os
 import os.path as osp
@@ -19,16 +17,18 @@ from argparse import ArgumentParser
 import numpy as np
 import yaml
 
+# 添加项目路径，导入自定义模块
+
 sys.path.append("./")
-from r2_gaussian.arguments import ModelParams, OptimizationParams, PipelineParams
-from r2_gaussian.gaussian import GaussianModel, render, query, initialize_gaussian
-from r2_gaussian.utils.general_utils import safe_state
-from r2_gaussian.utils.cfg_utils import load_config
-from r2_gaussian.utils.log_utils import prepare_output_and_logger
-from r2_gaussian.dataset import Scene
-from r2_gaussian.utils.loss_utils import l1_loss, ssim, tv_3d_loss
-from r2_gaussian.utils.image_utils import metric_vol, metric_proj
-from r2_gaussian.utils.plot_utils import show_two_slice
+from r2_gaussian.arguments import ModelParams, OptimizationParams, PipelineParams  # 参数定义
+from r2_gaussian.gaussian import GaussianModel, render, query, initialize_gaussian  # 高斯模型相关
+from r2_gaussian.utils.general_utils import safe_state  # 随机种子等系统状态
+from r2_gaussian.utils.cfg_utils import load_config  # 配置文件加载
+from r2_gaussian.utils.log_utils import prepare_output_and_logger  # 日志与输出
+from r2_gaussian.dataset import Scene  # 数据集场景
+from r2_gaussian.utils.loss_utils import l1_loss, ssim, tv_3d_loss  # 损失函数
+from r2_gaussian.utils.image_utils import metric_vol, metric_proj  # 评估指标
+from r2_gaussian.utils.plot_utils import show_two_slice  # 可视化工具
 
 
 def training(
@@ -41,12 +41,15 @@ def training(
     checkpoint_iterations,
     checkpoint,
 ):
+    """
+    训练主循环，负责高斯模型的初始化、损失计算、反向传播、稠密化与剪枝、保存模型和断点，以及日志记录。
+    """
     first_iter = 0
 
-    # Set up dataset
+    # 初始化数据集场景
     scene = Scene(dataset, shuffle=False)
 
-    # Set up some parameters
+    # 读取扫描仪配置和体素参数
     scanner_cfg = scene.scanner_cfg
     bbox = scene.bbox
     volume_to_world = max(scanner_cfg["sVoxel"])
@@ -59,6 +62,7 @@ def training(
     scale_bound = None
     if dataset.scale_min > 0 and dataset.scale_max > 0:
         scale_bound = np.array([dataset.scale_min, dataset.scale_max]) * volume_to_world
+    # 查询函数，用于体素采样
     queryfunc = lambda x: query(
         x,
         scanner_cfg["offOrigin"],
@@ -67,17 +71,18 @@ def training(
         pipe,
     )
 
-    # Set up Gaussians
+    # 初始化高斯模型
     gaussians = GaussianModel(scale_bound)
     initialize_gaussian(gaussians, dataset, None)
     scene.gaussians = gaussians
     gaussians.training_setup(opt)
+    # 加载断点（如有）
     if checkpoint is not None:
         (model_params, first_iter) = torch.load(checkpoint)
         gaussians.restore(model_params, opt)
         print(f"Load checkpoint {osp.basename(checkpoint)}.")
 
-    # Set up loss
+    # 设置损失函数（是否使用 TV 损失）
     use_tv = opt.lambda_tv > 0
     if use_tv:
         print("Use total variation loss")
@@ -85,7 +90,7 @@ def training(
         tv_vol_nVoxel = torch.tensor([tv_vol_size, tv_vol_size, tv_vol_size])
         tv_vol_sVoxel = torch.tensor(scanner_cfg["dVoxel"]) * tv_vol_nVoxel
 
-    # Train
+    # 训练主循环
     iter_start = torch.cuda.Event(enable_timing=True)
     iter_end = torch.cuda.Event(enable_timing=True)
     ckpt_save_path = osp.join(scene.model_path, "ckpt")
@@ -97,15 +102,15 @@ def training(
     for iteration in range(first_iter, opt.iterations + 1):
         iter_start.record()
 
-        # Update learning rate
+        # 更新学习率
         gaussians.update_learning_rate(iteration)
 
-        # Get one camera for training
+        # 随机选择一个训练视角
         if not viewpoint_stack:
             viewpoint_stack = scene.getTrainCameras().copy()
         viewpoint_cam = viewpoint_stack.pop(randint(0, len(viewpoint_stack) - 1))
 
-        # Render X-ray projection
+        # 渲染 X 射线投影
         render_pkg = render(viewpoint_cam, gaussians, pipe)
         image, viewspace_point_tensor, visibility_filter, radii = (
             render_pkg["render"],
@@ -114,19 +119,19 @@ def training(
             render_pkg["radii"],
         )
 
-        # Compute loss
+        # 计算损失
         gt_image = viewpoint_cam.original_image.cuda()
         loss = {"total": 0.0}
-        render_loss = l1_loss(image, gt_image)
+        render_loss = l1_loss(image, gt_image)  # 投影 L1 损失
         loss["render"] = render_loss
         loss["total"] += loss["render"]
         if opt.lambda_dssim > 0:
-            loss_dssim = 1.0 - ssim(image, gt_image)
+            loss_dssim = 1.0 - ssim(image, gt_image)  # DSSIM 损失
             loss["dssim"] = loss_dssim
             loss["total"] = loss["total"] + opt.lambda_dssim * loss_dssim
-        # 3D TV loss
+        # 3D TV 损失
         if use_tv:
-            # Randomly get the tiny volume center
+            # 随机选取一个小体积中心
             tv_vol_center = (bbox[0] + tv_vol_sVoxel / 2) + (
                 bbox[1] - tv_vol_sVoxel - bbox[0]
             ) * torch.rand(3)
@@ -141,17 +146,19 @@ def training(
             loss["tv"] = loss_tv
             loss["total"] = loss["total"] + opt.lambda_tv * loss_tv
 
+        # 反向传播
         loss["total"].backward()
 
         iter_end.record()
         torch.cuda.synchronize()
 
         with torch.no_grad():
-            # Adaptive control
+            # 自适应控制：更新高斯半径和统计
             gaussians.max_radii2D[visibility_filter] = torch.max(
                 gaussians.max_radii2D[visibility_filter], radii[visibility_filter]
             )
             gaussians.add_densification_stats(viewspace_point_tensor, visibility_filter)
+            # 高斯点稠密化与剪枝
             if iteration < opt.densify_until_iter:
                 if (
                     iteration > opt.densify_from_iter
@@ -171,17 +178,17 @@ def training(
                     "No Gaussian left. Change adaptive control hyperparameters!"
                 )
 
-            # Optimization
+            # 优化器更新
             if iteration < opt.iterations:
                 gaussians.optimizer.step()
                 gaussians.optimizer.zero_grad(set_to_none=True)
 
-            # Save gaussians
+            # 保存高斯模型
             if iteration in saving_iterations or iteration == opt.iterations:
                 tqdm.write(f"[ITER {iteration}] Saving Gaussians")
                 scene.save(iteration, queryfunc)
 
-            # Save checkpoints
+            # 保存断点
             if iteration in checkpoint_iterations:
                 tqdm.write(f"[ITER {iteration}] Saving Checkpoint")
                 torch.save(
@@ -189,7 +196,7 @@ def training(
                     ckpt_save_path + "/chkpnt" + str(iteration) + ".pth",
                 )
 
-            # Progress bar
+            # 进度条显示
             if iteration % 10 == 0:
                 progress_bar.set_postfix(
                     {
@@ -201,7 +208,7 @@ def training(
             if iteration == opt.iterations:
                 progress_bar.close()
 
-            # Logging
+            # 日志记录与评估
             metrics = {}
             for l in loss:
                 metrics["loss_" + l] = loss[l].item()
@@ -229,7 +236,10 @@ def training_report(
     renderFunc,
     queryFunc,
 ):
-    # Add training statistics
+    """
+    训练过程中的评估与日志记录，包括训练统计、2D渲染性能、3D重建性能等。
+    """
+    # 记录训练统计信息
     if tb_writer:
         for key in list(metrics_train.keys()):
             tb_writer.add_scalar(f"train/{key}", metrics_train[key], iteration)
@@ -238,8 +248,9 @@ def training_report(
             "train/total_points", scene.gaussians.get_xyz.shape[0], iteration
         )
 
+    # 测试与评估
     if iteration in testing_iterations:
-        # Evaluate 2D rendering performance
+        # 2D渲染性能评估
         eval_save_path = osp.join(scene.model_path, "eval", f"iter_{iteration:06d}")
         os.makedirs(eval_save_path, exist_ok=True)
         torch.cuda.empty_cache()
@@ -254,7 +265,7 @@ def training_report(
                 images = []
                 gt_images = []
                 image_show_2d = []
-                # Render projections
+                # 渲染所有视角
                 show_idx = np.linspace(0, len(config["cameras"]), 7).astype(int)[1:-1]
                 for idx, viewpoint in enumerate(config["cameras"]):
                     image = renderFunc(
@@ -312,7 +323,7 @@ def training_report(
                         config["name"] + "/ssim_2d", ssim_2d, iteration
                     )
 
-        # Evaluate 3D reconstruction performance
+        # 3D重建性能评估
         vol_pred = queryFunc(scene.gaussians)["vol"]
         vol_gt = scene.vol_gt
         psnr_3d, _ = metric_vol(vol_gt, vol_pred, "psnr")
@@ -354,7 +365,7 @@ def training_report(
             f"[ITER {iteration}] Evaluating: psnr3d {psnr_3d:.3f}, ssim3d {ssim_3d:.3f}, psnr2d {psnr_2d:.3f}, ssim2d {ssim_2d:.3f}"
         )
 
-        # Record other metrics
+        # 记录其他指标
         if tb_writer:
             tb_writer.add_histogram(
                 "scene/density_histogram", scene.gaussians.get_density, iteration
@@ -364,29 +375,30 @@ def training_report(
 
 
 if __name__ == "__main__":
+    # 命令行入口，参数解析与训练启动
     # fmt: off
-    # Set up command line argument parser
+    # 设置命令行参数解析器
     parser = ArgumentParser(description="Training script parameters")
     lp = ModelParams(parser)
     op = OptimizationParams(parser)
     pp = PipelineParams(parser)
-    parser.add_argument("--detect_anomaly", action="store_true", default=False)
-    parser.add_argument("--test_iterations", nargs="+", type=int, default=[5_000, 10_000, 20_000])
-    parser.add_argument("--save_iterations", nargs="+", type=int, default=[])
-    parser.add_argument("--quiet", action="store_true")
-    parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[])
-    parser.add_argument("--start_checkpoint", type=str, default=None)
-    parser.add_argument("--config", type=str, default=None)
+    parser.add_argument("--detect_anomaly", action="store_true", default=False)  # 是否开启异常检测
+    parser.add_argument("--test_iterations", nargs="+", type=int, default=[5_000, 10_000, 20_000])  # 测试迭代
+    parser.add_argument("--save_iterations", nargs="+", type=int, default=[])  # 保存迭代
+    parser.add_argument("--quiet", action="store_true")  # 静默模式
+    parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[])  # 断点保存迭代
+    parser.add_argument("--start_checkpoint", type=str, default=None)  # 起始断点
+    parser.add_argument("--config", type=str, default=None)  # 配置文件路径
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
     args.test_iterations.append(args.iterations)
     args.test_iterations.append(1)
     # fmt: on
 
-    # Initialize system state (RNG)
+    # 初始化系统状态（如随机种子）
     safe_state(args.quiet)
 
-    # Load configuration files
+    # 加载配置文件（如有）
     args_dict = vars(args)
     if args.config is not None:
         print(f"Loading configuration file from {args.config}")
@@ -394,12 +406,14 @@ if __name__ == "__main__":
         for key in list(cfg.keys()):
             args_dict[key] = cfg[key]
 
-    # Set up logging writer
+    # 设置日志与输出
     tb_writer = prepare_output_and_logger(args)
 
     print("Optimizing " + args.model_path)
 
+    # 是否开启异常检测
     torch.autograd.set_detect_anomaly(args.detect_anomaly)
+    # 启动训练主循环
     training(
         lp.extract(args),
         op.extract(args),
@@ -411,5 +425,5 @@ if __name__ == "__main__":
         args.start_checkpoint,
     )
 
-    # All done
+    # 训练结束
     print("Training complete.")

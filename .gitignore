@@ -13,3 +13,4 @@ FIPS_processed
 other_scripts
 model/
 data/
+*.whl
