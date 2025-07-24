@@ -41,7 +41,7 @@ if __name__ == "__main__":
     # fmt: off
     parser = argparse.ArgumentParser()
     init_parser = InitParams(parser)
-    parser.add_argument("--data", default="data/sax-nerf", type=str, help="Path to dataset.")
+    parser.add_argument("--data", default="../SAX-NeRF-master/data/", type=str, help="Path to dataset.")
     parser.add_argument("--device", default=0, type=int, help="GPU device.")
     # fmt: on
 

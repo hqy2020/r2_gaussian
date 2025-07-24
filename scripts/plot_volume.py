@@ -6,9 +6,10 @@ import pyvista as pv
 
 
 # 体数据（npy文件）路径
-volume_path = "/home/qyhu/Documents/r2_gaussian/output/4f5e679d-5/point_cloud/iteration_30000/vol_gt.npy"
+# volume_path = "/home/qyhu/Documents/r2_gaussian/output/4f5e679d-5/point_cloud/iteration_30000/vol_pred.npy"
+volume_path = "/home/qyhu/Documents/r2_gaussian/output/65e54795-b/point_cloud/iteration_30000/vol_pred.npy"
 # 渲染后图片保存路径
-save_path = "volume.png"
+save_path = "volume-pred.png"
 
 
 # Pyvista 可视化参数（可根据实际情况调整）
