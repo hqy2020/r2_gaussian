@@ -362,7 +362,7 @@ def training_report(
             tb_writer.add_scalar("reconstruction/psnr_3d", psnr_3d, iteration)
             tb_writer.add_scalar("reconstruction/ssim_3d", ssim_3d, iteration)
         tqdm.write(
-            f"[ITER {iteration}] Evaluating: psnr3d {psnr_3d:.3f}, ssim3d {ssim_3d:.3f}, psnr2d {psnr_2d:.3f}, ssim2d {ssim_2d:.3f}"
+            f"[ITER {iteration}] Evaluating: psnr3d {psnr_3d:.4f}, ssim3d {ssim_3d:.4f}, psnr2d {psnr_2d:.4f}, ssim2d {ssim_2d:.4f}"
         )
 
         # 记录其他指标
