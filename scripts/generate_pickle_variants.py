@@ -10,30 +10,29 @@ def generate_variant(input_path, output_dir, train_nums):
     angles = np.array(data['train']['angles'])
     projections = np.array(data['train']['projections'])
 
+    # 保留原始 val
+    val_data = data['val']
+    val_num = data['numVal']
+
     for train_num in train_nums:
         if train_num >= total_views:
             raise ValueError(f"train_num={train_num} should be less than total_views={total_views}")
 
-        # 等间隔选择索引（包括首尾）
+        # 等间隔选择 train 索引（包含首尾）
         if train_num == 1:
             train_indices = [0]
         else:
             train_indices = [round(i * (total_views - 1) / (train_num - 1)) for i in range(train_num)]
 
-        val_indices = sorted(list(set(range(total_views)) - set(train_indices)))
-
         new_data = dict(data)  # 复制顶层结构
         new_data['numTrain'] = len(train_indices)
-        new_data['numVal'] = len(val_indices)
+        new_data['numVal'] = val_num
 
         new_data['train'] = {
             'angles': angles[train_indices],
             'projections': projections[train_indices]
         }
-        new_data['val'] = {
-            'angles': angles[val_indices],
-            'projections': projections[val_indices]
-        }
+        new_data['val'] = val_data  # 保持 val 不变
 
         basename = os.path.basename(input_path).replace('.pickle', '')
         output_name = f"{basename}_{train_num}views.pickle"
