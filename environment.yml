@@ -1,4 +1,4 @@
-name: r2_gaussian
+name: r2_gaussian_new
 channels:
   - pytorch
   - conda-forge

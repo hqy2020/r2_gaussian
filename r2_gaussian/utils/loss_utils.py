@@ -15,6 +15,19 @@ from torch.autograd import Variable
 from math import exp
 import torch.nn as nn
 
+# 添加torchmetrics依赖用于深度相关性计算
+try:
+    from torchmetrics.functional.regression import pearson_corrcoef
+except ImportError:
+    # 如果torchmetrics不可用，使用PyTorch内置函数
+    def pearson_corrcoef(pred, target):
+        """简单的皮尔逊相关系数计算"""
+        pred_mean = pred.mean()
+        target_mean = target.mean()
+        numerator = ((pred - pred_mean) * (target - target_mean)).sum()
+        denominator = torch.sqrt(((pred - pred_mean) ** 2).sum() * ((target - target_mean) ** 2).sum())
+        return numerator / (denominator + 1e-8)
+
 
 def tv_3d_loss(vol, reduction="sum"):
 
@@ -61,7 +74,7 @@ def create_window(window_size, channel):
     return window
 
 
-def ssim(img1, img2, window_size=11, size_average=True):
+def ssim(img1, img2, window_size=11, size_average=True, mask=None):
     channel = img1.size(-3)
     window = create_window(window_size, channel)
 
@@ -69,7 +82,69 @@ def ssim(img1, img2, window_size=11, size_average=True):
         window = window.cuda(img1.get_device())
     window = window.type_as(img1)
 
-    return _ssim(img1, img2, window, window_size, channel, size_average)
+    ssim_value = _ssim(img1, img2, window, window_size, channel, size_average)
+    
+    if mask is not None:
+        # Apply mask to SSIM calculation if provided
+        ssim_value = ssim_value * mask.mean()
+    
+    return ssim_value
+
+
+def loss_photometric(image, gt_image, opt, valid=None):
+    """Photometric loss with mask support - 参考X-Gaussian实现"""
+    Ll1 = l1_loss_mask(image, gt_image, mask=valid)
+    loss = ((1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image, mask=valid)))
+    return Ll1, loss
+
+
+def l1_loss_mask(network_output, gt, mask=None):
+    """L1 loss with mask support - 参考X-Gaussian实现"""
+    if mask is None:
+        return l1_loss(network_output, gt)
+    else:
+        return torch.abs((network_output - gt) * mask).sum() / mask.sum()
+
+
+def depth_loss(predicted_depth, gt_depth, depth_bounds=None):
+    """Depth consistency loss - 新增深度损失函数"""
+    # 深度一致性损失
+    depth_consistency = torch.abs(predicted_depth - gt_depth)
+    
+    if depth_bounds is not None:
+        min_depth, max_depth = depth_bounds
+        # 深度范围惩罚
+        depth_range_penalty = torch.where(
+            (predicted_depth < min_depth) | (predicted_depth > max_depth),
+            torch.abs(predicted_depth - torch.clamp(predicted_depth, min_depth, max_depth)),
+            torch.zeros_like(predicted_depth)
+        )
+        return depth_consistency.mean() + 0.1 * depth_range_penalty.mean()
+    
+    return depth_consistency.mean()
+
+
+def pseudo_label_loss(predicted_image, pseudo_label, confidence_mask=None):
+    """Pseudo label loss - 伪标签损失函数"""
+    if confidence_mask is not None:
+        # 使用置信度mask加权
+        loss = torch.abs(predicted_image - pseudo_label) * confidence_mask
+        return loss.sum() / confidence_mask.sum()
+    else:
+        return l1_loss(predicted_image, pseudo_label)
+
+
+def calculate_depth_loss(rendered_depth, gt_depth):
+    """计算深度相关性损失 - 参考X-Gaussian-depth实现"""
+    rendered_depth = rendered_depth.reshape(-1, 1)
+    gt_depth = gt_depth.reshape(-1, 1)
+    
+    # 使用X-Gaussian-depth中的深度损失计算方式
+    depth_loss = min(
+        (1 - pearson_corrcoef(-gt_depth.squeeze(), rendered_depth.squeeze())),
+        (1 - pearson_corrcoef((1 / (gt_depth + 200.)).squeeze(), rendered_depth.squeeze()))
+    )
+    return depth_loss
 
 
 def _ssim(img1, img2, window, window_size, channel, size_average=True):

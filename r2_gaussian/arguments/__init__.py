@@ -27,6 +27,29 @@ class ModelParams(ParamGroup):
         self.scale_min = 0.0005  # percent of volume size
         self.scale_max = 0.5  # percent of volume size
         self.eval = True
+        
+        # 多高斯、伪标签、深度功能参数 - 参考X-Gaussian-depth实现
+        self.gaussiansN = 2  # 高斯场数量
+        self.coreg = True     # 协同注册
+        self.coprune = True   # 协同剪枝
+        self.coprune_threshold = 5  # 协同剪枝阈值
+        self.perturbation = False  # 扰动损失
+        self.onlyrgb = False  # 是否只用RGB损失
+        self.normal = True    # 是否使用归一化图像
+        self.pseudo_strategy = "single"  # 伪标签策略
+        self.sample_method = "uniform"   # 采样方法
+        self.add_num = 50  # 额外视角数量
+        
+        # 原有的参数（保持兼容性）
+        self.multi_gaussian = True  # 是否启用多高斯训练
+        self.pseudo_labels = True   # 是否启用伪标签
+        self.depth_constraint = False  # r2-gaussian不支持深度输出，禁用深度约束
+        self.num_additional_views = 50  # 额外视角数量（更新为50）
+        self.pseudo_confidence_threshold = 0.8  # 伪标签置信度阈值
+        self.multi_gaussian_weight = 0.05  # 多高斯损失权重（更新为0.05）
+        self.pseudo_label_weight = 0.05  # 伪标签损失权重
+        self.depth_loss_weight = 0.0  # r2-gaussian不支持深度输出，设置深度损失权重为0
+        
         super().__init__(parser, "Loading Parameters", sentinel)
 
     def extract(self, args):
@@ -69,6 +92,17 @@ class OptimizationParams(ParamGroup):
         self.max_screen_size = None
         self.max_scale = None  # percent of volume size
         self.max_num_gaussians = 500_000
+        
+        # 伪标签和深度相关参数 - 参考X-Gaussian-depth实现
+        self.sample_pseudo_interval = 1
+        self.start_sample_pseudo = 2000
+        self.end_sample_pseudo = 10000
+        self.start_perturbation = 2000
+        self.depth_weight = 0.05
+        self.depth_pseudo_weight = 0
+        self.feature_lr = 0.0025
+        self.opacity_lr = 0.05
+        
         super().__init__(parser, "Optimization Parameters")
 
 

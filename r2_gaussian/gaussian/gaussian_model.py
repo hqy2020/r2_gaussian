@@ -442,7 +442,10 @@ class GaussianModel:
         means = torch.zeros((stds.size(0), 3), device="cuda")
         samples = torch.normal(mean=means, std=stds)
         rots = build_rotation(self._rotation[selected_pts_mask]).repeat(N, 1, 1)
-        new_xyz = torch.bmm(rots, samples.unsqueeze(-1)).squeeze(-1) + self.get_xyz[
+        # 在CPU上计算矩阵乘法以避免CUBLAS错误
+        rots_cpu = rots.cpu()
+        samples_cpu = samples.unsqueeze(-1).cpu()
+        new_xyz = torch.bmm(rots_cpu, samples_cpu).squeeze(-1).cuda() + self.get_xyz[
             selected_pts_mask
         ].repeat(N, 1)
         new_scaling = self.scaling_inverse_activation(
