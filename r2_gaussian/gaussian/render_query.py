@@ -23,6 +23,9 @@ from r2_gaussian.gaussian.gaussian_model import GaussianModel
 from r2_gaussian.dataset.cameras import Camera
 from r2_gaussian.arguments import PipelineParams
 
+# drop日志限频：记录上一次打印的训练迭代
+_last_drop_log_iter = -1
+
 
 def query(
     pc: GaussianModel,
@@ -82,6 +85,9 @@ def render(
     pc: GaussianModel,
     pipe: PipelineParams,
     scaling_modifier=1.0,
+    enable_drop=False,
+    drop_rate: float = 0.10,
+    iteration: int = None,
 ):
     """
     Render an X-ray projection with rasterization.
@@ -129,6 +135,27 @@ def render(
     means3D = pc.get_xyz
     means2D = screenspace_points
     density = pc.get_density
+
+    # 添加可选的 drop 方法（对所有高斯点生效）
+    if enable_drop:
+        # 保存原始密度值用于对比
+        original_density = density.clone()
+
+        # 直接对所有点应用随机丢弃（不依赖 unique_gidx）
+        mask = (torch.rand_like(density) > float(drop_rate)).float()
+        density = density * mask
+
+        # 统计并按 500 轮训练限频打印一次
+        if iteration is not None and iteration % 500 == 0:
+            non_zero_before = (original_density > 0).sum().item()
+            non_zero_after = (density > 0).sum().item()
+            dropped_points = non_zero_before - non_zero_after
+            global _last_drop_log_iter
+            if iteration != _last_drop_log_iter:
+                _last_drop_log_iter = iteration
+                print(
+                    f"[iter {iteration}] Drop生效: 原始非零点数={non_zero_before}, 应用drop后非零点数={non_zero_after}, 丢弃点数={dropped_points}, 丢弃比例={dropped_points/max(non_zero_before,1):.2%}"
+                )
 
     # If precomputed 3d covariance is provided, use it. If not, then it will be computed from
     # scaling / rotation by the rasterizer.

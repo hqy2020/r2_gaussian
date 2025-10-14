@@ -141,7 +141,14 @@ def training(
         # 为每个高斯场渲染 - 参考X-Gaussian-depth实现
         RenderDict = {}
         for i in range(gaussiansN):
-            RenderDict[f"render_pkg_gs{i}"] = render(viewpoint_cam, GsDict[f'gs{i}'], pipe)
+            RenderDict[f"render_pkg_gs{i}"] = render(
+                viewpoint_cam,
+                GsDict[f'gs{i}'],
+                pipe,
+                enable_drop=args.enable_drop,
+                drop_rate=args.drop_rate if hasattr(args, 'drop_rate') else 0.10,
+                iteration=iteration,
+            )
             RenderDict[f"image_gs{i}"] = RenderDict[f"render_pkg_gs{i}"]["render"]
             RenderDict[f"viewspace_point_tensor_gs{i}"] = RenderDict[f"render_pkg_gs{i}"]["viewspace_points"]
             RenderDict[f"visibility_filter_gs{i}"] = RenderDict[f"render_pkg_gs{i}"]["visibility_filter"]
@@ -171,7 +178,14 @@ def training(
         if dataset.multi_gaussian and pseudo_cameras is not None:
             for pseudo_cam in pseudo_cameras[:3]:  # 限制数量避免计算过载
                 for i in range(gaussiansN):
-                    pseudo_render_pkg = render(pseudo_cam, GsDict[f'gs{i}'], pipe)
+                    pseudo_render_pkg = render(
+                        pseudo_cam,
+                        GsDict[f'gs{i}'],
+                        pipe,
+                        enable_drop=args.enable_drop,
+                        drop_rate=args.drop_rate if hasattr(args, 'drop_rate') else 0.10,
+                        iteration=iteration,
+                    )
                     pseudo_image = pseudo_render_pkg["render"]
                     # 使用伪标签相机生成的目标（这里简化为当前渲染结果）
                     pseudo_target = pseudo_image.detach()  # 使用当前渲染作为目标
@@ -182,7 +196,14 @@ def training(
         if dataset.pseudo_labels and pseudo_cameras is not None and iteration > 1000:  # 延迟启动伪标签
             for i, pseudo_cam in enumerate(pseudo_cameras[:2]):  # 限制数量
                 for j in range(gaussiansN):
-                    pseudo_render_pkg = render(pseudo_cam, GsDict[f'gs{j}'], pipe)
+                    pseudo_render_pkg = render(
+                        pseudo_cam,
+                        GsDict[f'gs{j}'],
+                        pipe,
+                        enable_drop=args.enable_drop,
+                        drop_rate=args.drop_rate if hasattr(args, 'drop_rate') else 0.10,
+                        iteration=iteration,
+                    )
                     pseudo_image = pseudo_render_pkg["render"]
                     
                     # 生成伪标签（使用当前模型预测）
@@ -316,7 +337,14 @@ def training(
                 iter_start.elapsed_time(iter_end),
                 testing_iterations,
                 scene,
-                lambda x, y: render(x, y, pipe),
+                lambda x, y, it=iteration: render(
+                    x,
+                    y,
+                    pipe,
+                    enable_drop=args.enable_drop,
+                    drop_rate=args.drop_rate if hasattr(args, 'drop_rate') else 0.10,
+                    iteration=it,
+                ),
                 queryfunc,
             )
 
@@ -484,6 +512,8 @@ if __name__ == "__main__":
     parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[])  # 断点保存迭代
     parser.add_argument("--start_checkpoint", type=str, default=None)  # 起始断点
     parser.add_argument("--config", type=str, default=None)  # 配置文件路径
+    parser.add_argument("--enable_drop", action="store_true", default=False)  # 是否启用 drop 方法
+    parser.add_argument("--drop_rate", type=float, default=0.10)  # drop 比例（0~1）
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
     args.test_iterations.append(args.iterations)
@@ -524,6 +554,8 @@ if __name__ == "__main__":
         args.coprune_threshold,
         args,
     )
+    
+    # 注意：在训练过程中使用 render 函数时，需要传递 enable_drop=args.enable_drop 参数
 
     # 训练结束
     print("Training complete.")

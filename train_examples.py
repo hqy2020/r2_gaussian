@@ -31,6 +31,10 @@ python train.py -s data/369/chest_50_3views.pickle -m output/custom \
     --pseudo_confidence_threshold 0.9 \
     --multi_gaussian_weight 0.2 \
     --pseudo_label_weight 0.1
+
+7. 使用Drop方法训练
+python train.py -s data/369/chest_50_3views.pickle -m output/with_drop \
+    --enable_drop --drop_rate 0.10
 """
 
 import os
@@ -117,6 +121,20 @@ def run_training_example():
     print("说明: 高级训练配置，增加训练轮数和测试频率")
     print()
 
+    # 使用 Drop 方法训练（可配置丢弃比例）
+    print("=== 使用 Drop 方法训练示例 ===")
+    cmd_drop = [
+        "python", "train.py",
+        "-s", "data/369/chest_50_3views.pickle",
+        "-m", "output/with_drop_example",
+        "--enable_drop",
+        "--drop_rate", "0.10",
+        "--iterations", "2000"
+    ]
+    print("命令:", " ".join(cmd_drop))
+    print("说明: 启用 Drop，丢弃比例 10%，训练 2000 轮（每500轮打印一次）")
+    print()
+
 def show_feature_comparison():
     """显示功能对比"""
     print("=== 功能对比表 ===")
@@ -141,6 +159,8 @@ def show_parameter_description():
     print("--multi_gaussian_weight: 多高斯损失权重 (默认: 0.1)")
     print("--pseudo_label_weight: 伪标签损失权重 (默认: 0.05)")
     print("--depth_loss_weight: 深度损失权重 (默认: 0.1)")
+    print("--enable_drop: 启用随机丢弃高斯点以做正则化")
+    print("--drop_rate: 丢弃比例 (0~1，默认: 0.10)")
     print()
 
 if __name__ == "__main__":
