@@ -40,6 +40,15 @@ class ModelParams(ParamGroup):
         self.sample_method = "uniform"   # 采样方法
         self.add_num = 50  # 额外视角数量
         
+        # Opacity decay功能
+        self.opacity_decay = False  # 是否启用opacity decay
+        
+        # Depth功能参数
+        self.enable_depth = False  # 是否启用深度功能
+        self.depth_loss_weight = 0.0  # 深度损失权重
+        self.depth_loss_type = 'pearson'  # 深度损失类型 ('l1', 'l2', 'pearson')
+        self.depth_threshold = 0.01  # 深度提取阈值
+        
         # 原有的参数（保持兼容性）
         self.multi_gaussian = True  # 是否启用多高斯训练
         self.pseudo_labels = True   # 是否启用伪标签

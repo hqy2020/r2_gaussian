@@ -177,3 +177,67 @@ def _ssim(img1, img2, window, window_size, channel, size_average=True):
         return ssim_map.mean()
     else:
         return ssim_map.mean(1).mean(1).mean(1)
+
+
+def depth_loss_fn(rendered_depth, gt_depth, loss_type='pearson'):
+    """
+    计算深度损失函数
+    
+    Args:
+        rendered_depth: 渲染的深度图 (H, W)
+        gt_depth: 真实深度图 (H, W)
+        loss_type: 损失类型 ('l1', 'l2', 'pearson')
+    
+    Returns:
+        loss: 深度损失值
+    """
+    if rendered_depth is None or gt_depth is None:
+        return torch.tensor(0.0, device=rendered_depth.device if rendered_depth is not None else gt_depth.device)
+    
+    # 确保两个张量在同一设备上
+    if rendered_depth.device != gt_depth.device:
+        gt_depth = gt_depth.to(rendered_depth.device)
+    
+    # 确保形状一致
+    if rendered_depth.shape != gt_depth.shape:
+        # 如果形状不同，尝试调整大小
+        if len(rendered_depth.shape) == 2 and len(gt_depth.shape) == 2:
+            gt_depth = F.interpolate(gt_depth.unsqueeze(0).unsqueeze(0), 
+                                    size=rendered_depth.shape, 
+                                    mode='bilinear', 
+                                    align_corners=False).squeeze(0).squeeze(0)
+        else:
+            raise ValueError(f"Shape mismatch: {rendered_depth.shape} vs {gt_depth.shape}")
+    
+    if loss_type == 'l1':
+        return F.l1_loss(rendered_depth, gt_depth)
+    elif loss_type == 'l2':
+        return F.mse_loss(rendered_depth, gt_depth)
+    elif loss_type == 'pearson':
+        # 使用皮尔逊相关系数作为损失
+        correlation = pearson_corrcoef(rendered_depth.flatten(), gt_depth.flatten())
+        return 1.0 - correlation  # 转换为损失（越小越好）
+    else:
+        raise ValueError(f"Unknown loss type: {loss_type}")
+
+
+def depth_consistency_loss(depth_maps):
+    """
+    计算多视角深度一致性损失
+    
+    Args:
+        depth_maps: 多个视角的深度图列表
+    
+    Returns:
+        consistency_loss: 一致性损失
+    """
+    if len(depth_maps) < 2:
+        return torch.tensor(0.0, device=depth_maps[0].device)
+    
+    # 简化的实现：计算相邻视角深度图的差异
+    total_loss = 0.0
+    for i in range(len(depth_maps) - 1):
+        diff = torch.abs(depth_maps[i] - depth_maps[i + 1])
+        total_loss += diff.mean()
+    
+    return total_loss / (len(depth_maps) - 1)

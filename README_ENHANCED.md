@@ -159,3 +159,7 @@ python train.py -s data/369/chest_50_3views.pickle -m output/combined \
 ## 📄 许可证
 
 与原始R2-Gaussian项目保持一致的许可证。
+
+
+
+

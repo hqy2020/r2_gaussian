@@ -3,7 +3,7 @@ build/
 *.egg-info
 .vscode/
 data/
-output
+output/
 *.zip
 TIGRE*
 volume_processed/
@@ -17,3 +17,4 @@ data/
 *.png
 r2_gaussian/submodules/simple-knn
 *.pickle
+nohup.out

@@ -186,3 +186,7 @@ if __name__ == "__main__":
     print("- 快速测试: 只启用multi_gaussian")
     print("- 高质量训练: 组合使用所有功能")
     print("- 内存不足: 减少num_additional_views")
+
+
+
+

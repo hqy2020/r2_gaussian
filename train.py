@@ -26,7 +26,8 @@ from r2_gaussian.utils.general_utils import safe_state  # 随机种子等系统�
 from r2_gaussian.utils.cfg_utils import load_config  # 配置文件加载
 from r2_gaussian.utils.log_utils import prepare_output_and_logger  # 日志与输出
 from r2_gaussian.dataset import Scene  # 数据集场景
-from r2_gaussian.utils.loss_utils import l1_loss, ssim, tv_3d_loss, loss_photometric, l1_loss_mask, depth_loss, pseudo_label_loss  # 损失函数
+from r2_gaussian.utils.loss_utils import l1_loss, ssim, tv_3d_loss, loss_photometric, l1_loss_mask, depth_loss, pseudo_label_loss, depth_loss_fn  # 损失函数
+from r2_gaussian.utils.depth_utils import extract_depth_from_volume_ray_casting  # 深度提取函数
 from r2_gaussian.utils.image_utils import metric_vol, metric_proj  # 评估指标
 from r2_gaussian.utils.plot_utils import show_two_slice  # 可视化工具
 
@@ -213,13 +214,52 @@ def training(
                     pseudo_label_loss_val = pseudo_label_loss(pseudo_image, pseudo_label)
                     LossDict[f"loss_gs{j}"] += dataset.pseudo_label_weight * pseudo_label_loss_val
         
-        # 深度约束损失 - r2-gaussian不支持深度输出，已禁用此功能
-        # if dataset.depth_constraint and hasattr(viewpoint_cam, 'depth_image') and viewpoint_cam.depth_image is not None:
-        #     for i in range(gaussiansN):
-        #         # 计算深度图（这里需要扩展渲染器支持深度输出）
-        #         # 暂时跳过深度损失的具体实现，因为需要修改渲染器
-        #         pass
-        
+        # Depth损失 - 使用voxelization提取深度
+        if dataset.enable_depth and dataset.depth_loss_weight > 0:
+            for i in range(gaussiansN):
+                # 使用voxelization获取density volume
+                tv_vol_center = (bbox[0] + tv_vol_sVoxel / 2) + (
+                    bbox[1] - tv_vol_sVoxel - bbox[0]
+                ) * torch.rand(3)
+                vol_pred = query(
+                    GsDict[f"gs{i}"],
+                    tv_vol_center,
+                    tv_vol_nVoxel,
+                    tv_vol_sVoxel,
+                    pipe,
+                )["vol"]
+                
+                # 从volume提取深度图
+                depth_map = extract_depth_from_volume_ray_casting(
+                    vol_pred, 
+                    viewpoint_cam, 
+                    threshold=dataset.depth_threshold
+                )
+                
+                # 如果有ground truth深度，计算深度损失
+                if hasattr(viewpoint_cam, 'depth_image') and viewpoint_cam.depth_image is not None:
+                    gt_depth = viewpoint_cam.depth_image.cuda()
+                    depth_loss_val = depth_loss_fn(
+                        depth_map, 
+                        gt_depth, 
+                        loss_type=dataset.depth_loss_type
+                    )
+                    LossDict[f"loss_gs{i}"] += dataset.depth_loss_weight * depth_loss_val
+                    
+                # 自监督深度约束：让深度平滑，提升重建质量
+                if depth_map.shape[0] > 1 and depth_map.shape[1] > 1:
+                    # 计算深度图相邻像素的差异（水平+垂直）
+                    depth_diff_h = torch.abs(depth_map[1:, :] - depth_map[:-1, :])
+                    depth_diff_w = torch.abs(depth_map[:, 1:] - depth_map[:, :-1])
+                    consistency_loss = (depth_diff_h.mean() + depth_diff_w.mean()) * 0.1
+                    
+                    # 添加到总损失中
+                    LossDict[f"loss_gs{i}"] += dataset.depth_loss_weight * consistency_loss
+                    
+                    # 每500次迭代打印一次
+                    if iteration % 500 == 0:
+                        print(f"[深度约束] Iteration {iteration}: {consistency_loss.item():.6f}")
+       
         # 3D TV 损失 - 为每个高斯场计算
         if use_tv:
             for i in range(gaussiansN):
@@ -272,6 +312,12 @@ def training(
                             densify_scale_threshold,
                             bbox,
                         )
+            
+            # Density decay功能 - 在densification开始后对密度进行衰减
+            if dataset.opacity_decay and iteration > opt.densify_from_iter:
+                opt.densify_until_iter = opt.iterations
+                for i in range(gaussiansN):
+                    GsDict[f"gs{i}"].density_decay(factor=0.995)
             
             # 检查高斯场是否为空
             for i in range(gaussiansN):

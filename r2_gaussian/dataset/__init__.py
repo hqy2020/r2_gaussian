@@ -109,21 +109,16 @@ class Scene:
                                        radius_range=(0.8, 1.2), height_range=(-0.3, 0.3)):
         """
         生成多高斯训练的额外相机视角 - 参考X-Gaussian实现
-        
-        Args:
-            num_additional_views: 额外视角数量
-            radius_range: 半径范围
-            height_range: 高度范围
-        
-        Returns:
-            pseudo_cameras: List of PseudoCamera objects
         """
+        if num_additional_views is None or num_additional_views <= 0:
+            return []
+
         pseudo_cameras = []
-        
-        # 使用训练相机生成随机姿态
         poses = generate_random_poses_pickle(self.train_cameras)
-        
-        # 获取第一个训练相机的参数作为参考
+
+        if len(poses) > num_additional_views:
+            poses = poses[:num_additional_views]
+
         if len(self.train_cameras) > 0:
             ref_camera = self.train_cameras[0]
             FoVx = ref_camera.FoVx
@@ -131,11 +126,9 @@ class Scene:
             image_width = ref_camera.image_width
             image_height = ref_camera.image_height
         else:
-            # 默认参数
             FoVx = FoVy = 0.5
             image_width = image_height = 256
-        
-        # 创建伪标签相机
+
         for R, T in poses:
             pseudo_cam = PseudoCamera(
                 R=R, T=T,
@@ -145,7 +138,7 @@ class Scene:
                 scale=1.0
             )
             pseudo_cameras.append(pseudo_cam)
-        
+
         return pseudo_cameras
     
     def generate_pseudo_labels(self, gaussians, renderer, pseudo_cameras):

@@ -557,3 +557,14 @@ class GaussianModel:
             viewspace_point_tensor.grad[update_filter, :2], dim=-1, keepdim=True
         )
         self.denom[update_filter] += 1
+
+    def density_decay(self, factor=0.99, unique_gidx=None):
+        """
+        对高斯点的密度进行衰减，相当于opacity decay功能
+        Args:
+            factor: 衰减因子，默认0.99
+            unique_gidx: 特定高斯索引（暂时未使用）
+        """
+        density = self.get_density
+        density = density * factor
+        self._density.data = self.density_inverse_activation(density)
