@@ -141,6 +141,47 @@ class Scene:
 
         return pseudo_cameras
     
+    def getPseudoCamerasWithClosestViews(self, pseudo_cameras):
+        """
+        为每个伪相机找到最近的真实训练相机 - 参考IPSM实现
+        返回伪相机列表和对应的最近真实相机列表
+        
+        Args:
+            pseudo_cameras: 伪相机列表
+        
+        Returns:
+            pseudo_stack: 伪相机列表
+            closest_cam_stack: 对应的最近真实相机列表
+        """
+        if len(pseudo_cameras) == 0 or len(self.train_cameras) == 0:
+            return [], []
+        
+        pseudo_stack = []
+        closest_cam_stack = []
+        
+        for pseudo_cam in pseudo_cameras:
+            # 计算伪相机中心（使用world_view_transform的逆矩阵）
+            pseudo_center = pseudo_cam.camera_center.cpu().numpy()
+            
+            # 找到最近的真实相机
+            min_dist = float('inf')
+            closest_cam = None
+            
+            for train_cam in self.train_cameras:
+                # 计算相机中心距离
+                train_center = train_cam.camera_center.cpu().numpy()
+                dist = np.linalg.norm(pseudo_center - train_center)
+                
+                if dist < min_dist:
+                    min_dist = dist
+                    closest_cam = train_cam
+            
+            if closest_cam is not None:
+                pseudo_stack.append(pseudo_cam)
+                closest_cam_stack.append(closest_cam)
+        
+        return pseudo_stack, closest_cam_stack
+    
     def generate_pseudo_labels(self, gaussians, renderer, pseudo_cameras):
         """
         使用当前模型生成伪标签 - 参考X-Gaussian实现

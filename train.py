@@ -10,6 +10,7 @@
 import os
 import os.path as osp
 import torch
+import torch.nn.functional as F
 from random import randint
 import sys
 from tqdm import tqdm
@@ -26,8 +27,9 @@ from r2_gaussian.utils.general_utils import safe_state  # 随机种子等系统�
 from r2_gaussian.utils.cfg_utils import load_config  # 配置文件加载
 from r2_gaussian.utils.log_utils import prepare_output_and_logger  # 日志与输出
 from r2_gaussian.dataset import Scene  # 数据集场景
-from r2_gaussian.utils.loss_utils import l1_loss, ssim, tv_3d_loss, loss_photometric, l1_loss_mask, depth_loss, pseudo_label_loss, depth_loss_fn  # 损失函数
+from r2_gaussian.utils.loss_utils import l1_loss, ssim, tv_3d_loss, loss_photometric, l1_loss_mask, depth_loss, pseudo_label_loss, depth_loss_fn, compute_graph_laplacian_loss  # 损失函数
 from r2_gaussian.utils.depth_utils import extract_depth_from_volume_ray_casting  # 深度提取函数
+from r2_gaussian.utils.warp_utils import inverse_warp  # 逆变形函数 - IPSM实现
 from r2_gaussian.utils.image_utils import metric_vol, metric_proj  # 评估指标
 from r2_gaussian.utils.plot_utils import show_two_slice  # 可视化工具
 
@@ -108,7 +110,7 @@ def training(
     if checkpoint is not None:
         (model_params, first_iter) = torch.load(checkpoint)
         gaussians.restore(model_params, opt)
-        print(f"Load checkpoint {osp.basename(checkpoint)}.")
+        print(f"Load checkpoint from {osp.basename(checkpoint)}.")
 
     # 设置损失函数（是否使用 TV 损失）
     use_tv = opt.lambda_tv > 0
@@ -163,7 +165,7 @@ def training(
             LossDict[f"loss_gs{i}"] = l1_loss(RenderDict[f"image_gs{i}"], gt_image)
             
             # DSSIM 损失
-            if opt.lambda_dssim > 0:
+        if opt.lambda_dssim > 0:
                 loss_dssim = 1.0 - ssim(RenderDict[f"image_gs{i}"], gt_image)
                 LossDict[f"loss_gs{i}"] += opt.lambda_dssim * loss_dssim
         
@@ -175,8 +177,8 @@ def training(
                         coreg_loss = l1_loss(RenderDict[f"image_gs{i}"], RenderDict[f"image_gs{j}"].detach())
                         LossDict[f"loss_gs{i}"] += coreg_loss
         
-        # 多高斯训练损失 - 参考X-Gaussian实现
-        if dataset.multi_gaussian and pseudo_cameras is not None:
+        # 多高斯训练损失 - 原始版本（identity loss）
+        if dataset.multi_gaussian and pseudo_cameras is not None and gaussiansN > 1:
             for pseudo_cam in pseudo_cameras[:3]:  # 限制数量避免计算过载
                 for i in range(gaussiansN):
                     pseudo_render_pkg = render(
@@ -188,31 +190,139 @@ def training(
                         iteration=iteration,
                     )
                     pseudo_image = pseudo_render_pkg["render"]
-                    # 使用伪标签相机生成的目标（这里简化为当前渲染结果）
-                    pseudo_target = pseudo_image.detach()  # 使用当前渲染作为目标
-                    multi_view_loss = l1_loss(pseudo_image, pseudo_target)
-                    LossDict[f"loss_gs{i}"] += dataset.multi_gaussian_weight * multi_view_loss
+                    # 原始错误版本：identity loss（自己和自己比较）
+                    LossDict[f"loss_gs{i}"] += dataset.multi_gaussian_weight * l1_loss(pseudo_image, pseudo_image.detach())
         
-        # 伪标签训练损失 - 参考X-Gaussian实现
+        # 伪标签训练损失 - 参考IPSM实现（带inverse warp和随机选择drop机制）
         if dataset.pseudo_labels and pseudo_cameras is not None and iteration > 1000:  # 延迟启动伪标签
-            for i, pseudo_cam in enumerate(pseudo_cameras[:2]):  # 限制数量
+            # 获取伪相机和对应的最近真实相机
+            pseudo_stack, closest_cam_stack = scene.getPseudoCamerasWithClosestViews(pseudo_cameras)
+            
+            if len(pseudo_stack) > 0:
+                # 创建副本（IPSM的做法）
+                pseudo_stack = pseudo_stack.copy()
+                closest_cam_stack = closest_cam_stack.copy()
+                
+                # 随机选择一个伪相机（IPSM的drop机制）
+                randint_idx = randint(0, len(pseudo_stack) - 1)
+                pseudo_cam = pseudo_stack.pop(randint_idx)
+                closest_cam = closest_cam_stack.pop(randint_idx)
+                
                 for j in range(gaussiansN):
+                    # 从伪相机渲染图像
                     pseudo_render_pkg = render(
                         pseudo_cam,
                         GsDict[f'gs{j}'],
                         pipe,
-                        enable_drop=args.enable_drop,
-                        drop_rate=args.drop_rate if hasattr(args, 'drop_rate') else 0.10,
-                        iteration=iteration,
                     )
-                    pseudo_image = pseudo_render_pkg["render"]
+                    rendered_img_pseudo = pseudo_render_pkg["render"]  # (C, H, W)
+                    H, W = rendered_img_pseudo.shape[1], rendered_img_pseudo.shape[2]
                     
-                    # 生成伪标签（使用当前模型预测）
-                    with torch.no_grad():
-                        pseudo_label = pseudo_cam.generate_pseudo_label(GsDict[f'gs{j}'], lambda cam, gauss: render(cam, gauss, pipe))
+                    # 从伪相机提取深度图（使用现有的depth提取方法）
+                    tv_vol_center = (bbox[0] + tv_vol_sVoxel / 2) + (
+                        bbox[1] - tv_vol_sVoxel - bbox[0]
+                    ) * torch.rand(3)
+                    vol_pred_pseudo = query(
+                        GsDict[f"gs{j}"],
+                        tv_vol_center,
+                        tv_vol_nVoxel,
+                        tv_vol_sVoxel,
+                        pipe,
+                    )["vol"]
+                    rendered_depth_pseudo = extract_depth_from_volume_ray_casting(
+                        vol_pred_pseudo,
+                        pseudo_cam,
+                        threshold=getattr(dataset, 'depth_threshold', 0.01)
+                    )  # (H_vol, W_vol) - volume的尺寸，不是图像尺寸
                     
-                    pseudo_label_loss_val = pseudo_label_loss(pseudo_image, pseudo_label)
-                    LossDict[f"loss_gs{j}"] += dataset.pseudo_label_weight * pseudo_label_loss_val
+                    # 从最近真实相机获取图像和深度
+                    closest_image_1 = closest_cam.original_image.cuda()  # (C, H_closest, W_closest)
+                    closest_H, closest_W = closest_image_1.shape[1], closest_image_1.shape[2]
+                    
+                    # 从最近真实相机提取深度图
+                    vol_pred_closest = query(
+                        GsDict[f"gs{j}"],
+                        tv_vol_center,
+                        tv_vol_nVoxel,
+                        tv_vol_sVoxel,
+                        pipe,
+                    )["vol"]
+                    closest_depth_1 = extract_depth_from_volume_ray_casting(
+                        vol_pred_closest,
+                        closest_cam,
+                        threshold=getattr(dataset, 'depth_threshold', 0.01)
+                    )  # (H_vol, W_vol) - volume的尺寸，不是图像尺寸
+                    
+                    # 确保深度图尺寸与图像尺寸匹配（resize深度图到图像尺寸）
+                    # 伪相机深度图resize到伪相机图像尺寸
+                    pseudo_depth_H, pseudo_depth_W = rendered_depth_pseudo.shape
+                    if pseudo_depth_H != H or pseudo_depth_W != W:
+                        # 使用双线性插值将深度图resize到图像尺寸
+                        rendered_depth_pseudo_resized = F.interpolate(
+                            rendered_depth_pseudo.unsqueeze(0).unsqueeze(0),  # (1, 1, H_vol, W_vol)
+                            size=(H, W),
+                            mode='bilinear',
+                            align_corners=False
+                        ).squeeze(0).squeeze(0)  # (H, W)
+                    else:
+                        rendered_depth_pseudo_resized = rendered_depth_pseudo
+                    
+                    # 真实相机深度图resize到真实相机图像尺寸
+                    closest_depth_H, closest_depth_W = closest_depth_1.shape
+                    if closest_depth_H != closest_H or closest_depth_W != closest_W:
+                        closest_depth_1_resized = F.interpolate(
+                            closest_depth_1.unsqueeze(0).unsqueeze(0),  # (1, 1, H_vol, W_vol)
+                            size=(closest_H, closest_W),
+                            mode='bilinear',
+                            align_corners=False
+                        ).squeeze(0).squeeze(0)  # (H_closest, W_closest)
+                    else:
+                        closest_depth_1_resized = closest_depth_1
+                    
+                    # 构建内参矩阵（从FoV计算）- 使用伪相机的尺寸，因为target_depth是伪相机的
+                    focal_x = pseudo_cam.image_width / (2.0 * np.tan(pseudo_cam.FoVx / 2.0))
+                    focal_y = pseudo_cam.image_height / (2.0 * np.tan(pseudo_cam.FoVy / 2.0))
+                    intrinsic = torch.tensor([
+                        [focal_x, 0, pseudo_cam.image_width / 2.0],
+                        [0, focal_y, pseudo_cam.image_height / 2.0],
+                        [0, 0, 1]
+                    ], device=closest_image_1.device, dtype=torch.float32)
+                    
+                    # 逆变形（inverse warp）- 使用resize后的深度图
+                    # 注意：inverse_warp内部会使用source_image的尺寸，所以需要确保深度图尺寸匹配
+                    warp_rst_1 = inverse_warp(
+                        closest_image_1,
+                        closest_depth_1_resized,  # 使用resize后的深度图
+                        rendered_depth_pseudo_resized.unsqueeze(0),  # (1, H, W) - 使用resize后的深度图
+                        closest_cam.world_view_transform,  # r2使用world_view_transform而不是extrinsic_matrix
+                        pseudo_cam.world_view_transform,
+                        intrinsic
+                    )
+                    
+                    # 计算masked损失（完全按照IPSM图片代码）
+                    # 注意：mask是Float类型，使用乘法代替位运算&
+                    combined_mask = (warp_rst_1["mask_warp"] * warp_rst_1["mask_depth_strict"]).unsqueeze(0)  # (1, H, W)
+                    
+                    warped_masked_strict_image = warp_rst_1["warped_img"] * combined_mask
+                    pseudo_masked_strict_image = rendered_img_pseudo * combined_mask
+                    
+                    # 损失缩放因子（逐渐增加，IPSM的做法）
+                    loss_scale = min(iteration / 500.0, 1.0)
+                    
+                    # 计算masked L1损失
+                    Ll1_masked_pseudo = l1_loss_mask(
+                        pseudo_masked_strict_image,
+                        warped_masked_strict_image.detach()
+                    )
+                    
+                    # 添加到总损失（乘以loss_scale）
+                    LossDict[f"loss_gs{j}"] += dataset.pseudo_label_weight * loss_scale * Ll1_masked_pseudo
+                    
+                    # 可选：每500次迭代打印一次信息
+                    if iteration % 500 == 0:
+                        mask_valid_ratio = combined_mask.sum().item() / (H * W)
+                        print(f"[IPSM Drop] Iteration {iteration}, GS{j}: masked_loss={Ll1_masked_pseudo.item():.6f}, "
+                              f"loss_scale={loss_scale:.3f}, valid_mask_ratio={mask_valid_ratio:.3f}")
         
         # Depth损失 - 使用voxelization提取深度
         if dataset.enable_depth and dataset.depth_loss_weight > 0:
@@ -259,6 +369,22 @@ def training(
                     # 每500次迭代打印一次
                     if iteration % 500 == 0:
                         print(f"[深度约束] Iteration {iteration}: {consistency_loss.item():.6f}")
+        
+        # 图拉普拉斯正则化 - 参考CoR-GS论文（与depth约束互补）
+        # 在depth+drop基础上添加，提升稀疏视角重建质量
+        if dataset.enable_depth and dataset.depth_loss_weight > 0 and iteration > 5000:
+            for i in range(gaussiansN):
+                if gaussiansN == 1:  # 单高斯场（你的depth+drop实验使用gaussiansN=1）
+                    graph_laplacian_loss = compute_graph_laplacian_loss(
+                        GsDict[f"gs{i}"],
+                        k=6,           # KNN邻居数量（CoR-GS论文推荐）
+                        Lambda_lap=8e-4  # 正则化权重（CoR-GS论文推荐）
+                    )
+                    LossDict[f"loss_gs{i}"] += graph_laplacian_loss
+                    
+                    # 可选：每1000次迭代打印一次
+                    if iteration % 1000 == 0:
+                        print(f"[图拉普拉斯] Iteration {iteration}: graph_loss={graph_laplacian_loss.item():.6f}")
        
         # 3D TV 损失 - 为每个高斯场计算
         if use_tv:
@@ -304,14 +430,14 @@ def training(
                 ):
                     for i in range(gaussiansN):
                         GsDict[f"gs{i}"].densify_and_prune(
-                            opt.densify_grad_threshold,
-                            opt.density_min_threshold,
-                            opt.max_screen_size,
-                            max_scale,
-                            opt.max_num_gaussians,
-                            densify_scale_threshold,
-                            bbox,
-                        )
+                        opt.densify_grad_threshold,
+                        opt.density_min_threshold,
+                        opt.max_screen_size,
+                        max_scale,
+                        opt.max_num_gaussians,
+                        densify_scale_threshold,
+                        bbox,
+                    )
             
             # Density decay功能 - 在densification开始后对密度进行衰减
             if dataset.opacity_decay and iteration > opt.densify_from_iter:
@@ -324,7 +450,7 @@ def training(
                 if GsDict[f"gs{i}"].get_density.shape[0] == 0:
                     raise ValueError(
                         f"No Gaussian left in gs{i}. Change adaptive control hyperparameters!"
-                    )
+                )
 
             # 优化器更新 - 为每个高斯场
             if iteration < opt.iterations:
@@ -392,6 +518,7 @@ def training(
                     iteration=it,
                 ),
                 queryfunc,
+                gaussiansN,
             )
 
 
@@ -404,6 +531,7 @@ def training_report(
     scene: Scene,
     renderFunc,
     queryFunc,
+    gaussiansN=1,
 ):
     """
     训练过程中的评估与日志记录，包括训练统计、2D渲染性能、3D重建性能等。

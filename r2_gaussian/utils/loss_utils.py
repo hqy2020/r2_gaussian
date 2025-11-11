@@ -241,3 +241,64 @@ def depth_consistency_loss(depth_maps):
         total_loss += diff.mean()
     
     return total_loss / (len(depth_maps) - 1)
+
+
+def compute_graph_laplacian_loss(gaussians, k=6, Lambda_lap=8e-4):
+    """
+    图拉普拉斯正则化损失 - 参考CoR-GS/GR-Gaussian论文
+    鼓励相邻高斯点的密度平滑，与depth约束互补
+    
+    Args:
+        gaussians: GaussianModel实例
+        k: KNN邻居数量（默认6，根据CoR-GS论文）
+        Lambda_lap: 正则化权重（默认8e-4，根据CoR-GS论文）
+    Returns:
+        loss: 标量损失值
+    """
+    import torch
+    from sklearn.neighbors import NearestNeighbors
+    
+    # 获取高斯点位置和密度
+    xyz = gaussians.get_xyz  # (N, 3)
+    density = gaussians.get_density  # (N,)
+    
+    if xyz.shape[0] < k + 1:
+        return torch.tensor(0.0, device=xyz.device, requires_grad=True)
+    
+    # 构建KNN图
+    xyz_np = xyz.detach().cpu().numpy()
+    nbrs = NearestNeighbors(n_neighbors=k+1, algorithm='ball_tree').fit(xyz_np)
+    distances, indices = nbrs.kneighbors(xyz_np)
+    
+    # 计算拉普拉斯损失：L = sum_{i,j} w_{ij} * (d_i - d_j)^2
+    device = xyz.device
+    total_loss = 0.0
+    count = 0
+    
+    for i in range(len(xyz_np)):
+        # 获取k个邻居（跳过自己）
+        neighbors = indices[i][1:]
+        neighbor_dists = distances[i][1:]
+        
+        if len(neighbors) == 0:
+            continue
+            
+        # 计算权重（高斯核：距离越近权重越大）
+        weights = torch.exp(-torch.tensor(neighbor_dists, device=device) / (neighbor_dists.mean() + 1e-7))
+        
+        # 计算密度差异
+        density_i = density[i]
+        density_neighbors = density[neighbors]
+        density_diff = density_i - density_neighbors
+        
+        # 加权平方差
+        weighted_loss = weights * (density_diff ** 2)
+        total_loss += weighted_loss.sum()
+        count += len(neighbors)
+    
+    if count == 0:
+        return torch.tensor(0.0, device=device, requires_grad=True)
+    
+    # 平均损失并乘以权重
+    loss = (total_loss / count) * Lambda_lap
+    return loss
