@@ -39,6 +39,13 @@ class ModelParams(ParamGroup):
         self.pseudo_strategy = "single"  # 伪标签策略
         self.sample_method = "uniform"   # 采样方法
         self.add_num = 50  # 额外视角数量
+
+        # 🎯 CoR-GS (Co-Regularization Gaussian Splatting) 参数 (2025-11-16)
+        self.enable_corgs = False  # 是否启用完整的 CoR-GS 双模型协同训练
+        self.corgs_tau = 0.3  # Co-pruning KNN 距离阈值 (适配 CT 尺度, 原论文 τ=5 for RGB)
+        self.corgs_coprune_freq = 500  # Co-pruning 触发频率 (迭代数)
+        self.corgs_pseudo_weight = 1.0  # 伪视图协同正则化损失权重 λ_p
+        self.corgs_log_freq = 500  # Disagreement 日志记录频率
         
         # Opacity decay功能
         self.opacity_decay = False  # 是否启用opacity decay

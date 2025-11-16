@@ -287,6 +287,11 @@ def training(
     use_tv = opt.lambda_tv > 0
     if use_tv:
         print("Use total variation loss")
+
+    # 🎯 CoR-GS: 定义背景颜色 (默认黑色)
+    background = torch.tensor([0, 0, 0], dtype=torch.float32, device="cuda")
+
+    if use_tv:
         tv_vol_size = opt.tv_vol_size
         tv_vol_nVoxel = torch.tensor([tv_vol_size, tv_vol_size, tv_vol_size])
         tv_vol_sVoxel = torch.tensor(scanner_cfg["dVoxel"]) * tv_vol_nVoxel
@@ -970,6 +975,9 @@ def training(
                 ),
                 queryfunc,
                 gaussiansN,
+                GsDict=GsDict,  # 🎯 CoR-GS: 传递 GsDict
+                pipe=pipe,      # 🎯 CoR-GS: 传递 pipe 参数
+                background=background,  # 🎯 CoR-GS: 传递背景颜色
             )
 
 
@@ -983,10 +991,17 @@ def training_report(
     renderFunc,
     queryFunc,
     gaussiansN=1,
+    GsDict=None,  # 🎯 CoR-GS: 传递 GsDict 以访问多个模型
+    pipe=None,    # 🎯 CoR-GS: Pipeline 参数 (用于渲染)
+    background=None,  # 🎯 CoR-GS: 背景颜色
 ):
     """
     训练过程中的评估与日志记录，包括训练统计、2D渲染性能、3D重建性能等。
     """
+    # 🎯 [DEBUG] 调试 CoR-GS 日志记录
+    if iteration % 500 == 0:
+        print(f"[DEBUG-REPORT] Iter {iteration}: gaussiansN={gaussiansN}, GsDict={GsDict is not None}, tb_writer={tb_writer is not None}", flush=True)
+
     # 记录训练统计信息
     if tb_writer:
         for key in list(metrics_train.keys()):
@@ -995,6 +1010,60 @@ def training_report(
         tb_writer.add_scalar(
             "train/total_points", scene.gaussians.get_xyz.shape[0], iteration
         )
+
+        # 🎯 CoR-GS Disagreement 日志记录 (阶段 1: 概念验证)
+        # 如果启用 CoR-GS 且有多个模型,计算并记录 Point/Rendering Disagreement
+        # 需要通过外部参数传递 dataset,这里先检查是否启用
+        enable_corgs_logging = gaussiansN >= 2 and GsDict is not None
+        if iteration % 500 == 0:  # 调试输出
+            print(f"[DEBUG-CORGS-1] Iter {iteration}: enable_corgs_logging={enable_corgs_logging}", flush=True)
+        if enable_corgs_logging:
+            # 仅在指定频率记录 (避免额外计算开销)
+            log_freq = 500  # 默认频率
+            if iteration % log_freq == 0:
+                print(f"[DEBUG-CORGS-2] Iter {iteration}: Entering CoR-GS logging block", flush=True)
+                try:
+                    from r2_gaussian.utils.corgs_metrics import log_corgs_metrics
+                    print(f"[DEBUG-CORGS-3] Import successful", flush=True)
+
+                    # 获取前两个 Gaussian 模型
+                    gaussians_1 = GsDict.get("gs0", scene.gaussians)
+                    gaussians_2 = GsDict.get("gs1", None)
+                    print(f"[DEBUG-CORGS-4] gs2={gaussians_2 is not None}, pipe={pipe is not None}", flush=True)
+
+                    if gaussians_2 is not None and pipe is not None:
+                        # 准备参数
+                        threshold = 0.3  # 默认阈值
+                        test_cameras = scene.getTestCameras()
+                        print(f"[DEBUG-CORGS-5] test_cameras length={len(test_cameras)}", flush=True)
+                        if len(test_cameras) > 0:
+                            test_camera = test_cameras[0]  # 使用第一个测试相机
+                            bg_color = background if background is not None else torch.tensor([0, 0, 0], dtype=torch.float32, device="cuda")
+
+                            # 计算所有 Disagreement 指标
+                            corgs_metrics = log_corgs_metrics(
+                                gaussians_1,
+                                gaussians_2,
+                                test_camera,
+                                pipe,
+                                bg_color,
+                                threshold=threshold
+                            )
+
+                            # 记录到 TensorBoard
+                            for metric_name, metric_value in corgs_metrics.items():
+                                tb_writer.add_scalar(f"corgs/{metric_name}", metric_value, iteration)
+
+                            # 打印日志 (可选)
+                            print(f"[CoR-GS Metrics @ Iter {iteration}] "
+                                  f"Fitness={corgs_metrics['point_fitness']:.4f}, "
+                                  f"RMSE={corgs_metrics['point_rmse']:.6f}, "
+                                  f"PSNR_diff={corgs_metrics['render_psnr_diff']:.2f} dB")
+
+                except ImportError as e:
+                    print(f"⚠️ CoR-GS metrics module not available: {e}")
+                except Exception as e:
+                    print(f"⚠️ Error computing CoR-GS metrics: {e}")
 
     # 测试与评估
     if iteration in testing_iterations:
