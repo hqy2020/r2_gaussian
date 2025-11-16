@@ -46,10 +46,10 @@ def generate_variant(input_path, output_dir, train_nums):
 
 
 # ========== 使用方式 ==========
-input_dir = "/home/qyhu/Documents/r2_gaussian/data/1"      # 原始 50 视角 pickle 所在目录
-output_dir = "/home/qyhu/Documents/r2_gaussian/data/369"  # 生成的新文件存储目录
+input_dir = "/home/qyhu/Documents/r2_ours/r2_gaussian/data/1"      # 原始 50 视角 pickle 所在目录
+output_dir = "/home/qyhu/Documents/r2_ours/r2_gaussian/data/24"  # 生成的新文件存储目录
 organ_names = ["chest", "foot", "abdomen", "head", "pancreas"]
-train_nums = [3, 6, 9]
+train_nums = [2,4]
 
 for organ in organ_names:
     input_path = os.path.join(input_dir, f"{organ}_50.pickle")

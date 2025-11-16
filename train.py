@@ -17,6 +17,7 @@ from tqdm import tqdm
 from argparse import ArgumentParser
 import numpy as np
 import yaml
+import matplotlib.pyplot as plt
 
 # 添加项目路径，导入自定义模块
 
@@ -32,6 +33,50 @@ from r2_gaussian.utils.depth_utils import extract_depth_from_volume_ray_casting 
 from r2_gaussian.utils.warp_utils import inverse_warp  # 逆变形函数 - IPSM实现
 from r2_gaussian.utils.image_utils import metric_vol, metric_proj  # 评估指标
 from r2_gaussian.utils.plot_utils import show_two_slice  # 可视化工具
+from r2_gaussian.utils.sghmc_optimizer import create_sss_optimizer, HybridOptimizer  # SSS优化器
+
+# FSGS伪标签改进模块 (可选，向下兼容)
+try:
+    from r2_gaussian.utils.pseudo_view_utils import FSGSPseudoViewGenerator, create_fsgs_pseudo_cameras
+    from r2_gaussian.utils.depth_estimator import MonocularDepthEstimator, create_depth_estimator
+    # from r2_gaussian.utils.fsgs_improved import FSGSImprovedGenerator, create_improved_fsgs_pseudo_cameras
+    HAS_FSGS_MODULES = True
+    print("✅ FSGS pseudo-label modules available")
+except ImportError as e:
+    HAS_FSGS_MODULES = False
+    print(f"📦 FSGS modules not available: {e}")
+    print("📦 Falling back to legacy pseudo-label implementation")
+
+# Medical Proximity-guided密化模块 (新增)
+try:
+    from r2_gaussian.utils.realistic_proximity_guided import HighQualityMedicalProximityGuidedDensifier
+    HAS_PROXIMITY_GUIDED = True
+    print("✅ Medical Proximity-guided密化 modules available")
+except ImportError as e:
+    HAS_PROXIMITY_GUIDED = False
+    print(f"📦 Proximity-guided modules not available: {e}")
+
+# FSGS Proximity-guided密化模块 (性能优化版本 - 2025-11-15)
+try:
+    from r2_gaussian.utils.fsgs_proximity_optimized import (
+        FSGSProximityDensifierOptimized as FSGSProximityDensifier,
+        add_fsgs_proximity_to_gaussian_model_optimized as add_fsgs_proximity_to_gaussian_model
+    )
+    HAS_FSGS_PROXIMITY = True
+    print("✅ FSGS Proximity-guided densification modules available (OPTIMIZED)")
+except ImportError as e:
+    HAS_FSGS_PROXIMITY = False
+    print(f"📦 FSGS Proximity modules not available: {e}")
+
+# 🌟🌟 FSGS 完整系统模块 (完整实现 - 2025-11-15)
+try:
+    from r2_gaussian.utils.fsgs_complete import create_fsgs_complete_system
+    from r2_gaussian.utils.fsgs_depth_renderer import FSGSDepthRenderer
+    HAS_FSGS_COMPLETE = True
+    print("✅ FSGS Complete System available (Proximity + Depth Supervision + Pseudo Views)")
+except ImportError as e:
+    HAS_FSGS_COMPLETE = False
+    print(f"📦 FSGS Complete System not available: {e}")
 
 
 def training(
@@ -79,11 +124,54 @@ def training(
         pipe,
     )
 
-    # 初始化高斯模型
-    gaussians = GaussianModel(scale_bound)
+    # 初始化高斯模型 (支持SSS)
+    use_student_t = getattr(args, 'enable_sss', False)
+    if use_student_t:
+        print("🎓 [SSS-R²] Enabling Student Splatting and Scooping!")
+        gaussians = GaussianModel(scale_bound, use_student_t=True)
+    else:
+        print("📦 [R²] Using standard Gaussian model")
+        gaussians = GaussianModel(scale_bound, use_student_t=False)
+        
     initialize_gaussian(gaussians, dataset, None)
     scene.gaussians = gaussians
     gaussians.training_setup(opt)
+    
+    # SSS: Create hybrid optimizer if enabled
+    sss_optimizer = None
+    if use_student_t:
+        sss_optimizer = create_sss_optimizer(gaussians, opt)
+        if sss_optimizer:
+            print("🔥 [SSS-R²] Created hybrid SGHMC+Adam optimizer")
+    
+    # FSGS Proximity-guided密化器初始化 (最新版本)
+    proximity_densifier = None
+    enable_fsgs_proximity = dataset.enable_fsgs_proximity if hasattr(dataset, 'enable_fsgs_proximity') else False
+    
+    if enable_fsgs_proximity and HAS_FSGS_PROXIMITY:
+        # 配置FSGS proximity参数 - 针对foot 3视角优化
+        proximity_threshold = dataset.proximity_threshold if hasattr(dataset, 'proximity_threshold') else 8.0
+        enable_medical_constraints = dataset.enable_medical_constraints if hasattr(dataset, 'enable_medical_constraints') else True
+        organ_type = dataset.proximity_organ_type if hasattr(dataset, 'proximity_organ_type') else 'foot'
+        
+        # 为主高斯模型添加FSGS proximity功能
+        gaussians = add_fsgs_proximity_to_gaussian_model(
+            gaussians, 
+            proximity_threshold=proximity_threshold,
+            enable_medical_constraints=enable_medical_constraints,
+            organ_type=organ_type
+        )
+        print(f"🌟 [FSGS-Proximity] Enabled for {organ_type} with threshold={proximity_threshold}")
+    elif enable_fsgs_proximity:
+        print("⚠️ [FSGS-Proximity] Module not available, falling back to standard densification")
+    
+    # 保留旧版本Proximity-guided密化器兼容性
+    if hasattr(args, 'enable_proximity_guided') and args.enable_proximity_guided and HAS_PROXIMITY_GUIDED:
+        proximity_densifier = HighQualityMedicalProximityGuidedDensifier()
+        organ_type = getattr(args, 'proximity_organ_type', 'foot')
+        print(f"🔬 [Legacy Proximity-Guided] Enabling medical proximity-guided densification for {organ_type}")
+    elif hasattr(args, 'enable_proximity_guided') and args.enable_proximity_guided:
+        print("⚠️ [Legacy Proximity-Guided] Module not available, falling back to standard densification")
     
     # 创建高斯场字典 - 参考X-Gaussian-depth实现
     GsDict = {}
@@ -91,21 +179,104 @@ def training(
         if i == 0:
             GsDict[f"gs{i}"] = gaussians
         else:
-            GsDict[f"gs{i}"] = GaussianModel(scale_bound)
+            GsDict[f"gs{i}"] = GaussianModel(scale_bound, use_student_t=use_student_t)
             initialize_gaussian(GsDict[f"gs{i}"], dataset, None)
             GsDict[f"gs{i}"].training_setup(opt)
-            print(f"Create gaussians{i}")
+            if use_student_t:
+                print(f"🎓 [SSS-R²] Create gaussians{i} with Student's t distribution")
+            else:
+                print(f"📦 [R²] Create gaussians{i}")
     print(f"GsDict.keys() is {GsDict.keys()}")
     
-    # 初始化多高斯和伪标签功能 - 参考X-Gaussian实现
+    # 🌟🌟 FSGS 完整系统初始化 (Proximity + Depth + Pseudo Views - 2025-11-15)
+    fsgs_system = None
+    enable_fsgs_complete = (
+        enable_fsgs_proximity and
+        HAS_FSGS_COMPLETE and
+        getattr(dataset, 'enable_fsgs_depth', True)  # 默认启用深度监督
+    )
+
+    if enable_fsgs_complete:
+        print("\n" + "="*60)
+        print("🎯 Initializing FSGS Complete System")
+        print("="*60)
+
+        try:
+            # 创建 FSGS 完整系统
+            fsgs_system = create_fsgs_complete_system(dataset)
+
+            # 初始化伪相机（在训练相机加载后）
+            train_cameras = scene.getTrainCameras()
+            fsgs_system.initialize_pseudo_cameras(train_cameras)
+
+            print("✅ FSGS Complete System initialized successfully!")
+            print("   - Proximity Unpooling: ✅")
+            print("   - Depth Supervision: ✅" if fsgs_system.enable_depth_supervision else "   - Depth Supervision: ❌")
+            print("   - Pseudo Views: ✅" if fsgs_system.enable_pseudo_views else "   - Pseudo Views: ❌")
+            print("="*60 + "\n")
+
+        except Exception as e:
+            print(f"⚠️  FSGS Complete System initialization failed: {e}")
+            print("   Falling back to proximity-only mode")
+            fsgs_system = None
+            enable_fsgs_complete = False
+
+    # FSGS伪标签功能初始化 (向下兼容，仅在未使用完整系统时)
     pseudo_cameras = None
     pseudo_labels = None
-    if dataset.multi_gaussian or dataset.pseudo_labels:
-        print("Generating pseudo cameras for multi-view training...")
-        pseudo_cameras = scene.generate_multi_gaussian_cameras(
-            num_additional_views=dataset.num_additional_views
-        )
-        print(f"Generated {len(pseudo_cameras)} pseudo cameras")
+    depth_estimator = None
+    enable_fsgs = False  # 初始化（FSGS Complete模式下不使用旧版深度监督）
+
+    if not enable_fsgs_complete:
+        fsgs_generator = None
+        enable_fsgs = getattr(args, 'enable_fsgs_pseudo', False) if args else False
+
+        if dataset.multi_gaussian or dataset.pseudo_labels:
+            if enable_fsgs and HAS_FSGS_MODULES:
+                # 选择FSGS版本: improved 或 original
+                fsgs_version = getattr(args, 'fsgs_version', 'improved') if args else 'improved'
+
+                # 暂时只使用原版FSGS，避免导入问题
+                if fsgs_version == 'improved':
+                    print("🎯 [FSGS-Original] Using original FSGS (improved temporarily disabled)...")
+                    fsgs_version = 'original'
+
+                if fsgs_version == 'original':
+                    print("🎯 [FSGS-Original] Using original FSGS implementation...")
+
+                    # 创建原版FSGS风格伪视角生成器
+                    fsgs_generator = FSGSPseudoViewGenerator(
+                        noise_std=getattr(args, 'fsgs_noise_std', 0.05) if args else 0.05
+                    )
+
+                    # 生成原版FSGS风格伪相机
+                    pseudo_cameras = fsgs_generator.generate_pseudo_cameras(
+                        scene.train_cameras,
+                        num_views=dataset.num_additional_views,
+                        device=gaussians._xyz.device
+                    )
+
+                    print(f"✅ [FSGS-Original] Generated {len(pseudo_cameras)} original FSGS pseudo cameras")
+
+                # 初始化深度估计器 (如果需要)
+                depth_model_type = getattr(args, 'fsgs_depth_model', 'dpt_large') if args else 'dpt_large'
+                if depth_model_type != 'disabled':
+                    depth_estimator = create_depth_estimator(
+                        model_type=depth_model_type,
+                        device=gaussians._xyz.device,
+                        enable_fsgs_depth=True
+                    )
+                    print(f"✅ [FSGS] Depth estimator: {depth_model_type}")
+                else:
+                    depth_estimator = None
+                    print("📦 [FSGS] Depth estimator disabled")
+
+            else:
+                print("📦 [Legacy] Using original pseudo-label implementation...")
+                pseudo_cameras = scene.generate_multi_gaussian_cameras(
+                    num_additional_views=dataset.num_additional_views
+                )
+                print(f"Generated {len(pseudo_cameras)} legacy pseudo cameras")
     # 加载断点（如有）
     if checkpoint is not None:
         (model_params, first_iter) = torch.load(checkpoint)
@@ -193,8 +364,10 @@ def training(
                     # 原始错误版本：identity loss（自己和自己比较）
                     LossDict[f"loss_gs{i}"] += dataset.multi_gaussian_weight * l1_loss(pseudo_image, pseudo_image.detach())
         
-        # 伪标签训练损失 - 参考IPSM实现（带inverse warp和随机选择drop机制）
-        if dataset.pseudo_labels and pseudo_cameras is not None and iteration > 1000:  # 延迟启动伪标签
+        # FSGS伪标签训练损失 (可选，向下兼容)
+        # FSGS延迟启动: 2000次迭代后启动 (原版: 1000次)
+        fsgs_start_iter = 2000 if enable_fsgs_proximity else 1000
+        if dataset.pseudo_labels and pseudo_cameras is not None and iteration > fsgs_start_iter:
             # 获取伪相机和对应的最近真实相机
             pseudo_stack, closest_cam_stack = scene.getPseudoCamerasWithClosestViews(pseudo_cameras)
             
@@ -324,6 +497,92 @@ def training(
                         print(f"[IPSM Drop] Iteration {iteration}, GS{j}: masked_loss={Ll1_masked_pseudo.item():.6f}, "
                               f"loss_scale={loss_scale:.3f}, valid_mask_ratio={mask_valid_ratio:.3f}")
         
+        # FSGS深度监督 (伪视角+训练视角深度约束)
+        if enable_fsgs and depth_estimator and depth_estimator.enabled and iteration > fsgs_start_iter:
+            fsgs_depth_weight = getattr(args, 'fsgs_depth_weight', 0.05) if args else 0.05
+            
+            for j in range(gaussiansN):
+                # 1. 训练视角深度监督
+                try:
+                    # 估计当前训练视角的深度
+                    gt_image_for_depth = gt_image.unsqueeze(0)  # [1, C, H, W]
+                    estimated_depth = depth_estimator.estimate_depth(gt_image_for_depth, normalize=True)
+                    
+                    if estimated_depth is not None:
+                        # 渲染当前视角的深度图
+                        rendered_depth = RenderDict.get(f"depth_gs{j}")
+                        if rendered_depth is not None:
+                            # 计算Pearson相关性深度损失
+                            depth_loss_train = depth_estimator.compute_pearson_loss(
+                                rendered_depth, estimated_depth.squeeze(0)
+                            )
+                            LossDict[f"loss_gs{j}"] += fsgs_depth_weight * depth_loss_train
+                            
+                            if iteration % 500 == 0:
+                                print(f"[FSGS] Iteration {iteration}, GS{j}: train_depth_loss={depth_loss_train.item():.6f}")
+                                
+                except Exception as e:
+                    if iteration % 1000 == 0:  # 减少错误日志频率
+                        print(f"Warning: FSGS train depth loss failed: {e}")
+                
+                # 2. 伪视角深度监督 (如果有伪相机)
+                if pseudo_cameras and len(pseudo_cameras) > 0:
+                    try:
+                        # 随机选择一个伪相机进行深度监督
+                        pseudo_cam = pseudo_cameras[randint(0, len(pseudo_cameras) - 1)]
+                        
+                        # 渲染伪视角
+                        pseudo_render_pkg = render(pseudo_cam, GsDict[f'gs{j}'], pipe)
+                        pseudo_image = pseudo_render_pkg["render"]
+                        pseudo_depth = pseudo_render_pkg.get("depth")
+                        
+                        if pseudo_depth is not None:
+                            # 估计伪视角深度
+                            pseudo_image_for_depth = pseudo_image.unsqueeze(0)
+                            estimated_pseudo_depth = depth_estimator.estimate_depth(pseudo_image_for_depth, normalize=True)
+                            
+                            if estimated_pseudo_depth is not None:
+                                # 计算伪视角深度损失
+                                depth_loss_pseudo = depth_estimator.compute_pearson_loss(
+                                    pseudo_depth, estimated_pseudo_depth.squeeze(0)
+                                )
+                                LossDict[f"loss_gs{j}"] += fsgs_depth_weight * depth_loss_pseudo
+                                
+                                if iteration % 500 == 0:
+                                    print(f"[FSGS] Iteration {iteration}, GS{j}: pseudo_depth_loss={depth_loss_pseudo.item():.6f}")
+                                    
+                    except Exception as e:
+                        if iteration % 1000 == 0:  # 减少错误日志频率
+                            print(f"Warning: FSGS pseudo depth loss failed: {e}")
+
+        # 🌟🌟 FSGS Complete 深度监督 (Proximity + Depth + Pseudo Views - 2025-11-15)
+        if enable_fsgs_complete and fsgs_system is not None:
+            try:
+                # 为每个高斯场计算深度监督loss
+                for i in range(gaussiansN):
+                    depth_loss_dict = fsgs_system.compute_depth_loss(
+                        viewpoint_cam,
+                        GsDict[f'gs{i}'],
+                        pipe,
+                        background,
+                        iteration
+                    )
+
+                    # 添加深度loss到总loss
+                    if depth_loss_dict['depth_loss'].item() > 0:
+                        LossDict[f"loss_gs{i}"] += depth_loss_dict['depth_loss']
+
+                        # 每500轮打印一次
+                        if iteration % 500 == 0:
+                            print(f"[FSGS Complete] Iteration {iteration}, GS{i}:")
+                            print(f"  train_depth_loss={depth_loss_dict['train_depth_loss'].item():.6f}")
+                            print(f"  pseudo_depth_loss={depth_loss_dict['pseudo_depth_loss'].item():.6f}")
+                            print(f"  total_depth_loss={depth_loss_dict['depth_loss'].item():.6f}")
+
+            except Exception as e:
+                if iteration % 1000 == 0:
+                    print(f"⚠️  [FSGS Complete] Depth loss failed: {e}")
+
         # Depth损失 - 使用voxelization提取深度
         if dataset.enable_depth and dataset.depth_loss_weight > 0:
             for i in range(gaussiansN):
@@ -372,19 +631,22 @@ def training(
         
         # 图拉普拉斯正则化 - 参考CoR-GS论文（与depth约束互补）
         # 在depth+drop基础上添加，提升稀疏视角重建质量
+        # 性能优化：每500次迭代计算一次，减少计算量（参考GR-Gaussian论文的动态评估策略）
+        # 降低频率以避免GPU内存错误，同时保持正则化效果
         if dataset.enable_depth and dataset.depth_loss_weight > 0 and iteration > 5000:
-            for i in range(gaussiansN):
-                if gaussiansN == 1:  # 单高斯场（你的depth+drop实验使用gaussiansN=1）
-                    graph_laplacian_loss = compute_graph_laplacian_loss(
-                        GsDict[f"gs{i}"],
-                        k=6,           # KNN邻居数量（CoR-GS论文推荐）
-                        Lambda_lap=8e-4  # 正则化权重（CoR-GS论文推荐）
-                    )
-                    LossDict[f"loss_gs{i}"] += graph_laplacian_loss
-                    
-                    # 可选：每1000次迭代打印一次
-                    if iteration % 1000 == 0:
-                        print(f"[图拉普拉斯] Iteration {iteration}: graph_loss={graph_laplacian_loss.item():.6f}")
+            if iteration % 500 == 0:  # 每500次迭代计算一次（降低频率以避免GPU错误）
+                for i in range(gaussiansN):
+                    if gaussiansN == 1:  # 单高斯场（你的depth+drop实验使用gaussiansN=1）
+                        graph_laplacian_loss = compute_graph_laplacian_loss(
+                            GsDict[f"gs{i}"],
+                            k=6,           # KNN邻居数量（CoR-GS论文推荐）
+                            Lambda_lap=8e-4  # 正则化权重（CoR-GS论文推荐）
+                        )
+                        LossDict[f"loss_gs{i}"] += graph_laplacian_loss
+                        
+                        # 可选：每1000次迭代打印一次
+                        if iteration % 1000 == 0:
+                            print(f"[图拉普拉斯] Iteration {iteration}: graph_loss={graph_laplacian_loss.item():.6f}")
        
         # 3D TV 损失 - 为每个高斯场计算
         if use_tv:
@@ -402,7 +664,76 @@ def training(
                 )["vol"]
                 loss_tv = tv_3d_loss(vol_pred, reduction="mean")
                 LossDict[f"loss_gs{i}"] += opt.lambda_tv * loss_tv
+        
+        # SSS: Add ENHANCED regularization losses for Student's t parameters
+        for i in range(gaussiansN):
+            if hasattr(GsDict[f"gs{i}"], 'use_student_t') and GsDict[f"gs{i}"].use_student_t:
+                opacity = GsDict[f"gs{i}"].get_opacity
+                nu = GsDict[f"gs{i}"].get_nu
+                
+                # PROGRESSIVE opacity balance: adapt target based on training phase
+                if iteration < 10000:
+                    # Phase 1: Strongly prefer positive (95% positive)
+                    pos_target = 0.95
+                    neg_penalty_weight = 10.0
+                elif iteration < 20000:
+                    # Phase 2: Allow some negative (85% positive)
+                    pos_target = 0.85
+                    neg_penalty_weight = 5.0
+                else:
+                    # Phase 3: More flexible (75% positive)
+                    pos_target = 0.75
+                    neg_penalty_weight = 2.0
+                
+                pos_count = (opacity > 0).float().mean()
+                balance_loss = torch.abs(pos_count - pos_target)
+                LossDict[f"loss_gs{i}"] += 0.003 * balance_loss
+                
+                # Nu regularization: encourage diversity within reasonable range
+                nu_diversity_loss = -torch.std(nu) * 0.1  # Encourage diversity
+                nu_range_loss = torch.mean(torch.relu(nu - 8.0)) + torch.mean(torch.relu(1.5 - nu))  # Keep in [1.5, 8]
+                LossDict[f"loss_gs{i}"] += 0.001 * (nu_diversity_loss + nu_range_loss)
+                
+                # Adaptive negative opacity penalty
+                neg_mask = opacity < 0
+                if neg_mask.any():
+                    extreme_neg_mask = opacity < -0.2  # Very negative values
+                    if extreme_neg_mask.any():
+                        extreme_penalty = torch.mean(torch.abs(opacity[extreme_neg_mask])) * neg_penalty_weight
+                        LossDict[f"loss_gs{i}"] += 0.002 * extreme_penalty
 
+        # SSS: Debug logging for ENHANCED regularization terms
+        if hasattr(GsDict[f"gs0"], 'use_student_t') and GsDict[f"gs0"].use_student_t and iteration % 2000 == 0:
+            opacity = GsDict[f"gs0"].get_opacity
+            nu = GsDict[f"gs0"].get_nu
+            pos_ratio = (opacity > 0).float().mean()
+            neg_ratio = (opacity < 0).float().mean()
+            nu_mean = nu.mean()
+            nu_std = nu.std()
+            
+            # Determine current phase and targets
+            if iteration < 10000:
+                phase = "Early (Positive)"
+                pos_target = 0.95
+            elif iteration < 20000:
+                phase = "Mid (Limited-Neg)"
+                pos_target = 0.85
+            else:
+                phase = "Late (Flexible)"
+                pos_target = 0.75
+            
+            print(f"🎯 [SSS-Enhanced] Iter {iteration} - Phase: {phase}")
+            print(f"          Opacity: [{opacity.min():.3f}, {opacity.max():.3f}], Balance: {pos_ratio:.3f} pos (target: {pos_target:.2f})")
+            print(f"          Nu: mean={nu_mean:.2f}, std={nu_std:.2f}, range=[{nu.min():.1f}, {nu.max():.1f}]")
+            
+            # Warnings based on phase
+            if pos_ratio < pos_target - 0.05:
+                print(f"⚠️  [SSS-Enhanced] Warning: {pos_ratio*100:.1f}% positive opacity (target: {pos_target*100:.0f}%)")
+            
+            extreme_neg = (opacity < -0.2).float().mean()
+            if extreme_neg > 0.01:
+                print(f"⚠️  [SSS-Enhanced] Warning: {extreme_neg*100:.1f}% extreme negative opacity (<-0.2)")
+        
         # 反向传播 - 为每个高斯场
         for i in range(gaussiansN):
             LossDict[f"loss_gs{i}"].backward(retain_graph=(i < gaussiansN - 1))
@@ -428,16 +759,112 @@ def training(
                     iteration > opt.densify_from_iter
                     and iteration % opt.densification_interval == 0
                 ):
+                    # 🔬 Proximity-Guided Densification (医学感知密化) 
+                    if (proximity_densifier is not None and 
+                        hasattr(args, 'proximity_interval') and 
+                        iteration % args.proximity_interval == 0):
+                        
+                        organ_type = getattr(args, 'proximity_organ_type', 'foot')
+                        max_points = getattr(args, 'proximity_max_points', 500)
+                        
+                        for i in range(gaussiansN):
+                            current_gaussians = GsDict[f"gs{i}"].get_xyz  # (N, 3)
+                            current_opacity = GsDict[f"gs{i}"].get_opacity  # (N, 1)
+                            
+                            print(f"🔬 [Proximity-Guided] Iter {iteration}: 分析GS{i}的医学合理性...")
+                            
+                            # 执行医学感知的proximity密化
+                            densify_result = proximity_densifier.proximity_guided_densify_realistic(
+                                current_gaussians, current_opacity, organ_type, max_points
+                            )
+                            
+                            if densify_result['densified_points'] > 0:
+                                new_positions = densify_result['new_positions']  # (K, 3) 
+                                new_opacities = densify_result['new_opacities']  # (K, 1)
+                                
+                                # 创建新高斯点的其他属性 (基于近邻插值)
+                                device = current_gaussians.device
+                                num_new = new_positions.shape[0]
+                                
+                                # 初始化其他属性
+                                new_colors = torch.zeros(num_new, 3, device=device)  # RGB
+                                new_rotations = torch.zeros(num_new, 4, device=device)  # 四元数
+                                new_rotations[:, 0] = 1.0  # w分量设为1 (单位四元数)
+                                new_scales = torch.ones(num_new, 3, device=device) * 0.01  # 小尺度
+                                
+                                # 添加新高斯点到模型
+                                GsDict[f"gs{i}"].densification_postfix(
+                                    new_positions, new_colors, new_rotations, new_scales, new_opacities
+                                )
+                                
+                                print(f"✅ [Proximity-Guided] GS{i}: 新增 {num_new} 个医学合理的高斯点")
+                    
+                    # 标准密化和剪枝流程
                     for i in range(gaussiansN):
-                        GsDict[f"gs{i}"].densify_and_prune(
-                        opt.densify_grad_threshold,
-                        opt.density_min_threshold,
-                        opt.max_screen_size,
-                        max_scale,
-                        opt.max_num_gaussians,
-                        densify_scale_threshold,
-                        bbox,
-                    )
+                        # SSS: Apply stricter point control for Student's t distributions
+                        if hasattr(GsDict[f"gs{i}"], 'use_student_t') and GsDict[f"gs{i}"].use_student_t:
+                            # Reduce max points for SSS to prevent performance issues
+                            max_points_sss = min(opt.max_num_gaussians, 50000)  # Cap at 50k for SSS
+                            current_points = GsDict[f"gs{i}"].get_xyz.shape[0]
+                            
+                            # More aggressive pruning for SSS
+                            if current_points > max_points_sss * 0.8:  # Start aggressive pruning at 80% 
+                                sss_grad_threshold = opt.densify_grad_threshold * 1.5  # Harder to densify
+                                sss_density_threshold = opt.density_min_threshold * 0.8  # Easier to prune
+                            else:
+                                sss_grad_threshold = opt.densify_grad_threshold
+                                sss_density_threshold = opt.density_min_threshold
+                            
+                            print(f"🎓 [SSS-Control] Iter {iteration}: GS{i} has {current_points} points (max: {max_points_sss})")
+                            
+                            # 使用增强版密化函数 (FSGS proximity-guided)
+                            if hasattr(GsDict[f"gs{i}"], 'enhanced_densify_and_prune'):
+                                GsDict[f"gs{i}"].enhanced_densify_and_prune(
+                                    sss_grad_threshold,
+                                    sss_density_threshold,
+                                    opt.max_screen_size,
+                                    max_scale,
+                                    max_points_sss,  # Use SSS-specific limit
+                                    densify_scale_threshold,
+                                    bbox,
+                                    enable_proximity_densify=enable_fsgs_proximity,
+                                )
+                            else:
+                                # 回退到标准密化
+                                GsDict[f"gs{i}"].densify_and_prune(
+                                    sss_grad_threshold,
+                                    sss_density_threshold,
+                                    opt.max_screen_size,
+                                    max_scale,
+                                    max_points_sss,  # Use SSS-specific limit
+                                    densify_scale_threshold,
+                                    bbox,
+                                )
+                        else:
+                            # Standard densification for non-SSS gaussians
+                            # 使用增强版密化函数 (FSGS proximity-guided)
+                            if hasattr(GsDict[f"gs{i}"], 'enhanced_densify_and_prune'):
+                                GsDict[f"gs{i}"].enhanced_densify_and_prune(
+                                    opt.densify_grad_threshold,
+                                    opt.density_min_threshold,
+                                    opt.max_screen_size,
+                                    max_scale,
+                                    opt.max_num_gaussians,
+                                    densify_scale_threshold,
+                                    bbox,
+                                    enable_proximity_densify=enable_fsgs_proximity,
+                                )
+                            else:
+                                # 回退到标准密化
+                                GsDict[f"gs{i}"].densify_and_prune(
+                                    opt.densify_grad_threshold,
+                                    opt.density_min_threshold,
+                                    opt.max_screen_size,
+                                    max_scale,
+                                    opt.max_num_gaussians,
+                                    densify_scale_threshold,
+                                    bbox,
+                                )
             
             # Density decay功能 - 在densification开始后对密度进行衰减
             if dataset.opacity_decay and iteration > opt.densify_from_iter:
@@ -450,11 +877,35 @@ def training(
                 if GsDict[f"gs{i}"].get_density.shape[0] == 0:
                     raise ValueError(
                         f"No Gaussian left in gs{i}. Change adaptive control hyperparameters!"
-                )
+                    )
 
             # 优化器更新 - 为每个高斯场
             if iteration < opt.iterations:
                 for i in range(gaussiansN):
+                    # SSS: Apply ADAPTIVE gradient clipping for enhanced stability
+                    if hasattr(GsDict[f"gs{i}"], 'use_student_t') and GsDict[f"gs{i}"].use_student_t:
+                        # Adaptive clipping based on training phase
+                        if iteration < 10000:
+                            # Phase 1: Very conservative
+                            nu_clip_norm = 0.3
+                            opacity_clip_norm = 0.8
+                        elif iteration < 20000:
+                            # Phase 2: Moderate
+                            nu_clip_norm = 0.5
+                            opacity_clip_norm = 1.2
+                        else:
+                            # Phase 3: More flexible
+                            nu_clip_norm = 0.8
+                            opacity_clip_norm = 1.5
+                        
+                        if hasattr(GsDict[f"gs{i}"], '_nu') and GsDict[f"gs{i}"]._nu.grad is not None:
+                            torch.nn.utils.clip_grad_norm_(GsDict[f"gs{i}"]._nu, max_norm=nu_clip_norm)
+                        if hasattr(GsDict[f"gs{i}"], '_opacity') and GsDict[f"gs{i}"]._opacity.grad is not None:
+                            torch.nn.utils.clip_grad_norm_(GsDict[f"gs{i}"]._opacity, max_norm=opacity_clip_norm)
+                        # Standard position gradient clipping
+                        if GsDict[f"gs{i}"]._xyz.grad is not None:
+                            torch.nn.utils.clip_grad_norm_(GsDict[f"gs{i}"]._xyz, max_norm=2.0)
+                    
                     GsDict[f"gs{i}"].optimizer.step()
                     GsDict[f"gs{i}"].optimizer.zero_grad(set_to_none=True)
 
@@ -572,6 +1023,32 @@ def training_report(
                     gt_image = viewpoint.original_image.to("cuda")
                     images.append(image)
                     gt_images.append(gt_image)
+                    
+                    # 保存单独的渲染图像（PNG格式）
+                    if idx in show_idx:
+                        # 创建可视化输出目录
+                        vis_output_dir = osp.join(eval_save_path, "render_images")
+                        os.makedirs(vis_output_dir, exist_ok=True)
+                        
+                        # 保存GT图像
+                        gt_img_np = gt_image[0].detach().cpu().numpy()
+                        gt_img_np = np.clip(gt_img_np, 0, 1) * 255
+                        gt_save_path = osp.join(vis_output_dir, f"{viewpoint.image_name}_gt.png")
+                        plt.imsave(gt_save_path, gt_img_np, cmap='viridis')
+                        
+                        # 保存渲染图像  
+                        render_img_np = image[0].detach().cpu().numpy()
+                        render_img_np = np.clip(render_img_np, 0, 1) * 255
+                        render_save_path = osp.join(vis_output_dir, f"{viewpoint.image_name}_render.png")
+                        plt.imsave(render_save_path, render_img_np, cmap='viridis')
+                        
+                        # 保存对比图（差异图）
+                        diff_img = np.abs(gt_img_np - render_img_np)
+                        diff_save_path = osp.join(vis_output_dir, f"{viewpoint.image_name}_diff.png")
+                        plt.imsave(diff_save_path, diff_img, cmap='hot')
+                        
+                        print(f"💾 保存渲染图像: {viewpoint.image_name} 到 {vis_output_dir}")
+                    
                     if tb_writer and idx in show_idx:
                         image_show_2d.append(
                             torch.from_numpy(
@@ -688,6 +1165,20 @@ if __name__ == "__main__":
     parser.add_argument("--config", type=str, default=None)  # 配置文件路径
     parser.add_argument("--enable_drop", action="store_true", default=False)  # 是否启用 drop 方法
     parser.add_argument("--drop_rate", type=float, default=0.10)  # drop 比例（0~1）
+    
+    # SSS: Student Splatting and Scooping 参数
+    parser.add_argument("--enable_sss", action="store_true", default=False)  # 是否启用SSS
+    parser.add_argument("--sghmc_friction", type=float, default=0.1)  # SGHMC摩擦系数
+    parser.add_argument("--sghmc_burnin_steps", type=int, default=1000)  # SGHMC烧入步数
+    parser.add_argument("--nu_lr_init", type=float, default=0.001)  # nu参数初始学习率
+    parser.add_argument("--opacity_lr_init", type=float, default=0.01)  # opacity参数初始学习率
+    
+    # FSGS Proximity-Guided Densification 参数在arguments/__init__.py中已定义
+    
+    # 旧版本 Proximity-Guided Densification 参数 (兼容性保留)
+    parser.add_argument("--enable_proximity_guided", action="store_true", default=False)  # 是否启用旧版proximity-guided密化
+    parser.add_argument("--proximity_interval", type=int, default=1000)  # proximity密化间隔
+    parser.add_argument("--proximity_max_points", type=int, default=500)  # 每次proximity密化最大点数
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
     args.test_iterations.append(args.iterations)

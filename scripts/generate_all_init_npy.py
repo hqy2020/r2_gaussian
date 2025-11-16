@@ -1,8 +1,8 @@
 import os
 
-pickle_dir = "/home/qyhu/Documents/r2_gaussian/data/369"
+pickle_dir = "/home/qyhu/Documents/r2_ours/r2_gaussian/data/24"
 organ_names = ["chest", "foot", "abdomen", "head", "pancreas"]
-train_nums = [3, 6, 9]
+train_nums = [2,4]
 
 for organ in organ_names:
     for num in train_nums:

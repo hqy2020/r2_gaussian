@@ -21,6 +21,7 @@ def show_gaussians(
     bbox=[[-1, -1, -1], [1, 1, 1]],
     sort_gaussians="no",  # ["density", "scale", None]
     mesh_resoltuion=3,
+    save_path=None,  # 添加保存路径参数
 ):
     """Visualize gaussians for debugging."""
     g_density = t2a(gaussians.get_density)[:, 0]
@@ -73,9 +74,19 @@ def show_gaussians(
 
     show_set = ellipses + [bbox_o3d]
 
-    o3d.visualization.draw_geometries(show_set)
-    # o3d.visualization.webrtc_server.enable_webrtc()
-    # o3d.visualization.draw(show_set)
+    if save_path is not None:
+        # 保存为图片
+        vis = o3d.visualization.Visualizer()
+        vis.create_window(width=800, height=600, visible=False)
+        for geom in show_set:
+            vis.add_geometry(geom)
+        vis.capture_screen_image(save_path)
+        vis.destroy_window()
+        print(f"💾 Saved Gaussian visualization: {save_path}")
+    else:
+        o3d.visualization.draw_geometries(show_set)
+        # o3d.visualization.webrtc_server.enable_webrtc()
+        # o3d.visualization.draw(show_set)
 
 
 def create_o3d_ellipse(center, scale, quad, density, resolution=5):

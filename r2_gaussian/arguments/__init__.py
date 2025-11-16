@@ -59,6 +59,31 @@ class ModelParams(ParamGroup):
         self.pseudo_label_weight = 0.05  # 伪标签损失权重
         self.depth_loss_weight = 0.0  # r2-gaussian不支持深度输出，设置深度损失权重为0
         
+        # 🎯 FSGS伪标签改进参数 (向下兼容)
+        self.enable_fsgs_pseudo = False  # 是否启用FSGS风格伪标签 (默认关闭确保兼容性)
+        self.fsgs_version = "improved"  # FSGS版本 ("improved", "original")
+        self.fsgs_noise_std = 0.05  # FSGS伪视角位置噪声标准差
+        self.fsgs_proximity_threshold = 8.0  # FSGS Proximity-guided阈值
+        self.fsgs_depth_model = "dpt_large"  # FSGS深度估计模型 ("dpt_large", "dpt_hybrid", "midas_small", "midas_large", "disabled")
+        self.fsgs_depth_weight = 0.05  # FSGS深度监督权重 (参考FSGS论文λ₃=0.05)
+        self.fsgs_start_iter = 2000  # FSGS伪标签启动迭代数 (FSGS论文推荐2000)
+        
+        # 🌟 FSGS Proximity-guided密化参数 (新增)
+        self.enable_fsgs_proximity = False  # 是否启用FSGS proximity-guided密化
+        self.proximity_threshold = 6.0  # proximity score阈值（论文推荐值）
+        self.enable_medical_constraints = False  # 是否启用医学约束（非FSGS原文，建议关闭）
+        self.proximity_organ_type = "foot"  # 器官类型
+        self.proximity_k_neighbors = 3  # 计算proximity的邻居数量
+
+        # 🌟🌟 FSGS 深度监督参数 (完整FSGS实现 - 2025-11-15)
+        self.enable_fsgs_depth = True  # 是否启用深度监督（FSGS核心创新）
+        self.fsgs_depth_model = "dpt_large"  # 深度估计模型: dpt_large/dpt_hybrid/midas_small/disabled
+        self.fsgs_depth_weight = 0.05  # 深度loss权重（论文建议0.01-0.1）
+        self.enable_fsgs_pseudo_views = True  # 是否启用伪视角生成（FSGS核心创新）
+        self.num_fsgs_pseudo_views = 10  # 伪视角数量
+        self.fsgs_noise_std = 0.05  # 伪视角位置噪声标准差（用于相机位置，论文Eq.5）
+        self.fsgs_start_iter = 2000  # FSGS功能启动迭代数
+
         super().__init__(parser, "Loading Parameters", sentinel)
 
     def extract(self, args):

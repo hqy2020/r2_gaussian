@@ -62,18 +62,37 @@ class GaussianModel:
         self.density_inverse_activation = inverse_softplus
 
         self.rotation_activation = torch.nn.functional.normalize
+        
+        # SSS: Student's t distribution activation functions (CONSERVATIVE)
+        if self.use_student_t:
+            # nu parameter: CONSERVATIVE range [2, 8] for numerical stability
+            self.nu_activation = lambda x: torch.sigmoid(x) * (8 - 2) + 2
+            self.nu_inverse_activation = lambda x: inverse_sigmoid((x - 2) / (8 - 2))
+            # opacity: CONSERVATIVE SCOOPING - mostly positive with limited negative (5-10%)
+            # Using sigmoid + offset to ensure most values are positive
+            self.opacity_activation = lambda x: torch.sigmoid(x) * 1.2 - 0.1  # Range [-0.1, 1.1]
+            self.opacity_inverse_activation = lambda x: inverse_sigmoid((torch.clamp(x, -0.09, 1.09) + 0.1) / 1.2)
+        else:
+            # Default: same as density for backward compatibility
+            self.nu_activation = lambda x: torch.ones_like(x) * float('inf')  # Gaussian limit
+            self.opacity_activation = lambda x: torch.sigmoid(x)  # [0,1] range
 
-    def __init__(self, scale_bound=None):
+    def __init__(self, scale_bound=None, use_student_t=False):
         self._xyz = torch.empty(0)  # world coordinate
         self._scaling = torch.empty(0)  # 3d scale
         self._rotation = torch.empty(0)  # rotation expressed in quaternions
         self._density = torch.empty(0)  # density
+        # SSS: Student's t distribution parameter (degrees of freedom)
+        self._nu = torch.empty(0)  # degrees of freedom for t-distribution
+        # SSS: opacity for scooping (negative components)
+        self._opacity = torch.empty(0)  # opacity for positive/negative splatting
         self.max_radii2D = torch.empty(0)
         self.xyz_gradient_accum = torch.empty(0)
         self.denom = torch.empty(0)
         self.optimizer = None
         self.spatial_lr_scale = 0
         self.scale_bound = scale_bound
+        self.use_student_t = use_student_t  # SSS: flag to enable Student's t
         self.setup_functions()
 
     def capture(self):
@@ -82,27 +101,54 @@ class GaussianModel:
             self._scaling,
             self._rotation,
             self._density,
+            self._nu,  # SSS: Student's t degrees of freedom
+            self._opacity,  # SSS: Scooping opacity
             self.max_radii2D,
             self.xyz_gradient_accum,
             self.denom,
             self.optimizer.state_dict(),
             self.spatial_lr_scale,
             self.scale_bound,
+            self.use_student_t,  # SSS: Student's t flag
         )
 
     def restore(self, model_args, training_args):
-        (
-            self._xyz,
-            self._scaling,
-            self._rotation,
-            self._density,
-            self.max_radii2D,
-            xyz_gradient_accum,
-            denom,
-            opt_dict,
-            self.spatial_lr_scale,
-            self.scale_bound,
-        ) = model_args
+        if len(model_args) == 13:  # New SSS format
+            (
+                self._xyz,
+                self._scaling,
+                self._rotation,
+                self._density,
+                self._nu,
+                self._opacity,
+                self.max_radii2D,
+                xyz_gradient_accum,
+                denom,
+                opt_dict,
+                self.spatial_lr_scale,
+                self.scale_bound,
+                self.use_student_t,
+            ) = model_args
+            print(f"🎓 [SSS-R²] Loaded model with Student's t distribution: {self.use_student_t}")
+        else:  # Legacy format
+            (
+                self._xyz,
+                self._scaling,
+                self._rotation,
+                self._density,
+                self.max_radii2D,
+                xyz_gradient_accum,
+                denom,
+                opt_dict,
+                self.spatial_lr_scale,
+                self.scale_bound,
+            ) = model_args
+            # Initialize SSS parameters for backward compatibility
+            self.use_student_t = False
+            self._nu = torch.zeros_like(self._density)
+            self._opacity = inverse_sigmoid(torch.ones_like(self._density) * 0.5)
+            print("📦 [R²] Loaded legacy model - SSS features disabled")
+            
         self.training_setup(training_args)
         self.xyz_gradient_accum = xyz_gradient_accum
         self.denom = denom
@@ -124,6 +170,22 @@ class GaussianModel:
     @property
     def get_density(self):
         return self.density_activation(self._density)
+    
+    @property
+    def get_nu(self):
+        """SSS: Get degrees of freedom for Student's t distribution"""
+        if self.use_student_t:
+            return self.nu_activation(self._nu)
+        else:
+            return torch.ones_like(self._density) * float('inf')  # Gaussian limit
+    
+    @property
+    def get_opacity(self):
+        """SSS: Get opacity for scooping (positive/negative splatting)"""
+        if self.use_student_t:
+            return self.opacity_activation(self._opacity)
+        else:
+            return torch.sigmoid(self._opacity)  # Default [0,1] range
 
     def get_covariance(self, scaling_modifier=1):
         return self.covariance_activation(
@@ -134,11 +196,13 @@ class GaussianModel:
         self.spatial_lr_scale = spatial_lr_scale
 
         fused_point_cloud = torch.tensor(xyz).float().cuda()
-        print(
-            "Initialize gaussians from {} estimated points".format(
-                fused_point_cloud.shape[0]
-            )
-        )
+        n_points = fused_point_cloud.shape[0]
+        
+        if self.use_student_t:
+            print(f"🎓 [SSS-R²] Initialize {n_points} Student's t distributions with scooping")
+        else:
+            print(f"📦 [R²] Initialize gaussians from {n_points} estimated points")
+            
         fused_density = (
             self.density_inverse_activation(torch.tensor(density)).float().cuda()
         )
@@ -154,14 +218,34 @@ class GaussianModel:
             )  # Avoid overflow
 
         scales = self.scaling_inverse_activation(dist)[..., None].repeat(1, 3)
-        rots = torch.zeros((fused_point_cloud.shape[0], 4), device="cuda")
+        rots = torch.zeros((n_points, 4), device="cuda")
         rots[:, 0] = 1
 
         self._xyz = nn.Parameter(fused_point_cloud.requires_grad_(True))
         self._scaling = nn.Parameter(scales.requires_grad_(True))
         self._rotation = nn.Parameter(rots.requires_grad_(True))
         self._density = nn.Parameter(fused_density.requires_grad_(True))
-        self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
+        
+        # SSS: Initialize new parameters  
+        if self.use_student_t:
+            # ENHANCED Initialize nu with wider range for more expressiveness
+            nu_vals = torch.rand(n_points, 1, device="cuda") * 4 + 2  # [2, 6] - good tail thickness range
+            nu_init = self.nu_inverse_activation(nu_vals)
+            self._nu = nn.Parameter(nu_init.requires_grad_(True))
+            
+            # ENHANCED Initialize opacity - start positive but allow training to explore
+            # Use density-based initialization for better distribution
+            opacity_vals = torch.sigmoid(fused_density.clone()) * 0.8 + 0.1  # [0.1, 0.9] - density-guided
+            opacity_init = self.opacity_inverse_activation(torch.clamp(opacity_vals, 0.01, 0.99))
+            self._opacity = nn.Parameter(opacity_init.requires_grad_(True))
+            print(f"   🎓 [SSS Enhanced] Initialized nu ~ [2, 6], opacity density-guided [0.1, 0.9]")
+        else:
+            # Default initialization for backward compatibility
+            self._nu = nn.Parameter(torch.zeros(n_points, 1, device="cuda").requires_grad_(True))
+            # Use density as opacity for backward compatibility
+            self._opacity = nn.Parameter(fused_density.clone().requires_grad_(True))
+            
+        self.max_radii2D = torch.zeros((n_points,), device="cuda")
 
         #! Generate one gaussian for debugging purpose
         if False:
@@ -211,6 +295,29 @@ class GaussianModel:
                 "name": "rotation",
             },
         ]
+        
+        # SSS: Add new parameters to optimizer
+        if self.use_student_t:
+            l.extend([
+                {
+                    "params": [self._nu],
+                    "lr": getattr(training_args, 'nu_lr_init', 0.001) * self.spatial_lr_scale,
+                    "name": "nu",
+                },
+                {
+                    "params": [self._opacity],
+                    "lr": getattr(training_args, 'opacity_lr_init', 0.01) * self.spatial_lr_scale,
+                    "name": "opacity",
+                },
+            ])
+            print(f"🎓 [SSS-R²] Setup optimizer with Student's t parameters (nu_lr={getattr(training_args, 'nu_lr_init', 0.001)}, opacity_lr={getattr(training_args, 'opacity_lr_init', 0.01)})")
+        else:
+            # Add opacity for backward compatibility 
+            l.append({
+                "params": [self._opacity],
+                "lr": training_args.density_lr_init * self.spatial_lr_scale,
+                "name": "opacity",
+            })
 
         self.optimizer = torch.optim.Adam(l, lr=0.0, eps=1e-15)
         self.xyz_scheduler_args = get_expon_lr_func(
@@ -276,7 +383,21 @@ class GaussianModel:
             "scale": scale,
             "rotation": rotation,
             "scale_bound": self.scale_bound,
+            "version": "SSS-R2-v1.0",  # Version control
+            "use_student_t": self.use_student_t,
         }
+        
+        # SSS: Save new parameters
+        if self.use_student_t:
+            out.update({
+                "nu": t2a(self._nu),
+                "opacity": t2a(self._opacity),
+            })
+            print(f"💾 [SSS-R²] Saved model with Student's t distribution (version: SSS-R2-v1.0)")
+        else:
+            out["opacity"] = t2a(self._opacity)  # Save for compatibility
+            print(f"💾 [R²] Saved legacy model")
+            
         with open(path, "wb") as f:
             pickle.dump(out, f, pickle.HIGHEST_PROTOCOL)
 
@@ -294,6 +415,10 @@ class GaussianModel:
         with open(path, "rb") as f:
             data = pickle.load(f)
 
+        # Check version and SSS support
+        version = data.get("version", "legacy")
+        self.use_student_t = data.get("use_student_t", False)
+        
         self._xyz = nn.Parameter(
             torch.tensor(data["xyz"], dtype=torch.float, device="cuda").requires_grad_(
                 True
@@ -314,7 +439,29 @@ class GaussianModel:
                 data["rotation"], dtype=torch.float, device="cuda"
             ).requires_grad_(True)
         )
-        self.scale_bound = data["scale_bound"]
+        
+        # SSS: Load new parameters
+        if "nu" in data and "opacity" in data and self.use_student_t:
+            self._nu = nn.Parameter(
+                torch.tensor(data["nu"], dtype=torch.float, device="cuda").requires_grad_(True)
+            )
+            self._opacity = nn.Parameter(
+                torch.tensor(data["opacity"], dtype=torch.float, device="cuda").requires_grad_(True)
+            )
+            print(f"🔄 [SSS-R²] Loaded model with Student's t distribution (version: {version})")
+        else:
+            # Initialize for backward compatibility
+            n_points = self._xyz.shape[0]
+            self._nu = nn.Parameter(torch.zeros(n_points, 1, device="cuda").requires_grad_(True))
+            if "opacity" in data:
+                self._opacity = nn.Parameter(
+                    torch.tensor(data["opacity"], dtype=torch.float, device="cuda").requires_grad_(True)
+                )
+            else:
+                self._opacity = nn.Parameter(self._density.clone().requires_grad_(True))
+            print(f"🔄 [R²] Loaded legacy model (version: {version})")
+            
+        self.scale_bound = data.get("scale_bound")
         self.setup_functions()  # Reset activation functions
 
     def replace_tensor_to_optimizer(self, tensor, name):
@@ -362,6 +509,17 @@ class GaussianModel:
         self._density = optimizable_tensors["density"]
         self._scaling = optimizable_tensors["scaling"]
         self._rotation = optimizable_tensors["rotation"]
+        
+        # SSS: Update SSS parameters if using Student's t
+        if self.use_student_t:
+            if "nu" in optimizable_tensors:
+                self._nu = optimizable_tensors["nu"]
+            if "opacity" in optimizable_tensors:
+                self._opacity = optimizable_tensors["opacity"]
+        else:
+            # For non-SSS models, handle opacity for compatibility
+            if "opacity" in optimizable_tensors:
+                self._opacity = optimizable_tensors["opacity"]
 
         self.xyz_gradient_accum = self.xyz_gradient_accum[valid_points_mask]
 
@@ -409,6 +567,8 @@ class GaussianModel:
         new_scaling,
         new_rotation,
         new_max_radii2D,
+        new_nu=None,
+        new_opacity=None,
     ):
         d = {
             "xyz": new_xyz,
@@ -416,12 +576,30 @@ class GaussianModel:
             "scaling": new_scaling,
             "rotation": new_rotation,
         }
+        
+        # SSS: Add new parameters if provided
+        if self.use_student_t:
+            if new_nu is not None:
+                d["nu"] = new_nu
+            if new_opacity is not None:
+                d["opacity"] = new_opacity
+        else:
+            # For non-SSS models, always add opacity for compatibility
+            if new_opacity is not None:
+                d["opacity"] = new_opacity
 
         optimizable_tensors = self.cat_tensors_to_optimizer(d)
         self._xyz = optimizable_tensors["xyz"]
         self._density = optimizable_tensors["density"]
         self._scaling = optimizable_tensors["scaling"]
         self._rotation = optimizable_tensors["rotation"]
+        
+        # SSS: Update SSS parameters if using Student's t
+        if self.use_student_t:
+            if "nu" in optimizable_tensors:
+                self._nu = optimizable_tensors["nu"]
+            if "opacity" in optimizable_tensors:
+                self._opacity = optimizable_tensors["opacity"]
 
         self.xyz_gradient_accum = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
         self.denom = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
@@ -457,6 +635,16 @@ class GaussianModel:
             self.get_density[selected_pts_mask].repeat(N, 1) * (1 / N)
         )
         new_max_radii2D = self.max_radii2D[selected_pts_mask].repeat(N)
+        
+        # SSS: Handle new parameters for densification
+        new_nu = None
+        new_opacity = None
+        if self.use_student_t:
+            new_nu = self._nu[selected_pts_mask].repeat(N, 1)  # Keep same nu
+            new_opacity = self._opacity[selected_pts_mask].repeat(N, 1)  # Keep same opacity
+        else:
+            # For non-SSS models, use density for opacity compatibility
+            new_opacity = new_density
 
         self.densification_postfix(
             new_xyz,
@@ -464,6 +652,8 @@ class GaussianModel:
             new_scaling,
             new_rotation,
             new_max_radii2D,
+            new_nu,
+            new_opacity,
         )
 
         prune_filter = torch.cat(
@@ -494,6 +684,16 @@ class GaussianModel:
         new_max_radii2D = self.max_radii2D[selected_pts_mask]
 
         self._density[selected_pts_mask] = new_densities
+        
+        # SSS: Handle new parameters for cloning
+        new_nu = None
+        new_opacity = None
+        if self.use_student_t:
+            new_nu = self._nu[selected_pts_mask]  # Clone same nu
+            new_opacity = self._opacity[selected_pts_mask]  # Clone same opacity
+        else:
+            # For non-SSS models, use density for opacity compatibility
+            new_opacity = new_densities
 
         self.densification_postfix(
             new_xyz,
@@ -501,6 +701,8 @@ class GaussianModel:
             new_scaling,
             new_rotation,
             new_max_radii2D,
+            new_nu,
+            new_opacity,
         )
 
     def densify_and_prune(

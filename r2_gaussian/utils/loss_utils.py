@@ -248,6 +248,10 @@ def compute_graph_laplacian_loss(gaussians, k=6, Lambda_lap=8e-4):
     图拉普拉斯正则化损失 - 参考CoR-GS/GR-Gaussian论文
     鼓励相邻高斯点的密度平滑，与depth约束互补
     
+    GPU加速版本（带自动回退到CPU）：
+    - 优先使用GPU加速计算（torch.cdist + topk）
+    - 如果GPU内存不足或出错，自动回退到CPU版本（sklearn）
+    
     Args:
         gaussians: GaussianModel实例
         k: KNN邻居数量（默认6，根据CoR-GS论文）
@@ -256,49 +260,102 @@ def compute_graph_laplacian_loss(gaussians, k=6, Lambda_lap=8e-4):
         loss: 标量损失值
     """
     import torch
-    from sklearn.neighbors import NearestNeighbors
     
     # 获取高斯点位置和密度
     xyz = gaussians.get_xyz  # (N, 3)
     density = gaussians.get_density  # (N,)
     
-    if xyz.shape[0] < k + 1:
+    N = xyz.shape[0]
+    if N < k + 1:
         return torch.tensor(0.0, device=xyz.device, requires_grad=True)
     
-    # 构建KNN图
-    xyz_np = xyz.detach().cpu().numpy()
-    nbrs = NearestNeighbors(n_neighbors=k+1, algorithm='ball_tree').fit(xyz_np)
-    distances, indices = nbrs.kneighbors(xyz_np)
-    
-    # 计算拉普拉斯损失：L = sum_{i,j} w_{ij} * (d_i - d_j)^2
-    device = xyz.device
-    total_loss = 0.0
-    count = 0
-    
-    for i in range(len(xyz_np)):
-        # 获取k个邻居（跳过自己）
-        neighbors = indices[i][1:]
-        neighbor_dists = distances[i][1:]
+    # 尝试GPU加速版本（优先）
+    try:
+        # 检查点数量，避免GPU内存溢出
+        # 如果点数过多（>10万），使用分批处理或回退到CPU
+        max_gpu_points = 100000
+        if N > max_gpu_points:
+            raise RuntimeError(f"Too many points ({N}) for GPU computation, using CPU fallback")
         
-        if len(neighbors) == 0:
-            continue
-            
+        # GPU加速KNN搜索：使用torch.cdist + topk（完全在GPU上）
+        # 计算所有点对之间的欧氏距离
+        dists = torch.cdist(xyz, xyz)  # (N, N) - GPU并行计算
+        
+        # 获取每个点的k+1个最近邻（包括自己）
+        _, indices = torch.topk(dists, k+1, dim=1, largest=False)  # (N, k+1) - GPU计算
+        
+        # 跳过自己（第一个邻居是自己，距离为0）
+        neighbor_indices = indices[:, 1:]  # (N, k) - 获取k个真实邻居
+        
+        # 批量获取邻居距离（向量化操作）
+        batch_indices = torch.arange(N, device=xyz.device).unsqueeze(1).expand(-1, k)  # (N, k)
+        neighbor_dists = dists[batch_indices, neighbor_indices]  # (N, k) - 邻居距离
+        
         # 计算权重（高斯核：距离越近权重越大）
-        weights = torch.exp(-torch.tensor(neighbor_dists, device=device) / (neighbor_dists.mean() + 1e-7))
+        neighbor_dists_mean = neighbor_dists.mean(dim=1, keepdim=True)  # (N, 1)
+        weights = torch.exp(-neighbor_dists / (neighbor_dists_mean + 1e-7))  # (N, k)
         
-        # 计算密度差异
-        density_i = density[i]
-        density_neighbors = density[neighbors]
-        density_diff = density_i - density_neighbors
+        # 批量计算密度差异（向量化）
+        density_expanded = density.unsqueeze(1)  # (N, 1)
+        density_neighbors = density[neighbor_indices]  # (N, k) - 批量获取邻居密度
+        density_diff = density_expanded - density_neighbors  # (N, k)
         
-        # 加权平方差
-        weighted_loss = weights * (density_diff ** 2)
-        total_loss += weighted_loss.sum()
-        count += len(neighbors)
-    
-    if count == 0:
-        return torch.tensor(0.0, device=device, requires_grad=True)
-    
-    # 平均损失并乘以权重
-    loss = (total_loss / count) * Lambda_lap
-    return loss
+        # 加权平方差（向量化计算）
+        weighted_loss = weights * (density_diff ** 2)  # (N, k)
+        
+        # 平均损失并乘以权重
+        loss = weighted_loss.mean() * Lambda_lap
+        
+        return loss
+        
+    except RuntimeError as e:
+        # GPU计算失败（内存不足或其他CUDA错误），回退到CPU版本
+        # 注意：CUDA的OOM错误也会抛出RuntimeError，所以只捕获RuntimeError即可
+        # 只在第一次失败时打印警告，避免日志过多
+        import warnings
+        if not hasattr(compute_graph_laplacian_loss, '_cpu_fallback_warned'):
+            warnings.warn(f"GPU computation failed ({str(e)}), falling back to CPU version. "
+                        f"This may be slower but will work correctly.")
+            compute_graph_laplacian_loss._cpu_fallback_warned = True
+        
+        # CPU回退版本（原始实现）
+        from sklearn.neighbors import NearestNeighbors
+        
+        device = xyz.device
+        
+        # 构建KNN图（CPU计算）
+        xyz_np = xyz.detach().cpu().numpy()
+        nbrs = NearestNeighbors(n_neighbors=k+1, algorithm='ball_tree').fit(xyz_np)
+        distances, indices = nbrs.kneighbors(xyz_np)
+        
+        # 计算拉普拉斯损失：L = sum_{i,j} w_{ij} * (d_i - d_j)^2
+        total_loss = 0.0
+        count = 0
+        
+        for i in range(len(xyz_np)):
+            # 获取k个邻居（跳过自己）
+            neighbors = indices[i][1:]
+            neighbor_dists = distances[i][1:]
+            
+            if len(neighbors) == 0:
+                continue
+                
+            # 计算权重（高斯核：距离越近权重越大）
+            weights = torch.exp(-torch.tensor(neighbor_dists, device=device) / (neighbor_dists.mean() + 1e-7))
+            
+            # 计算密度差异
+            density_i = density[i]
+            density_neighbors = density[neighbors]
+            density_diff = density_i - density_neighbors
+            
+            # 加权平方差
+            weighted_loss = weights * (density_diff ** 2)
+            total_loss += weighted_loss.sum()
+            count += len(neighbors)
+        
+        if count == 0:
+            return torch.tensor(0.0, device=device, requires_grad=True)
+        
+        # 平均损失并乘以权重
+        loss = (total_loss / count) * Lambda_lap
+        return loss
