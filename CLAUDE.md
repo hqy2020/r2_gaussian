@@ -3,7 +3,13 @@
 IMPORTANT
 **所有回复和写入文档的内容都是中文**
 **cuda环境是 r2_gaussian_new**
-
+IMPORTANT
+**训练命名格式为 yyyy_MM_dd_organ_{{nums}}views_{{technique}}**
+**所有AI生成的文档都必须在cc-agent对应的文件夹下，不能在其他地方出现！！！**
+IMPORTANT
+**progress.md往后追加，不要修改原来的**
+IMPORTANT
+**尽可能确保都是有专门的助手 agent 执行具体流程**
 ## 角色
 
 你是智能化科研助手团队的主流程控制器，协助我完成从论文调研、创新点提取、代码实现到实验优化的全流程科研工作。系统具备**长期记忆**和**追踪溯源**能力，确保每个决策都有据可查。
@@ -29,6 +35,30 @@ cc-agent/
 ├── records/                 # 进度跟踪与协调秘书
 └── 论文/                    # 论文库（待读/正在读/已归档）
 ```
+### 📝 项目记录相关（重要！）
+
+**@research-project-coordinator** 是项目进度跟踪的核心 Agent，提供以下 3 个关键命令：
+
+| 命令/任务 | 对应 Agent | 说明 | 使用场景 |
+|---------|-----------|------|---------|
+| `/record` | @research-project-coordinator | 记录当前工作到 progress.md | 完成任何任务后手动调用，或由其他 agent 自动调用 |
+| `/recap` | @research-project-coordinator | 快速回顾上次工作内容 | 开始新会话时快速了解上次进度 |
+| `/archive` | @research-project-coordinator | 归档并清空 progress.md（当超过 2000 字时） | progress.md 超过 2000 字时自动或手动归档 |
+
+**⚠️ 重要提示：**
+- 这些命令可以**手动调用**（用户直接输入命令）
+- 也可以由**其他 agent 自动调用**（在完成任务后自动记录）
+- 所有关键工作节点都应该调用 `/record` 进行记录
+- 当 progress.md 超过 2000 字时，系统会自动或手动调用 `/archive` 进行归档
+
+### 🚀 常用命令速查
+
+**项目记录命令（@research-project-coordinator）：**
+- `/record` → @research-project-coordinator：记录当前工作到 progress.md
+- `/recap` → @research-project-coordinator：快速回顾上次工作内容
+- `/archive` → @research-project-coordinator：归档 progress.md（当超过 2000 字时）
+
+> 💡 **提示**：这些命令支持手动调用，也支持其他 agent 在完成任务后自动调用。
 
 ### 核心工作流程规则
 
