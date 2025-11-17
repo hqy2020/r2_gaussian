@@ -68,7 +68,7 @@ except ImportError as e:
     HAS_FSGS_PROXIMITY = False
     print(f"📦 FSGS Proximity modules not available: {e}")
 
-# 🌟🌟 FSGS 完整系统模块 (完整实现 - 2025-11-15)
+# 🌟🌟 FSGS 完整系统模块 (完��实现 - 2025-11-15)
 try:
     from r2_gaussian.utils.fsgs_complete import create_fsgs_complete_system
     from r2_gaussian.utils.fsgs_depth_renderer import FSGSDepthRenderer
@@ -77,6 +77,19 @@ try:
 except ImportError as e:
     HAS_FSGS_COMPLETE = False
     print(f"📦 FSGS Complete System not available: {e}")
+
+# CoR-GS Stage 3 - Pseudo-view Co-regularization 模块 (2025-11-17)
+try:
+    from r2_gaussian.utils.pseudo_view_coreg import (
+        generate_pseudo_view_medical,
+        compute_pseudo_coreg_loss_medical
+    )
+    HAS_PSEUDO_COREG = True
+    print("✅ CoR-GS Stage 3 (Pseudo-view Co-regularization) modules available")
+except ImportError as e:
+    HAS_PSEUDO_COREG = False
+    print(f"📦 CoR-GS Stage 3 modules not available: {e}")
+    print("📦 Falling back to baseline training (no pseudo-view co-regularization)")
 
 
 def training(
@@ -143,6 +156,20 @@ def training(
         sss_optimizer = create_sss_optimizer(gaussians, opt)
         if sss_optimizer:
             print("🔥 [SSS-R²] Created hybrid SGHMC+Adam optimizer")
+
+    # 🌟 [GR-Gaussian] 初始化图结构
+    gr_graph = None
+    if dataset.enable_graph_laplacian:
+        try:
+            from r2_gaussian.utils.graph_utils import GaussianGraph
+            gr_graph = GaussianGraph(k=dataset.graph_k, device=gaussians.get_xyz.device)
+            print(f"🌟 [GR-Gaussian] Graph initialized: k={dataset.graph_k}, "
+                  f"λ_lap={dataset.graph_lambda_lap}, update_interval={dataset.graph_update_interval}")
+        except ImportError as e:
+            print(f"⚠️  [GR-Gaussian] Failed to import graph_utils: {e}")
+            print(f"   Graph Laplacian will use fallback mode (dynamic KNN)")
+        except Exception as e:
+            print(f"⚠️  [GR-Gaussian] Failed to initialize graph: {e}")
     
     # FSGS Proximity-guided密化器初始化 (最新版本)
     proximity_densifier = None
@@ -190,10 +217,12 @@ def training(
     
     # 🌟🌟 FSGS 完整系统初始化 (Proximity + Depth + Pseudo Views - 2025-11-15)
     fsgs_system = None
+    # 🔧 FIX: 不依赖 dataset 属性,直接使用 args
     enable_fsgs_complete = (
         enable_fsgs_proximity and
         HAS_FSGS_COMPLETE and
-        getattr(dataset, 'enable_fsgs_depth', True)  # 默认启用深度监督
+        (getattr(args, 'enable_fsgs_proximity', False) or  # 有 proximity 就启用
+         getattr(args, 'enable_fsgs_pseudo_views', False))  # 或有 pseudo views
     )
 
     if enable_fsgs_complete:
@@ -634,78 +663,167 @@ def training(
                     if iteration % 500 == 0:
                         print(f"[深度约束] Iteration {iteration}: {consistency_loss.item():.6f}")
         
-        # 图拉普拉斯正则化 - 参考CoR-GS论文（与depth约束互补）
-        # 在depth+drop基础上添加，提升稀疏视角重建质量
-        # 性能优化：每500次迭代计算一次，减少计算量（参考GR-Gaussian论文的动态评估策略）
-        # 降低频率以避免GPU内存错误，同时保持正则化效果
-        if dataset.enable_depth and dataset.depth_loss_weight > 0 and iteration > 5000:
-            if iteration % 500 == 0:  # 每500次迭代计算一次（降低频率以避免GPU错误）
+        # 🌟 [GR-Gaussian] 图更新与图拉普拉斯正则化
+        if dataset.enable_graph_laplacian:
+            # 更新图结构 (每 graph_update_interval 次迭代,从 iteration 100 开始)
+            if gr_graph is not None and iteration > 0 and iteration % dataset.graph_update_interval == 0:
+                with torch.no_grad():
+                    xyz = gaussians.get_xyz.detach()
+                    gr_graph.build_knn_graph(xyz)
+                    gr_graph.compute_edge_weights(xyz)
+                    if iteration % 500 == 0:
+                        print(f"[GR-Gaussian] Rebuilt graph at iteration {iteration}: "
+                              f"{gr_graph.num_nodes} nodes, {gr_graph.edge_index.shape[1]} edges")
+
+            # 计算图拉普拉斯损失 - 添加延迟启动和频率限制
+            if iteration > 5000 and iteration % 500 == 0:  # 延迟启动 + 每500次迭代计算一次
                 for i in range(gaussiansN):
-                    if gaussiansN == 1:  # 单高斯场（你的depth+drop实验使用gaussiansN=1）
-                        graph_laplacian_loss = compute_graph_laplacian_loss(
-                            GsDict[f"gs{i}"],
-                            k=6,           # KNN邻居数量（CoR-GS论文推荐）
-                            Lambda_lap=8e-4  # 正则化权重（CoR-GS论文推荐）
-                        )
-                        LossDict[f"loss_gs{i}"] += graph_laplacian_loss
-                        
-                        # 可选：每1000次迭代打印一次
-                        if iteration % 1000 == 0:
-                            print(f"[图拉普拉斯] Iteration {iteration}: graph_loss={graph_laplacian_loss.item():.6f}")
-       
+                    graph_laplacian_loss = compute_graph_laplacian_loss(
+                        GsDict[f"gs{i}"],
+                        graph=gr_graph,  # 传递预构建的图 (如果存在)
+                        k=dataset.graph_k,
+                        Lambda_lap=dataset.graph_lambda_lap
+                    )
+                    LossDict[f"loss_gs{i}"] += graph_laplacian_loss
+
+                    # 日志记录
+                    if iteration % 500 == 0:
+                        tb_writer.add_scalar(f'GR-Gaussian/graph_laplacian_gs{i}',
+                                           graph_laplacian_loss.item(), iteration)
+                    if iteration % 1000 == 0:
+                        print(f"[GR-Gaussian] Iteration {iteration}, GS{i}: "
+                              f"graph_loss={graph_laplacian_loss.item():.6f}")
+
         # 3D TV 损失 - 为每个高斯场计算
         if use_tv:
             for i in range(gaussiansN):
                 # 随机选取一个小体积中心
                 tv_vol_center = (bbox[0] + tv_vol_sVoxel / 2) + (
-                    bbox[1] - tv_vol_sVoxel - bbox[0]
+                bbox[1] - tv_vol_sVoxel - bbox[0]
                 ) * torch.rand(3)
                 vol_pred = query(
-                    GsDict[f"gs{i}"],
-                    tv_vol_center,
-                    tv_vol_nVoxel,
-                    tv_vol_sVoxel,
-                    pipe,
+                GsDict[f"gs{i}"],
+                tv_vol_center,
+                tv_vol_nVoxel,
+                tv_vol_sVoxel,
+                pipe,
                 )["vol"]
                 loss_tv = tv_3d_loss(vol_pred, reduction="mean")
                 LossDict[f"loss_gs{i}"] += opt.lambda_tv * loss_tv
-        
+
+        # === CoR-GS Stage 3: Pseudo-view Co-regularization (2025-11-17) ===
+        if (args is not None and hasattr(args, 'enable_pseudo_coreg') and args.enable_pseudo_coreg and
+            HAS_PSEUDO_COREG and iteration >= args.pseudo_start_iter and gaussiansN >= 2):
+
+            try:
+                # 步骤 1: 生成 pseudo-view 相机（医学适配版）
+                train_cameras = scene.getTrainCameras()
+                pseudo_camera = generate_pseudo_view_medical(
+                    train_cameras=train_cameras,
+                    current_camera_idx=None,  # 随机选择基准相机
+                    noise_std=args.pseudo_noise_std,
+                    roi_info=None  # 初始版本暂不启用 ROI 权重（快速验证阶段）
+                )
+
+                # 步骤 2: 渲染粗模型和精细模型的 pseudo-view
+                renders_pseudo = []
+                for gid in range(min(2, gaussiansN)):  # 仅对前两个模型进行 co-regularization
+                    render_pkg_pseudo = render(
+                        pseudo_camera,
+                        GsDict[f'gs{gid}'],
+                        pipe,
+                        scaling_modifier=1.0,
+                        enable_drop=args.enable_drop if hasattr(args, 'enable_drop') else False,
+                        drop_rate=args.drop_rate if hasattr(args, 'drop_rate') else 0.10,
+                        iteration=iteration
+                    )
+                    renders_pseudo.append(render_pkg_pseudo)
+
+                # 步骤 3: 计算 Co-regularization 损失（粗模型 vs 精细模型）
+                if len(renders_pseudo) >= 2:
+                    loss_pseudo_coreg_dict = compute_pseudo_coreg_loss_medical(
+                        render1=renders_pseudo[0]["render"],  # 修复: 提取渲染图像 Tensor
+                        render2=renders_pseudo[1]["render"],  # 修复: 提取渲染图像 Tensor
+                        lambda_dssim=0.2,  # 论文默认值（与 3DGS 一致）
+                        roi_weights=None   # 初始版本暂不启用 ROI 权重
+                    )
+
+                    loss_pseudo_coreg = loss_pseudo_coreg_dict['loss']
+
+                    # 步骤 4: 叠加到总损失（对两个模型都施加约束）
+                    LossDict['loss_gs0'] += args.lambda_pseudo * loss_pseudo_coreg
+                    LossDict['loss_gs1'] += args.lambda_pseudo * loss_pseudo_coreg
+
+                    # 步骤 5: TensorBoard 日志记录
+                    if tb_writer is not None:
+                        tb_writer.add_scalar(
+                            "train_loss_patches/pseudo_coreg_total",
+                            loss_pseudo_coreg.item(),
+                            iteration
+                        )
+                        tb_writer.add_scalar(
+                            "train_loss_patches/pseudo_coreg_l1",
+                            loss_pseudo_coreg_dict['l1'].item(),
+                            iteration
+                        )
+                        tb_writer.add_scalar(
+                            "train_loss_patches/pseudo_coreg_dssim",
+                            loss_pseudo_coreg_dict['d_ssim'].item(),
+                            iteration
+                        )
+                        tb_writer.add_scalar(
+                            "train_loss_patches/pseudo_coreg_ssim",
+                            loss_pseudo_coreg_dict['ssim'].item(),
+                            iteration
+                        )
+                        tb_writer.add_scalar(
+                            "train_loss_patches/pseudo_coreg_weighted",
+                            (args.lambda_pseudo * loss_pseudo_coreg).item(),
+                            iteration
+                        )
+
+                    # 步骤 6: 控制台日志（每 100 iterations 输出一次）
+                    if iteration % 100 == 0:
+                        print(f"  [Pseudo Co-reg] Loss: {loss_pseudo_coreg.item():.6f}, "
+                              f"L1: {loss_pseudo_coreg_dict['l1'].item():.6f}, "
+                              f"SSIM: {loss_pseudo_coreg_dict['ssim'].item():.4f}, "
+                              f"Weighted: {(args.lambda_pseudo * loss_pseudo_coreg).item():.6f}")
+
+            except Exception as e:
+                # 异常处理：打印警告但不中断训练（向下兼容）
+                if iteration % 100 == 0:
+                    import traceback
+                    import sys
+                    print(f"⚠️  [Pseudo Co-reg] Failed at iter {iteration}: {e}")
+                    print("  → Full traceback:")
+                    tb_str = ''.join(traceback.format_exception(type(e), e, e.__traceback__))
+                    print(tb_str, file=sys.stderr)
+                    print("  → Continuing training without pseudo-view loss...")
+
         # 🎯 [SSS-R²] Add regularization losses for Student's t parameters
         for i in range(gaussiansN):
             if hasattr(GsDict[f"gs{i}"], 'use_student_t') and GsDict[f"gs{i}"].use_student_t:
                 opacity = GsDict[f"gs{i}"].get_opacity
                 nu = GsDict[f"gs{i}"].get_nu
 
-                # 优化后的渐进式正则化策略
-                # 目标: 始终保持 85-90% 正 opacity,避免过度负值导致渲染异常
-                if iteration < 15000:
-                    # Phase 1 (前 15k 步): 强约束,确保稳定训练
-                    pos_target = 0.90
-                    neg_penalty_weight = 5.0
-                else:
-                    # Phase 2 (15k 步后): 适度放松,允许 15% 负 opacity
-                    pos_target = 0.85
-                    neg_penalty_weight = 3.0
+                # 🎯 [SSS-v5-OPTIMAL] 最优正则化 - 基于 v4 诊断结果的折中方案
+                # v4 诊断结论：
+                #   - iter 5000: 23.44 dB (峰值) - balance_loss 0.001 能达到高性能
+                #   - iter 10000: 13.13 dB (崩溃) - balance_loss 0.001 太弱，无法长期稳定
+                # v5 策略：3倍权重 + 适度目标，平衡���能与稳定性
 
-                # Opacity balance loss: 约束正值比例
+                # Opacity balance loss - 3倍 v4 权重 (0.001 → 0.003)
                 pos_count = (opacity > 0).float().mean()
+                pos_target = 0.75  # v4: 0.70 → v5: 0.75 (允许 25% 负值，比 v4 严格)
                 balance_loss = torch.abs(pos_count - pos_target)
-                LossDict[f"loss_gs{i}"] += 0.001 * balance_loss  # 降低权重: 0.003 → 0.001
+                LossDict[f"loss_gs{i}"] += 0.003 * balance_loss  # v5: 0.003 (3倍 v4)
 
-                # Nu diversity loss: 鼓励 ν 多样性,避免全部坍缩到边界
-                nu_diversity_loss = -torch.std(nu) * 0.1  # 标准差越大越好
-                nu_range_loss = torch.mean(torch.relu(nu - 8.0)) + torch.mean(torch.relu(2.0 - nu))  # 软约束在 [2, 8]
+                # Nu diversity loss: 保持 ν 多样性 (不影响 opacity)
+                nu_diversity_loss = -torch.std(nu) * 0.1
+                nu_range_loss = torch.mean(torch.relu(nu - 8.0)) + torch.mean(torch.relu(2.0 - nu))
                 LossDict[f"loss_gs{i}"] += 0.001 * (nu_diversity_loss + nu_range_loss)
 
-                # Adaptive negative opacity penalty: 惩罚极端负值
-                neg_mask = opacity < 0
-                if neg_mask.any():
-                    extreme_neg_mask = opacity < -0.2  # 极端负值阈值
-                    if extreme_neg_mask.any():
-                        extreme_penalty = torch.mean(torch.abs(opacity[extreme_neg_mask])) * neg_penalty_weight
-                        LossDict[f"loss_gs{i}"] += 0.002 * extreme_penalty
-
-        # 🎯 [SSS-R²] Debug logging for regularization terms
+        # 🎯 [SSS-v5-OPTIMAL] Debug logging - 观察优化后的 opacity 动态
         if hasattr(GsDict[f"gs0"], 'use_student_t') and GsDict[f"gs0"].use_student_t and iteration % 2000 == 0:
             opacity = GsDict[f"gs0"].get_opacity
             nu = GsDict[f"gs0"].get_nu
@@ -714,25 +832,17 @@ def training(
             nu_mean = nu.mean()
             nu_std = nu.std()
 
-            # 当前训练阶段
-            if iteration < 15000:
-                phase = "Early (90% pos)"
-                pos_target = 0.90
-            else:
-                phase = "Late (85% pos)"
-                pos_target = 0.85
+            pos_target = 0.75  # v5目标
 
-            print(f"🎯 [SSS-R²] Iter {iteration} - Phase: {phase}")
-            print(f"          Opacity: [{opacity.min():.3f}, {opacity.max():.3f}], Balance: {pos_ratio:.3f} pos (target: {pos_target:.2f})")
-            print(f"          Nu: mean={nu_mean:.2f}, std={nu_std:.2f}, range=[{nu.min():.1f}, {nu.max():.1f}]")
+            print(f"🎯 [SSS-v5-OPTIMAL] Iter {iteration}")
+            print(f"   Opacity: [{opacity.min():.3f}, {opacity.max():.3f}]")
+            print(f"   Balance: {pos_ratio*100:.1f}% pos / {neg_ratio*100:.1f}% neg (target: {pos_target*100:.0f}% pos)")
+            print(f"   Nu: mean={nu_mean:.2f}, std={nu_std:.2f}, range=[{nu.min():.1f}, {nu.max():.1f}]")
 
-            # 警告
-            if pos_ratio < pos_target - 0.05:
-                print(f"⚠️  [SSS-R²] Warning: {pos_ratio*100:.1f}% positive opacity (target: {pos_target*100:.0f}%)")
-
-            extreme_neg = (opacity < -0.2).float().mean()
-            if extreme_neg > 0.01:
-                print(f"⚠️  [SSS-R²] Warning: {extreme_neg*100:.1f}% extreme negative opacity (<-0.2)")
+            # 记录极端情况
+            extreme_neg = (opacity < -0.5).float().mean()
+            extreme_pos = (opacity > 0.9).float().mean()
+            print(f"   Extremes: {extreme_pos*100:.1f}% >0.9, {extreme_neg*100:.1f}% <-0.5")
         
         # 反向传播 - 为每个高斯场
         for i in range(gaussiansN):
@@ -845,13 +955,13 @@ def training(
                             # 使用增强版密化函数 (FSGS proximity-guided)
                             if hasattr(GsDict[f"gs{i}"], 'enhanced_densify_and_prune'):
                                 GsDict[f"gs{i}"].enhanced_densify_and_prune(
-                                    opt.densify_grad_threshold,
-                                    opt.density_min_threshold,
-                                    opt.max_screen_size,
-                                    max_scale,
-                                    opt.max_num_gaussians,
-                                    densify_scale_threshold,
-                                    bbox,
+                        opt.densify_grad_threshold,
+                        opt.density_min_threshold,
+                        opt.max_screen_size,
+                        max_scale,
+                        opt.max_num_gaussians,
+                        densify_scale_threshold,
+                        bbox,
                                     enable_proximity_densify=enable_fsgs_proximity,
                                 )
                             else:
@@ -1238,6 +1348,17 @@ if __name__ == "__main__":
     parser.add_argument("--enable_proximity_guided", action="store_true", default=False)  # 是否启用旧版proximity-guided密化
     parser.add_argument("--proximity_interval", type=int, default=1000)  # proximity密化间隔
     parser.add_argument("--proximity_max_points", type=int, default=500)  # 每次proximity密化最大点数
+
+    # CoR-GS Stage 3 参数 (Pseudo-view Co-regularization - 2025-11-17)
+    parser.add_argument("--enable_pseudo_coreg", action="store_true", default=False,
+                        help="启用 CoR-GS Stage 3 Pseudo-view Co-regularization")
+    parser.add_argument("--lambda_pseudo", type=float, default=1.0,
+                        help="Pseudo-view co-regularization 损失权重")
+    parser.add_argument("--pseudo_noise_std", type=float, default=0.02,
+                        help="Pseudo-view 相机位置随机扰动标准差")
+    parser.add_argument("--pseudo_start_iter", type=int, default=0,
+                        help="开始应用 pseudo-view co-reg 的 iteration")
+
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
     args.test_iterations.append(args.iterations)

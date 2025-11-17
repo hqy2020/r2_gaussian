@@ -91,6 +91,12 @@ class ModelParams(ParamGroup):
         self.fsgs_noise_std = 0.05  # 伪视角位置噪声标准差（用于相机位置，论文Eq.5）
         self.fsgs_start_iter = 2000  # FSGS功能启动迭代数
 
+        # 🌟 GR-Gaussian 参数 (2025-11-17)
+        self.enable_graph_laplacian = False  # 是否启用 Graph Laplacian 正则化
+        self.graph_k = 6  # KNN 邻居数量 (论文推荐 6)
+        self.graph_lambda_lap = 8e-4  # Graph Laplacian 损失权重 (论文推荐 8e-4)
+        self.graph_update_interval = 100  # 图重建间隔 (iterations)
+
         super().__init__(parser, "Loading Parameters", sentinel)
 
     def extract(self, args):

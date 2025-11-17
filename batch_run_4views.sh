@@ -1,19 +1,19 @@
 #!/bin/bash
 
-# 批量运行2视角实验脚本
-# 用途：为 abdomen, head, pancreas 四个器官运行与 foot 相同的2视角实验
+# 批量运行4视角实验脚本
+# 用途：为 chest,foot,abdomen, head, pancreas 五个器官运行4视角实验
 
 # 设置工作目录
 cd /home/qyhu/Documents/r2_ours/r2_gaussian
 
 # 设置GPU
-export CUDA_VISIBLE_DEVICES=1
+export CUDA_VISIBLE_DEVICES=0
 
 # 获取当前日期（格式：MMDD）
 DATE=$(date +%m%d)
 
-# 需要运行的器官列表（排除已完成的 foot）
-ORGANS=("abdomen" "head" "pancreas")
+# 需要运行的器官列表
+ORGANS=("chest" "foot" "abdomen" "head" "pancreas")
 
 # 数据目录和输出目录
 DATA_DIR="/home/qyhu/Documents/r2_ours/r2_gaussian/data/24"
@@ -22,14 +22,14 @@ OUTPUT_BASE="/home/qyhu/Documents/r2_ours/r2_gaussian/output/24"
 # 遍历每个器官
 for organ in "${ORGANS[@]}"; do
     echo "=========================================="
-    echo "开始运行: ${organ} 2视角实验"
+    echo "开始运行: ${organ} 4视角实验"
     echo "=========================================="
     
     # 输入文件路径
-    INPUT_FILE="${DATA_DIR}/${organ}_50_2views.pickle"
+    INPUT_FILE="${DATA_DIR}/${organ}_50_4views.pickle"
     
     # 输出目录路径
-    OUTPUT_DIR="${OUTPUT_BASE}/${organ}ddg500_2_${DATE}"
+    OUTPUT_DIR="${OUTPUT_BASE}/${organ}ddg500_4_${DATE}"
     
     # 检查输入文件是否存在
     if [ ! -f "$INPUT_FILE" ]; then
@@ -69,10 +69,10 @@ for organ in "${ORGANS[@]}"; do
     
     # 检查运行结果
     if [ $? -eq 0 ]; then
-        echo "✅ ${organ} 2视角实验完成"
+        echo "✅ ${organ} 4视角实验完成"
         echo "完成时间: $(date)"
     else
-        echo "❌ ${organ} 2视角实验失败"
+        echo "❌ ${organ} 4视角实验失败"
         echo "失败时间: $(date)"
     fi
     

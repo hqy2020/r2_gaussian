@@ -243,32 +243,64 @@ def depth_consistency_loss(depth_maps):
     return total_loss / (len(depth_maps) - 1)
 
 
-def compute_graph_laplacian_loss(gaussians, k=6, Lambda_lap=8e-4):
+def compute_graph_laplacian_loss(gaussians, graph=None, k=6, Lambda_lap=8e-4):
     """
-    图拉普拉斯正则化损失 - 参考CoR-GS/GR-Gaussian论文
-    鼓励相邻高斯点的密度平滑，与depth约束互补
-    
-    GPU加速版本（带自动回退到CPU）：
-    - 优先使用GPU加速计算（torch.cdist + topk）
-    - 如果GPU内存不足或出错，自动回退到CPU版本（sklearn）
-    
+    图拉普拉斯正则化损失 - GR-Gaussian 增强版本
+
+    功能:
+        - 鼓励相邻高斯点的密度平滑
+        - 与 depth 约束互补,抑制密度跳变
+
+    GPU 加速版本（带自动回退到 CPU）：
+        - 优先使用 GPU 加速计算（torch.cdist + topk）
+        - 如果 GPU 内存不足或出错,自动回退到 CPU 版本（sklearn）
+
     Args:
-        gaussians: GaussianModel实例
-        k: KNN邻居数量（默认6，根据CoR-GS论文）
-        Lambda_lap: 正则化权重（默认8e-4，根据CoR-GS论文）
+        gaussians: GaussianModel 实例
+        graph: GaussianGraph 对象 (可选,GR-Gaussian 模式)
+        k: KNN 邻居数量（默认6,根据 CoR-GS/GR-Gaussian 论文）
+        Lambda_lap: 正则化权重（默认 8e-4）
+
     Returns:
         loss: 标量损失值
+
+    实现模式:
+        1. 如果提供 graph 对象 (GR-Gaussian): 使用预构建的边索引
+        2. 否则 (CoR-GS fallback): 动态构建 KNN 图
     """
     import torch
-    
+
     # 获取高斯点位置和密度
     xyz = gaussians.get_xyz  # (N, 3)
     density = gaussians.get_density  # (N,)
-    
+
     N = xyz.shape[0]
     if N < k + 1:
         return torch.tensor(0.0, device=xyz.device, requires_grad=True)
-    
+
+    # 🌟 [GR-Gaussian] 使用预构建图
+    if graph is not None and hasattr(graph, 'edge_index') and graph.edge_index is not None:
+        src, dst = graph.edge_index[0], graph.edge_index[1]
+
+        # 计算边权重 (如果未预计算)
+        if graph.edge_weights is None:
+            graph.compute_edge_weights(xyz)
+        weights = graph.edge_weights
+
+        # 计算密度差异
+        density_diff = density[src] - density[dst]  # (E,)
+
+        # 加权平方差
+        weighted_loss = weights * (density_diff ** 2)  # (E,)
+        loss = weighted_loss.mean() * Lambda_lap
+
+        return loss
+
+    # 🚨 [GR-Gaussian 优化] 如果没有预构建图,直接返回零损失,避免昂贵的 KNN 计算
+    # 在 iteration 1000 前,graph 尚未构建,此时跳过 Graph Laplacian 损失
+    return torch.tensor(0.0, device=xyz.device, requires_grad=True)
+
+    # 下面的 GPU fallback 代码被禁用,因为它太慢了
     # 尝试GPU加速版本（优先）
     try:
         # 检查点数量，避免GPU内存溢出
