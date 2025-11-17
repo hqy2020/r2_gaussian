@@ -69,11 +69,12 @@ class GaussianModel:
             self.nu_activation = lambda x: torch.sigmoid(x) * (8 - 2) + 2
             self.nu_inverse_activation = lambda x: inverse_sigmoid((x - 2) / (8 - 2))
 
-            # 🎯 [SSS-R²] opacity: 使用 tanh 支持完整的正负范围 [-1, 1]
-            # 但通过初始化和正则化确保大部分为正值
-            self.opacity_activation = torch.tanh
-            self.opacity_inverse_activation = lambda x: 0.5 * torch.log(
-                (1 + torch.clamp(x, -0.999, 0.999)) / (1 - torch.clamp(x, -0.999, 0.999) + 1e-8)
+            # 🎯 [SSS-v6-FIX] opacity: 使用偏移 sigmoid [-0.2, 1.0]
+            # 允许少量负值 (scooping) 但主要是正值 (splatting)
+            # Bug修复: tanh [-1,1] 太对称，容易导致全负值
+            self.opacity_activation = lambda x: torch.sigmoid(x) * 1.2 - 0.2  # [-0.2, 1.0]
+            self.opacity_inverse_activation = lambda x: inverse_sigmoid(
+                (torch.clamp(x, -0.19, 0.99) + 0.2) / 1.2
             )
         else:
             # Default: same as density for backward compatibility
@@ -250,7 +251,8 @@ class GaussianModel:
         n_points = fused_point_cloud.shape[0]
         
         if self.use_student_t:
-            print(f"🎓 [SSS-R²] Initialize {n_points} Student's t distributions with scooping")
+            print(f"🔧 [SSS-v6-FIX] Initialize {n_points} Student's t distributions (Bug修复版本)")
+            print(f"   ✅ Fixes: 1)Opacity range [-0.2,1.0] 2)Positive initialization 3)Fixed densification")
         else:
             print(f"📦 [R²] Initialize gaussians from {n_points} estimated points")
             
@@ -295,8 +297,10 @@ class GaussianModel:
             # 验证初始化范围
             nu_activated = self.nu_activation(nu_init)
             opacity_activated = self.opacity_activation(opacity_init)
-            print(f"   🎓 [SSS-R²] Initialized nu: [{nu_activated.min():.2f}, {nu_activated.max():.2f}], "
-                  f"opacity: [{opacity_activated.min():.2f}, {opacity_activated.max():.2f}]")
+            pos_count = (opacity_activated > 0).float().mean()
+            print(f"   🎓 [SSS-v6] Initialized nu: [{nu_activated.min():.2f}, {nu_activated.max():.2f}], "
+                  f"opacity: [{opacity_activated.min():.2f}, {opacity_activated.max():.2f}], "
+                  f"positive: {pos_count*100:.1f}%")
         else:
             # Default initialization for backward compatibility
             self._nu = nn.Parameter(torch.zeros(n_points, 1, device="cuda").requires_grad_(True))
@@ -699,7 +703,14 @@ class GaussianModel:
         new_opacity = None
         if self.use_student_t:
             new_nu = self._nu[selected_pts_mask].repeat(N, 1)  # Keep same nu
-            new_opacity = self._opacity[selected_pts_mask].repeat(N, 1)  # Keep same opacity
+
+            # 🎯 [SSS-v6-FIX] 修复负值传播 Bug
+            # 问题: 直接复制 _opacity 会传播负值 → 100% 负值
+            # 修复: 基于 density 重新初始化，确保新点倾向于正值
+            parent_density = self.get_density[selected_pts_mask].repeat(N, 1)
+            # 使用 density 作为初始 opacity (正值) * 0.8 (略微降低强度)
+            new_opacity_vals = parent_density * 0.8  # [0, ~1]
+            new_opacity = self.opacity_inverse_activation(new_opacity_vals)
         else:
             # For non-SSS models, use density for opacity compatibility
             new_opacity = new_density
@@ -748,7 +759,13 @@ class GaussianModel:
         new_opacity = None
         if self.use_student_t:
             new_nu = self._nu[selected_pts_mask]  # Clone same nu
-            new_opacity = self._opacity[selected_pts_mask]  # Clone same opacity
+
+            # 🎯 [SSS-v6-FIX] 修复负值传播 Bug (同 split)
+            # 问题: 直接复制 _opacity 会传播负值
+            # 修复: 基于 density 重新初始化，确保新点倾向于正值
+            parent_density = self.get_density[selected_pts_mask] * 0.5  # 减半 (clone后密度分配)
+            new_opacity_vals = parent_density  # [0, ~0.5]
+            new_opacity = self.opacity_inverse_activation(new_opacity_vals)
         else:
             # For non-SSS models, use density for opacity compatibility
             new_opacity = new_densities
