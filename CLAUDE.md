@@ -1,8 +1,20 @@
 # CLAUDE.md
-
+IMPORTANT
+**我是多个模型 agent 一起修改的，可能会有版本冲突问题，可以考虑用 git 管理**
 IMPORTANT
 **所有回复和写入文档的内容都是中文**
+IMPORTANT
+**不要质疑 baseline 的数据。稀疏训练图像是我们的实验场景，不能质疑这个实验前提**
+IMPORTANT
+**当记忆容量不足时，自动调用/record 命令存档，如果超过 2000 行，调用/achive**
+IMPORTANT
+**baseline 已经全部跑好，只需要查看对应结果就行，不需要再设置实验，baseline 训练了 30000 轮**
+IMPORTANT
+**数据集已经处理好，是data/369，不要跑错了！！！对应的器官和视角**
+IMPORTANT
 **cuda环境是 r2_gaussian_new**
+IMPORTANT
+**当实验跑起来后，每 30min 必须定时检查一下是否完成，完成后赶紧接下来步骤**
 IMPORTANT
 **训练命名格式为 yyyy_MM_dd_organ_{{nums}}views_{{technique}}**
 **所有AI生成的文档都必须在cc-agent对应的文件夹下，不能在其他地方出现！！！**

@@ -277,7 +277,7 @@ class GaussianModel:
         self._rotation = nn.Parameter(rots.requires_grad_(True))
         self._density = nn.Parameter(fused_density.requires_grad_(True))
         
-        # 🎯 [SSS-R²] Initialize Student-t parameters
+        # 🔬 [SSS-v4-MINIMAL] Initialize Student-t parameters
         if self.use_student_t:
             # nu 初始化: 根据 density 自适应
             # 逻辑: 高密度区域 (bone) 用大 ν (接近高斯), 低密度区域 (soft tissue) 用小 ν (长尾抑制噪点)
@@ -286,17 +286,22 @@ class GaussianModel:
             nu_init = self.nu_inverse_activation(nu_vals)
             self._nu = nn.Parameter(nu_init.requires_grad_(True))
 
-            # opacity 初始化: 完全基于 density (保证初期 95% 正值)
-            # 使用 tanh 的 inverse: artanh(x) = 0.5 * log((1+x)/(1-x))
-            opacity_vals = torch.sigmoid(fused_density.clone()) * 0.9  # [0, 0.9] - 避免过饱和
-            opacity_init = self.opacity_inverse_activation(opacity_vals)
+            # 🔬 [SSS-v4-MINIMAL] opacity 初始化: 恢复 v1 自由策略
+            # 完全移除 clamp 限制，允许 tanh 的完整 [-inf, inf] 输入空间
+            # 让优化器自由探索正负 opacity 的最佳平衡
+            opacity_vals = torch.sigmoid(fused_density.clone()) * 0.7 + 0.15  # [0.15, 0.85]
+            opacity_init = self.opacity_inverse_activation(opacity_vals)  # 转换为 tanh 的逆
+            # ❌ 移除 clamp: 不限制初始化范围，完全自由
+            # opacity_init = torch.clamp(opacity_init, ...)  # v1/v2/v3 都有clamp，v4移除
             self._opacity = nn.Parameter(opacity_init.requires_grad_(True))
 
             # 验证初始化范围
             nu_activated = self.nu_activation(nu_init)
             opacity_activated = self.opacity_activation(opacity_init)
-            print(f"   🎓 [SSS-R²] Initialized nu: [{nu_activated.min():.2f}, {nu_activated.max():.2f}], "
-                  f"opacity: [{opacity_activated.min():.2f}, {opacity_activated.max():.2f}]")
+            pos_ratio = (opacity_activated > 0).float().mean()
+            print(f"   🔬 [SSS-v4-MINIMAL] Initialized nu: [{nu_activated.min():.2f}, {nu_activated.max():.2f}], "
+                  f"opacity: [{opacity_activated.min():.3f}, {opacity_activated.max():.3f}]")
+            print(f"   🔬 [SSS-v4-MINIMAL] Initial positive opacity ratio: {pos_ratio*100:.1f}% (no clamp, free learning)")
         else:
             # Default initialization for backward compatibility
             self._nu = nn.Parameter(torch.zeros(n_points, 1, device="cuda").requires_grad_(True))

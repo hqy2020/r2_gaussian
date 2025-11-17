@@ -27,8 +27,29 @@
 - **参考文档：** 相关分析报告链接
 ```
 
-### 示例记录区
-*（待添加首个成功案例）*
+### [2025-11-17] CoR-GS Stage 1 多视点协同正则化
+- **创新点来源：** Co-Regularization Gaussian Splatting (CoR-GS) - Stage 1 Disagreement Metrics
+- **实现方法：**
+  - 基于PyTorch3D KNN的Geometry Disagreement计算
+  - 多视点Rendering Disagreement度量
+  - 集成到训练损失函数（lambda = 0.01）
+- **性能提升：**
+  - 3 views: -0.40 dB (需参数优化)
+  - 6 views: +5.24 dB / SSIM +0.0416 (4.6%)
+  - 9 views: +6.24 dB / SSIM +0.0532 (5.9%)
+- **关键决策：**
+  1. 采用渐进式Stage实现策略，验证一个后再进行下一个
+  2. 多视点协同约束在视角充足时有显著优势
+  3. 参数自适应化（lambda根据视角数调整）是改进3-views的关键
+- **可复用组件：**
+  - `/home/qyhu/Documents/r2_ours/r2_gaussian/r2_gaussian/disagreement_metrics.py`
+  - PyTorch3D KNN加速（10-20x性能提升）
+  - Disagreement Loss集成框架
+- **参考文档：** `cc-agent/records/foot_369_corgs_results_2025_11_17.md`
+- **后续优化建议：**
+  - 调整3-views权重参数 (lambda=0.001~0.01 range)
+  - 实现adaptive regularization (根据disagreement强度调整权重)
+  - 在其他器官数据集验证（chest, head, abdomen）
 
 ---
 

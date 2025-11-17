@@ -1,0 +1,23 @@
+{
+  "3views": {
+    "psnr_2d": 28.147666931152344,
+    "ssim_2d": 0.838265061378479,
+    "psnr_3d": null,
+    "ssim_3d": null,
+    "lpips": null
+  },
+  "6views": {
+    "psnr_2d": 33.808990478515625,
+    "ssim_2d": 0.9437707662582397,
+    "psnr_3d": null,
+    "ssim_3d": null,
+    "lpips": null
+  },
+  "9views": {
+    "psnr_2d": 34.78152847290039,
+    "ssim_2d": 0.9531791806221008,
+    "psnr_3d": null,
+    "ssim_3d": null,
+    "lpips": null
+  }
+}

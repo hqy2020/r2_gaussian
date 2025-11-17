@@ -1,0 +1,16 @@
+Warning: transformers not available, DPT depth estimation disabled
+Warning: MiDaS not available, using fallback depth estimation
+✅ FSGS pseudo-label modules available
+✅ Medical Proximity-guided密化 modules available
+✅ FSGS Proximity-guided densification modules available (OPTIMIZED)
+✅ FSGS Complete System available (Proximity + Depth Supervision + Pseudo Views)
+Output folder: output/2025_11_17_foot_3views_baseline_rerun [17/11 12:43:25]
+Optimizing output/2025_11_17_foot_3views_baseline_rerun [17/11 12:43:25]
+Traceback (most recent call last):
+  File "/home/qyhu/Documents/r2_ours/r2_gaussian/train.py", line 1266, in <module>
+    training(
+  File "/home/qyhu/Documents/r2_ours/r2_gaussian/train.py", line 103, in training
+    scene = Scene(dataset, shuffle=False)
+  File "/home/qyhu/Documents/r2_ours/r2_gaussian/r2_gaussian/dataset/__init__.py", line 56, in __init__
+    assert False, f"Could not recognize scene type: {args.source_path}."
+AssertionError: Could not recognize scene type: /home/qyhu/Documents/r2_ours/r2_gaussian/data/369.
