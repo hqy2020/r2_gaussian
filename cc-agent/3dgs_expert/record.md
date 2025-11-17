@@ -54,29 +54,6 @@
 5. → 完整训练实验（15k iterations）
 6. → 超参数调优（如需要）
 
-## Previous Task History
-2. Pixel-Graph-Aware Gradient Strategy (PGA) - Graph 构建与梯度增强
-3. Graph Laplacian Regularization - 损失函数集成
-
-## User Approved Decisions
-- ✅ 实施方案: 完整实施 (De-Init + PGA + Graph Laplacian)
-- ✅ 依赖库: 使用 PyTorch Geometric (提供 fallback)
-- ✅ 超参数: 论文默认值 (k=6, λ_g=1e-4, λ_lap=8e-4, σ_d=3)
-- ✅ 优先级: 核心功能快速验证
-
-## Current Deliverables
-- ✅ `innovation_analysis_gr_gaussian.md` (2025-11-17, 1998 字)
-- ✅ `implementation_plan_gr_gaussian.md` (2025-11-17, 2487 字)
-  - 完整的架构设计图和数据流向
-  - 文件级代码修改方案（含伪代码）
-  - PyTorch Geometric 安装指南
-  - 7-10 天实施时间表
-  - 单元测试和集成测试计划
-
-## Performance Context
-- Baseline (foot 3 views): PSNR 28.547 dB, SSIM 0.9008
-- 预期提升: +0.5~0.8 dB → 29.05~29.35 dB
-
 ---
 
 ## Previous Task (Archived)

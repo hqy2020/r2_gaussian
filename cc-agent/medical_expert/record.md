@@ -48,20 +48,6 @@
 - 几何已饱和: Fitness=1.0 说明双模型几何对齐已完美，Co-pruning 改善空间有限
 - 风险-收益不平衡: 3 views 极度稀疏场景下，剪除 30%+ Gaussian 点可能导致解剖细节丢失
 
-### 任务 3: GR-Gaussian 技术医学可行性评估
-**任务状态:** ✅ 已完成
-**时间:** 2025-11-17
-**版本号:** v1.0
-**临床评估:** ⭐⭐⭐⭐½ (高临床可行性)
-**交付物:** `/home/qyhu/Documents/r2_ours/r2_gaussian/cc-agent/medical_expert/medical_feasibility_gr_gaussian.md`
-
-**三项创新点医学价值:**
-1. **Denoised Point Cloud Initialization:** ⭐⭐⭐⭐½ (直击 3 视角 FDK 初始化噪声)
-2. **Pixel-Graph-Aware Gradient:** ⭐⭐⭐⭐⭐ (解决针状伪影，最大临床痛点)
-3. **Graph Laplacian Regularization:** ⭐⭐⭐⭐ (符合组织密度连续性假设)
-
-**预期提升:** PSNR +0.65 dB → 29.22 dB (跨越临床可用阈值)
-
 ---
 
 **版本:** v1.0
