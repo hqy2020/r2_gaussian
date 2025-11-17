@@ -670,44 +670,42 @@ def training(
                 loss_tv = tv_3d_loss(vol_pred, reduction="mean")
                 LossDict[f"loss_gs{i}"] += opt.lambda_tv * loss_tv
         
-        # SSS: Add ENHANCED regularization losses for Student's t parameters
+        # 🎯 [SSS-R²] Add regularization losses for Student's t parameters
         for i in range(gaussiansN):
             if hasattr(GsDict[f"gs{i}"], 'use_student_t') and GsDict[f"gs{i}"].use_student_t:
                 opacity = GsDict[f"gs{i}"].get_opacity
                 nu = GsDict[f"gs{i}"].get_nu
-                
-                # PROGRESSIVE opacity balance: adapt target based on training phase
-                if iteration < 10000:
-                    # Phase 1: Strongly prefer positive (95% positive)
-                    pos_target = 0.95
-                    neg_penalty_weight = 10.0
-                elif iteration < 20000:
-                    # Phase 2: Allow some negative (85% positive)
-                    pos_target = 0.85
+
+                # 优化后的渐进式正则化策略
+                # 目标: 始终保持 85-90% 正 opacity,避免过度负值导致渲染异常
+                if iteration < 15000:
+                    # Phase 1 (前 15k 步): 强约束,确保稳定训练
+                    pos_target = 0.90
                     neg_penalty_weight = 5.0
                 else:
-                    # Phase 3: More flexible (75% positive)
-                    pos_target = 0.75
-                    neg_penalty_weight = 2.0
-                
+                    # Phase 2 (15k 步后): 适度放松,允许 15% 负 opacity
+                    pos_target = 0.85
+                    neg_penalty_weight = 3.0
+
+                # Opacity balance loss: 约束正值比例
                 pos_count = (opacity > 0).float().mean()
                 balance_loss = torch.abs(pos_count - pos_target)
-                LossDict[f"loss_gs{i}"] += 0.003 * balance_loss
-                
-                # Nu regularization: encourage diversity within reasonable range
-                nu_diversity_loss = -torch.std(nu) * 0.1  # Encourage diversity
-                nu_range_loss = torch.mean(torch.relu(nu - 8.0)) + torch.mean(torch.relu(1.5 - nu))  # Keep in [1.5, 8]
+                LossDict[f"loss_gs{i}"] += 0.001 * balance_loss  # 降低权重: 0.003 → 0.001
+
+                # Nu diversity loss: 鼓励 ν 多样性,避免全部坍缩到边界
+                nu_diversity_loss = -torch.std(nu) * 0.1  # 标准差越大越好
+                nu_range_loss = torch.mean(torch.relu(nu - 8.0)) + torch.mean(torch.relu(2.0 - nu))  # 软约束在 [2, 8]
                 LossDict[f"loss_gs{i}"] += 0.001 * (nu_diversity_loss + nu_range_loss)
-                
-                # Adaptive negative opacity penalty
+
+                # Adaptive negative opacity penalty: 惩罚极端负值
                 neg_mask = opacity < 0
                 if neg_mask.any():
-                    extreme_neg_mask = opacity < -0.2  # Very negative values
+                    extreme_neg_mask = opacity < -0.2  # 极端负值阈值
                     if extreme_neg_mask.any():
                         extreme_penalty = torch.mean(torch.abs(opacity[extreme_neg_mask])) * neg_penalty_weight
                         LossDict[f"loss_gs{i}"] += 0.002 * extreme_penalty
 
-        # SSS: Debug logging for ENHANCED regularization terms
+        # 🎯 [SSS-R²] Debug logging for regularization terms
         if hasattr(GsDict[f"gs0"], 'use_student_t') and GsDict[f"gs0"].use_student_t and iteration % 2000 == 0:
             opacity = GsDict[f"gs0"].get_opacity
             nu = GsDict[f"gs0"].get_nu
@@ -715,29 +713,26 @@ def training(
             neg_ratio = (opacity < 0).float().mean()
             nu_mean = nu.mean()
             nu_std = nu.std()
-            
-            # Determine current phase and targets
-            if iteration < 10000:
-                phase = "Early (Positive)"
-                pos_target = 0.95
-            elif iteration < 20000:
-                phase = "Mid (Limited-Neg)"
-                pos_target = 0.85
+
+            # 当前训练阶段
+            if iteration < 15000:
+                phase = "Early (90% pos)"
+                pos_target = 0.90
             else:
-                phase = "Late (Flexible)"
-                pos_target = 0.75
-            
-            print(f"🎯 [SSS-Enhanced] Iter {iteration} - Phase: {phase}")
+                phase = "Late (85% pos)"
+                pos_target = 0.85
+
+            print(f"🎯 [SSS-R²] Iter {iteration} - Phase: {phase}")
             print(f"          Opacity: [{opacity.min():.3f}, {opacity.max():.3f}], Balance: {pos_ratio:.3f} pos (target: {pos_target:.2f})")
             print(f"          Nu: mean={nu_mean:.2f}, std={nu_std:.2f}, range=[{nu.min():.1f}, {nu.max():.1f}]")
-            
-            # Warnings based on phase
+
+            # 警告
             if pos_ratio < pos_target - 0.05:
-                print(f"⚠️  [SSS-Enhanced] Warning: {pos_ratio*100:.1f}% positive opacity (target: {pos_target*100:.0f}%)")
-            
+                print(f"⚠️  [SSS-R²] Warning: {pos_ratio*100:.1f}% positive opacity (target: {pos_target*100:.0f}%)")
+
             extreme_neg = (opacity < -0.2).float().mean()
             if extreme_neg > 0.01:
-                print(f"⚠️  [SSS-Enhanced] Warning: {extreme_neg*100:.1f}% extreme negative opacity (<-0.2)")
+                print(f"⚠️  [SSS-R²] Warning: {extreme_neg*100:.1f}% extreme negative opacity (<-0.2)")
         
         # 反向传播 - 为每个高斯场
         for i in range(gaussiansN):
@@ -887,29 +882,24 @@ def training(
             # 优化器更新 - 为每个高斯场
             if iteration < opt.iterations:
                 for i in range(gaussiansN):
-                    # SSS: Apply ADAPTIVE gradient clipping for enhanced stability
+                    # 🎯 [SSS-R²] Apply gradient clipping for stability
                     if hasattr(GsDict[f"gs{i}"], 'use_student_t') and GsDict[f"gs{i}"].use_student_t:
-                        # Adaptive clipping based on training phase
-                        if iteration < 10000:
-                            # Phase 1: Very conservative
-                            nu_clip_norm = 0.3
-                            opacity_clip_norm = 0.8
-                        elif iteration < 20000:
-                            # Phase 2: Moderate
-                            nu_clip_norm = 0.5
-                            opacity_clip_norm = 1.2
-                        else:
-                            # Phase 3: More flexible
-                            nu_clip_norm = 0.8
-                            opacity_clip_norm = 1.5
-                        
+                        # 固定梯度裁剪阈值,简化训练流程
+                        nu_clip_norm = 0.5
+                        opacity_clip_norm = 1.0
+                        xyz_clip_norm = 2.0
+
+                        # Nu parameter gradient clipping
                         if hasattr(GsDict[f"gs{i}"], '_nu') and GsDict[f"gs{i}"]._nu.grad is not None:
                             torch.nn.utils.clip_grad_norm_(GsDict[f"gs{i}"]._nu, max_norm=nu_clip_norm)
+
+                        # Opacity parameter gradient clipping
                         if hasattr(GsDict[f"gs{i}"], '_opacity') and GsDict[f"gs{i}"]._opacity.grad is not None:
                             torch.nn.utils.clip_grad_norm_(GsDict[f"gs{i}"]._opacity, max_norm=opacity_clip_norm)
-                        # Standard position gradient clipping
+
+                        # Position gradient clipping (standard for all models)
                         if GsDict[f"gs{i}"]._xyz.grad is not None:
-                            torch.nn.utils.clip_grad_norm_(GsDict[f"gs{i}"]._xyz, max_norm=2.0)
+                            torch.nn.utils.clip_grad_norm_(GsDict[f"gs{i}"]._xyz, max_norm=xyz_clip_norm)
                     
                     GsDict[f"gs{i}"].optimizer.step()
                     GsDict[f"gs{i}"].optimizer.zero_grad(set_to_none=True)

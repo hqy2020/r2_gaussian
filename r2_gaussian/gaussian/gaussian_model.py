@@ -63,15 +63,18 @@ class GaussianModel:
 
         self.rotation_activation = torch.nn.functional.normalize
         
-        # SSS: Student's t distribution activation functions (CONSERVATIVE)
+        # SSS: Student's t distribution activation functions
         if self.use_student_t:
-            # nu parameter: CONSERVATIVE range [2, 8] for numerical stability
+            # nu parameter: range [2, 8] for numerical stability
             self.nu_activation = lambda x: torch.sigmoid(x) * (8 - 2) + 2
             self.nu_inverse_activation = lambda x: inverse_sigmoid((x - 2) / (8 - 2))
-            # opacity: CONSERVATIVE SCOOPING - mostly positive with limited negative (5-10%)
-            # Using sigmoid + offset to ensure most values are positive
-            self.opacity_activation = lambda x: torch.sigmoid(x) * 1.2 - 0.1  # Range [-0.1, 1.1]
-            self.opacity_inverse_activation = lambda x: inverse_sigmoid((torch.clamp(x, -0.09, 1.09) + 0.1) / 1.2)
+
+            # 🎯 [SSS-R²] opacity: 使用 tanh 支持完整的正负范围 [-1, 1]
+            # 但通过初始化和正则化确保大部分为正值
+            self.opacity_activation = torch.tanh
+            self.opacity_inverse_activation = lambda x: 0.5 * torch.log(
+                (1 + torch.clamp(x, -0.999, 0.999)) / (1 - torch.clamp(x, -0.999, 0.999) + 1e-8)
+            )
         else:
             # Default: same as density for backward compatibility
             self.nu_activation = lambda x: torch.ones_like(x) * float('inf')  # Gaussian limit
@@ -157,7 +160,22 @@ class GaussianModel:
 
     @property
     def get_scaling(self):
-        return self.scaling_activation(self._scaling)
+        """
+        🎯 [SSS-R²] 获取激活后的 scaling
+
+        SSS 增强:
+            - 如果启用 Student-t,应用尺度放大因子模拟长尾效应
+            - multiplier shape: (N, 1) → 广播到 (N, 3) 以匹配 scaling
+        """
+        base_scale = self.scaling_activation(self._scaling)  # (N, 3)
+
+        if self.use_student_t:
+            # 获取 Student-t 尺度放大因子 (N, 1)
+            multiplier = self.get_student_t_scale_multiplier()
+            # 广播到三个轴: (N, 1) → (N, 3)
+            return base_scale * multiplier
+
+        return base_scale
 
     @property
     def get_rotation(self):
@@ -186,6 +204,39 @@ class GaussianModel:
             return self.opacity_activation(self._opacity)
         else:
             return torch.sigmoid(self._opacity)  # Default [0,1] range
+
+    def get_student_t_scale_multiplier(self):
+        """
+        🎯 [SSS-R²] 基于 ν 计算 Student-t 的尺度放大因子
+
+        数学原理:
+            - 高斯分布: 标准差 = σ
+            - Student-t 分布: 标准差 = σ * sqrt(ν / (ν - 2)) for ν > 2
+            - 长尾效应: ν 越小,尾部越重,需要更大的有效半径
+
+        实现细节:
+            - nu ∈ [2, 8] → multiplier ∈ [√∞, √1.33] ≈ [∞, 1.15]
+            - 使用 detach() 避免反向传播到 nu (保持梯度稳定)
+            - 仅影响渲染半径,不改变实际的 scaling 参数
+
+        Returns:
+            torch.Tensor: shape (N, 1), 尺度放大因子
+        """
+        if not self.use_student_t:
+            return torch.ones_like(self._nu)
+
+        nu = self.get_nu  # (N, 1), range [2, 8]
+
+        # Student-t 标准差与高斯标准差的比值
+        # 当 nu=2: sqrt(2/(2-2)) → 无穷 (防止除零,裁剪到 nu_min=2.1)
+        nu_safe = torch.clamp(nu, min=2.1, max=8.0)
+        multiplier = torch.sqrt(nu_safe / (nu_safe - 2))  # (N, 1)
+
+        # 限制放大倍数 [1.15, 5.0] (防止过度放大导致渲染效率下降)
+        multiplier_clamped = torch.clamp(multiplier, min=1.15, max=5.0)
+
+        # detach: 尺度调整不参与梯度计算,仅作为渲染时的修正
+        return multiplier_clamped.detach()
 
     def get_covariance(self, scaling_modifier=1):
         return self.covariance_activation(
@@ -226,19 +277,26 @@ class GaussianModel:
         self._rotation = nn.Parameter(rots.requires_grad_(True))
         self._density = nn.Parameter(fused_density.requires_grad_(True))
         
-        # SSS: Initialize new parameters  
+        # 🎯 [SSS-R²] Initialize Student-t parameters
         if self.use_student_t:
-            # ENHANCED Initialize nu with wider range for more expressiveness
-            nu_vals = torch.rand(n_points, 1, device="cuda") * 4 + 2  # [2, 6] - good tail thickness range
+            # nu 初始化: 根据 density 自适应
+            # 逻辑: 高密度区域 (bone) 用大 ν (接近高斯), 低密度区域 (soft tissue) 用小 ν (长尾抑制噪点)
+            density_normalized = torch.sigmoid(fused_density.clone())  # [0, 1]
+            nu_vals = density_normalized * 4 + 2  # [2, 6], density-guided
             nu_init = self.nu_inverse_activation(nu_vals)
             self._nu = nn.Parameter(nu_init.requires_grad_(True))
-            
-            # ENHANCED Initialize opacity - start positive but allow training to explore
-            # Use density-based initialization for better distribution
-            opacity_vals = torch.sigmoid(fused_density.clone()) * 0.8 + 0.1  # [0.1, 0.9] - density-guided
-            opacity_init = self.opacity_inverse_activation(torch.clamp(opacity_vals, 0.01, 0.99))
+
+            # opacity 初始化: 完全基于 density (保证初期 95% 正值)
+            # 使用 tanh 的 inverse: artanh(x) = 0.5 * log((1+x)/(1-x))
+            opacity_vals = torch.sigmoid(fused_density.clone()) * 0.9  # [0, 0.9] - 避免过饱和
+            opacity_init = self.opacity_inverse_activation(opacity_vals)
             self._opacity = nn.Parameter(opacity_init.requires_grad_(True))
-            print(f"   🎓 [SSS Enhanced] Initialized nu ~ [2, 6], opacity density-guided [0.1, 0.9]")
+
+            # 验证初始化范围
+            nu_activated = self.nu_activation(nu_init)
+            opacity_activated = self.opacity_activation(opacity_init)
+            print(f"   🎓 [SSS-R²] Initialized nu: [{nu_activated.min():.2f}, {nu_activated.max():.2f}], "
+                  f"opacity: [{opacity_activated.min():.2f}, {opacity_activated.max():.2f}]")
         else:
             # Default initialization for backward compatibility
             self._nu = nn.Parameter(torch.zeros(n_points, 1, device="cuda").requires_grad_(True))
