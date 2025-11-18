@@ -1,0 +1,54 @@
+Warning: transformers not available, DPT depth estimation disabled
+Warning: MiDaS not available, using fallback depth estimation
+✅ FSGS pseudo-label modules available
+✅ Medical Proximity-guided密化 modules available
+✅ FSGS Proximity-guided densification modules available (OPTIMIZED)
+✅ FSGS Complete System available (Proximity + Depth Supervision + Pseudo Views)
+✅ CoR-GS Stage 3 (Pseudo-view Co-regularization) modules available
+Output folder: output/2025_11_18_foot_3views_corgs_test_bugfix [18/11 15:38:09]
+Optimizing output/2025_11_18_foot_3views_corgs_test_bugfix [18/11 15:38:09]
+Reading camera 1/3 for trainReading camera 2/3 for trainReading camera 3/3 for train [18/11 15:38:09]
+Reading camera 1/100 for testReading camera 2/100 for testReading camera 3/100 for testReading camera 4/100 for testReading camera 5/100 for testReading camera 6/100 for testReading camera 7/100 for testReading camera 8/100 for testReading camera 9/100 for testReading camera 10/100 for testReading camera 11/100 for testReading camera 12/100 for testReading camera 13/100 for testReading camera 14/100 for testReading camera 15/100 for testReading camera 16/100 for testReading camera 17/100 for testReading camera 18/100 for testReading camera 19/100 for testReading camera 20/100 for testReading camera 21/100 for testReading camera 22/100 for testReading camera 23/100 for testReading camera 24/100 for testReading camera 25/100 for testReading camera 26/100 for testReading camera 27/100 for testReading camera 28/100 for testReading camera 29/100 for testReading camera 30/100 for testReading camera 31/100 for testReading camera 32/100 for testReading camera 33/100 for testReading camera 34/100 for testReading camera 35/100 for testReading camera 36/100 for testReading camera 37/100 for testReading camera 38/100 for testReading camera 39/100 for testReading camera 40/100 for testReading camera 41/100 for testReading camera 42/100 for testReading camera 43/100 for testReading camera 44/100 for testReading camera 45/100 for testReading camera 46/100 for testReading camera 47/100 for testReading camera 48/100 for testReading camera 49/100 for testReading camera 50/100 for testReading camera 51/100 for testReading camera 52/100 for testReading camera 53/100 for testReading camera 54/100 for testReading camera 55/100 for testReading camera 56/100 for testReading camera 57/100 for testReading camera 58/100 for testReading camera 59/100 for testReading camera 60/100 for testReading camera 61/100 for testReading camera 62/100 for testReading camera 63/100 for testReading camera 64/100 for testReading camera 65/100 for testReading camera 66/100 for testReading camera 67/100 for testReading camera 68/100 for testReading camera 69/100 for testReading camera 70/100 for testReading camera 71/100 for testReading camera 72/100 for testReading camera 73/100 for testReading camera 74/100 for testReading camera 75/100 for testReading camera 76/100 for testReading camera 77/100 for testReading camera 78/100 for testReading camera 79/100 for testReading camera 80/100 for testReading camera 81/100 for testReading camera 82/100 for testReading camera 83/100 for testReading camera 84/100 for testReading camera 85/100 for testReading camera 86/100 for testReading camera 87/100 for testReading camera 88/100 for testReading camera 89/100 for testReading camera 90/100 for testReading camera 91/100 for testReading camera 92/100 for testReading camera 93/100 for testReading camera 94/100 for testReading camera 95/100 for testReading camera 96/100 for testReading camera 97/100 for testReading camera 98/100 for testReading camera 99/100 for testReading camera 100/100 for test [18/11 15:38:11]
+Loading Training Cameras [18/11 15:38:15]
+Loading Test Cameras [18/11 15:38:18]
+📦 [R²] Using standard Gaussian model (SSS disabled) [18/11 15:38:18]
+Initialize Gaussians with init_foot_3views.npy [18/11 15:38:18]
+📦 [R²] Initialize gaussians from 50000 estimated points [18/11 15:38:18]
+⚠️ [R²] Graph Regularization disabled (focus on FSGS) [18/11 15:38:18]
+Initialize Gaussians with init_foot_3views.npy [18/11 15:38:18]
+📦 [R²] Initialize gaussians from 50000 estimated points [18/11 15:38:18]
+📦 [R²] Create gaussians1 [18/11 15:38:18]
+GsDict.keys() is dict_keys(['gs0', 'gs1']) [18/11 15:38:18]
+📦 [Legacy] Using original pseudo-label implementation... [18/11 15:38:18]
+Generated 50 legacy pseudo cameras [18/11 15:38:19]
+Use total variation loss [18/11 15:38:19]
+
+============================================================ [18/11 15:38:19]
+🎯 [CoR-GS] 生成 10,000 个随机 pseudo-view 相机... [18/11 15:38:19]
+============================================================ [18/11 15:38:19]
+✅ [CoR-GS] Pseudo-view 生成完成: 10000 个 [18/11 15:39:15]
+============================================================ [18/11 15:39:15]
+ [18/11 15:39:15]
+Train:   0%|          | 0/100 [00:00<?, ?it/s]                                              Train:   0%|          | 0/100 [00:14<?, ?it/s]Train:   0%|          | 0/100 [00:17<?, ?it/s, loss=2.0e-01, pts=1.0e+05, gs=2]Train:  10%|█         | 10/100 [00:17<02:33,  1.71s/it, loss=2.0e-01, pts=1.0e+05, gs=2]Train:  10%|█         | 10/100 [00:19<02:33,  1.71s/it, loss=1.5e-01, pts=1.0e+05, gs=2]Train:  20%|██        | 20/100 [00:19<01:07,  1.18it/s, loss=1.5e-01, pts=1.0e+05, gs=2]Train:  20%|██        | 20/100 [00:21<01:07,  1.18it/s, loss=1.2e-01, pts=1.0e+05, gs=2]Train:  30%|███       | 30/100 [00:21<00:38,  1.80it/s, loss=1.2e-01, pts=1.0e+05, gs=2]Train:  30%|███       | 30/100 [00:23<00:38,  1.80it/s, loss=9.6e-02, pts=1.0e+05, gs=2]Train:  40%|████      | 40/100 [00:23<00:24,  2.40it/s, loss=9.6e-02, pts=1.0e+05, gs=2]Train:  40%|████      | 40/100 [00:25<00:24,  2.40it/s, loss=8.2e-02, pts=1.0e+05, gs=2]Train:  50%|█████     | 50/100 [00:25<00:17,  2.93it/s, loss=8.2e-02, pts=1.0e+05, gs=2]Train:  50%|█████     | 50/100 [00:27<00:17,  2.93it/s, loss=8.0e-02, pts=1.0e+05, gs=2]Train:  60%|██████    | 60/100 [00:27<00:11,  3.39it/s, loss=8.0e-02, pts=1.0e+05, gs=2]Train:  60%|██████    | 60/100 [00:29<00:11,  3.39it/s, loss=6.2e-02, pts=1.0e+05, gs=2]Train:  70%|███████   | 70/100 [00:29<00:07,  3.78it/s, loss=6.2e-02, pts=1.0e+05, gs=2]Train:  70%|███████   | 70/100 [00:31<00:07,  3.78it/s, loss=5.4e-02, pts=1.0e+05, gs=2]Train:  80%|████████  | 80/100 [00:31<00:04,  4.13it/s, loss=5.4e-02, pts=1.0e+05, gs=2]Train:  80%|████████  | 80/100 [00:33<00:04,  4.13it/s, loss=5.8e-02, pts=1.0e+05, gs=2]Train:  90%|█████████ | 90/100 [00:33<00:02,  4.48it/s, loss=5.8e-02, pts=1.0e+05, gs=2]                                                                                        Train:  90%|█████████ | 90/100 [00:35<00:02,  4.48it/s, loss=5.8e-02, pts=1.0e+05, gs=2]Train:  90%|█████████ | 90/100 [00:35<00:02,  4.48it/s, loss=4.3e-02, pts=1.0e+05, gs=2]Train: 100%|██████████| 100/100 [00:35<00:00,  4.42it/s, loss=4.3e-02, pts=1.0e+05, gs=2]                                                                                         💾 保存渲染图像: proj_train_0000 到 output/2025_11_18_foot_3views_corgs_test_bugfix/eval/iter_000001/render_images [18/11 15:39:19]
+💾 保存渲染图像: proj_train_0024 到 output/2025_11_18_foot_3views_corgs_test_bugfix/eval/iter_000001/render_images [18/11 15:39:20]
+💾 保存渲染图像: proj_train_0049 到 output/2025_11_18_foot_3views_corgs_test_bugfix/eval/iter_000001/render_images [18/11 15:39:21]
+💾 保存渲染图像: proj_test_0016 到 output/2025_11_18_foot_3views_corgs_test_bugfix/eval/iter_000001/render_images [18/11 15:39:22]
+💾 保存渲染图像: proj_test_0033 到 output/2025_11_18_foot_3views_corgs_test_bugfix/eval/iter_000001/render_images [18/11 15:39:22]
+💾 保存渲染图像: proj_test_0050 到 output/2025_11_18_foot_3views_corgs_test_bugfix/eval/iter_000001/render_images [18/11 15:39:23]
+💾 保存渲染图像: proj_test_0066 到 output/2025_11_18_foot_3views_corgs_test_bugfix/eval/iter_000001/render_images [18/11 15:39:24]
+💾 保存渲染图像: proj_test_0083 到 output/2025_11_18_foot_3views_corgs_test_bugfix/eval/iter_000001/render_images [18/11 15:39:24]
+[ITER 1] Evaluating: psnr3d 20.6537, ssim3d 0.1228, psnr2d 16.4873, ssim2d 0.3987 [18/11 15:39:29]
+  [Pseudo Co-reg] Loss: 0.000000, L1: 0.000000, SSIM: 1.0000, Weighted_gs0: 0.000000, Weighted_gs1: 0.000000 [18/11 15:39:50]
+[ITER 100] Saving Gaussians [18/11 15:39:50]
+💾 [R²] Saved legacy model [18/11 15:39:50]
+💾 [R²] Saved legacy model [18/11 15:39:50]
+💾 保存渲染图像: proj_train_0000 到 output/2025_11_18_foot_3views_corgs_test_bugfix/eval/iter_000100/render_images [18/11 15:39:51]
+💾 保存渲染图像: proj_train_0024 到 output/2025_11_18_foot_3views_corgs_test_bugfix/eval/iter_000100/render_images [18/11 15:39:51]
+💾 保存渲染图像: proj_train_0049 到 output/2025_11_18_foot_3views_corgs_test_bugfix/eval/iter_000100/render_images [18/11 15:39:52]
+💾 保存渲染图像: proj_test_0016 到 output/2025_11_18_foot_3views_corgs_test_bugfix/eval/iter_000100/render_images [18/11 15:39:53]
+💾 保存渲染图像: proj_test_0033 到 output/2025_11_18_foot_3views_corgs_test_bugfix/eval/iter_000100/render_images [18/11 15:39:54]
+💾 保存渲染图像: proj_test_0050 到 output/2025_11_18_foot_3views_corgs_test_bugfix/eval/iter_000100/render_images [18/11 15:39:54]
+💾 保存渲染图像: proj_test_0066 到 output/2025_11_18_foot_3views_corgs_test_bugfix/eval/iter_000100/render_images [18/11 15:39:55]
+💾 保存渲染图像: proj_test_0083 到 output/2025_11_18_foot_3views_corgs_test_bugfix/eval/iter_000100/render_images [18/11 15:39:56]
+[ITER 100] Evaluating: psnr3d 22.6695, ssim3d 0.2813, psnr2d 23.7954, ssim2d 0.5776 [18/11 15:40:00]
+Training complete. [18/11 15:40:00]
