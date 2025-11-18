@@ -893,11 +893,7 @@ class GaussianModel:
             
             # Density: 继承源组件
             self._density[dead_indices] = self._density[source_indices].clone()
-            
-            # Features (SH): 继承源组件
-            self._features_dc[dead_indices] = self._features_dc[source_indices].clone()
-            self._features_rest[dead_indices] = self._features_rest[source_indices].clone()
-            
+
             # 5. 日志输出
             print(f"♻️ [SSS-Recycle] Recycled {num_to_recycle}/{num_dead} dead components "
                   f"({num_to_recycle/opacity.shape[0]*100:.1f}% of total)")
