@@ -1,5 +1,6 @@
 import numpy as np
 import matplotlib
+matplotlib.use("Agg")  # 必须在 pyplot 导入前设置，避免 runtime 切换导致死锁
 from matplotlib.widgets import Slider
 import matplotlib.pyplot as plt
 from mpl_toolkits.axes_grid1 import make_axes_locatable
@@ -268,10 +269,7 @@ def show_two_slice(
     save=False,
     no_diff=False,
 ):
-    if save:
-        matplotlib.use("Agg")
-    else:
-        matplotlib.use("TkAgg")
+    # ✅ 已修复：删除 runtime backend 切换，避免死锁（已在文件顶部设置为 Agg）
     if torch.is_tensor(slice1):
         slice1 = t2a(slice1)
     if torch.is_tensor(slice2):
