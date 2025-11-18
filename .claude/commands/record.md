@@ -11,7 +11,7 @@ description: 记录当前工作到 progress.md（由 @research-project-coordinat
 ### 第一步：检查并总结现有内容
 1. 读取 `cc-agent/records/progress.md` 文件（如果存在）
 2. 统计文件字数
-3. 如果文件字数超过 2000 字，**立即调用 @archive 命令**进行归档
+3. 如果文件字数超过 2000 字，**立即调用 /archive 命令**进行归档
 4. 总结现有内容的关键信息：
    - 最近完成的主要任务
    - 当前进行中的工作
@@ -32,7 +32,6 @@ description: 记录当前工作到 progress.md（由 @research-project-coordinat
    # 工作进度记录
 
    > **最后更新：** YYYY-MM-DD HH:MM:SS
-   > **历史归档：** 如有归档，在此处引用 archives/progress_YYYY_MM_DD_HHMMSS.md
 
    ## 当前状态摘要
    - **最近完成：** [简要描述最近完成的主要工作]
@@ -52,13 +51,8 @@ description: 记录当前工作到 progress.md（由 @research-project-coordinat
      - 待办1：描述
      - 待办2：描述
    
-   - **关键决策：** [重要的技术决策或设计选择]
-   - **相关文件：** [涉及的主要文件路径]
    ```
 
 **重要提示：**
 - 记录应该是**压缩的、结构化的**，便于快速浏览和理解
 - 如果 progress.md 不存在，则创建新文件
-- 如果内容过多，先调用 archive 归档，再记录新内容
-- 记录完成后向用户确认已记录的内容和归档状态
-- 确保记录足够简洁，方便 @recap 快速加载进入工作状态
