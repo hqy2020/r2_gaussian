@@ -15,7 +15,10 @@
 # Note that when using the JetBrains backend, language servers are not used and this list is correspondingly ignored.
 languages:
 - python
-- bash
+- cpp
+
+# the encoding used by text files in the project
+# For a list of possible encodings, see https://docs.python.org/3.11/library/codecs.html#standard-encodings
 encoding: "utf-8"
 
 # whether to use the project's gitignore file to ignore files
@@ -76,7 +79,29 @@ excluded_tools: []
 
 # initial prompt for the project. It will always be given to the LLM upon activating the project
 # (contrary to the memories, which are loaded on demand).
-initial_prompt: ""
+initial_prompt: |
+  你正在协助 R²-Gaussian 项目的开发。这是一个基于 3D Gaussian Splatting 的 CT 断层扫描重建项目（NeurIPS 2024）。
+
+  **项目核心**：
+  - 使用 PyTorch + CUDA 实现快速 CT 重建
+  - 支持 3/6/9 视角的稀疏场景重建
+  - 主要代码在 r2_gaussian/ 模块下
+
+  **你的主要任务**：
+  - 帮助将 3DGS/NeRF 论文创新点迁移到 R²-Gaussian baseline
+  - 使用 serena 的符号搜索工具（find_symbol, find_referencing_symbols）精确定位代码
+  - 确保代码修改向下兼容，新功能默认关闭
+
+  **重要约定**：
+  - 所有 AI 文档必须在 cc-agent/ 文件夹下
+  - 训练命名格式：yyyy_MM_dd_organ_{{nums}}views_{{technique}}
+  - 场景归一化到 [-1, 1]³
+  - 优先使用中文进行交流
+
+  在开始任务前，建议阅读以下 memories：
+  - innovation_migration_guide.md（创新点移植指南）
+  - codebase_structure.md（代码库结构）
+  - suggested_commands.md（常用命令）
 
 project_name: "r2_gaussian"
 included_optional_tools: []
