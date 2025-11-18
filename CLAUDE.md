@@ -1,8 +1,8 @@
-# CLAUDE.md
-
+IMPORTANT
+**多使用 serena mcp 理解代码，修改代码**
 IMPORTANT
 **所有回复和写入文档的内容都是中文**
-**cuda环境是 r2_gaussian_new**
+**cuda环境是 r2_gaussian_new，我们就是训练 3 6 9稀疏场景的**
 IMPORTANT
 **训练命名格式为 yyyy_MM_dd_organ_{{nums}}views_{{technique}}**
 **所有AI生成的文档都必须在cc-agent对应的文件夹下，不能在其他地方出现！！！**
@@ -212,106 +212,32 @@ cc-agent/
 
 ---
 
-## MCP 工具配置
+## serena mcp使用
+我需要将以下论文创新点移植到 r2_gaussian：
 
-为了充分使用科研助手团队系统，需要安装以下 MCP 服务器：
+论文创新点：[在此粘贴创新点描述]
 
-### 必需的 MCP 工具
+请帮我：
+1. 使用 find_symbol 定位相关的类和函数
+2. 使用 find_referencing_symbols 分析使用位置
+3. 找到所有相关的代码文件和行号
+4. 分析修改的影响范围
 
-#### 1. arXiv 服务器（论文搜索下载）
-```bash
-npx @modelcontextprotocol/server-arxiv
-```
-**用途：** 3DGS 专家和医学专家查找相关论文
+具体操作：
+- 搜索关键词：[创新点相关关键词]
+- 分析文件：gaussian_model.py, render_query.py, train.py
+- 输出格式：文件路径:行号:符号名称:用途
 
-#### 2. GitHub 服务器（代码调研）
-```bash
-npx @modelcontextprotocol/server-github
-```
-**用途：** 编程专家查阅原论文代码实现
+查找结果：
+- gaussian_model.py:45:setup_functions: 激活函数配置点
+- gaussian_model.py:123:densify_and_split: 密度控制核心逻辑
+- render_query.py:67:render: 渲染函数入口
+- train.py:234:training_step: 训练主循环
 
-#### 3. 文件系统服务器（文件操作）
-```bash
-npx @modelcontextprotocol/server-filesystem
-```
-**用途：** 所有专家读写工作文档
-
-#### 4. SQLite 服务器（实验数据库）
-```bash
-npx @modelcontextprotocol/server-sqlite
-```
-**用途：** 调参专家记录超参数和实验结果
-
-#### 5. Brave Search（可选，网络搜索）
-```bash
-npx @modelcontextprotocol/server-brave-search
-```
-**用途：** 查找技术博客、医学术语解释、开源数据集
-
-### 配置方法
-
-**在 Claude Desktop 配置文件中添加：**
-
-- **Linux:** `~/.config/Claude/claude_desktop_config.json`
-
-```json
-{
-  "mcpServers": {
-    "arxiv": {
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-arxiv"]
-    },
-    "github": {
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-github"],
-      "env": {
-        "GITHUB_PERSONAL_ACCESS_TOKEN": "<your_github_token>"
-      }
-    },
-    "filesystem": {
-      "command": "npx",
-      "args": [
-        "-y",
-        "@modelcontextprotocol/server-filesystem",
-        "/home/qyhu/Documents/r2_ours/r2_gaussian"
-      ]
-    },
-    "sqlite": {
-      "command": "npx",
-      "args": [
-        "-y",
-        "@modelcontextprotocol/server-sqlite",
-        "--db-path",
-        "/home/qyhu/Documents/r2_ours/r2_gaussian/cc-agent/records/experiments.db"
-      ]
-    },
-    "brave-search": {
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-brave-search"],
-      "env": {
-        "BRAVE_API_KEY": "<your_brave_api_key>"
-      }
-    }
-  }
-}
-```
-
-### 获取 API 密钥
-
-- **GitHub Token:** 在 https://github.com/settings/tokens 创建
-  - 需要权限：`repo`（访问代码仓库）
-  - 类型：Classic Token
-
-- **Brave Search API:** 在 https://brave.com/search/api/ 注册
-  - 免费套餐：每月 2,000 次查询
-
-### 验证安装
-
-配置完成后重启 Claude Desktop，在对话中尝试：
-```
-请使用 arXiv 工具搜索 "3D Gaussian Splatting" 相关论文
-```
-
+影响分析：
+- 高影响：gaussian_model.py（核心模型）
+- 中影响：render_query.py（渲染逻辑）
+- 低影响：test.py（测试文件）
 ---
 
 
