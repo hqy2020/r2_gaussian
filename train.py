@@ -137,44 +137,31 @@ def training(
         pipe,
     )
 
-    # 初始化高斯模型 (支持SSS)
-    use_student_t = getattr(args, 'enable_sss', False)
-    if use_student_t:
-        print("🎓 [SSS-R²] Enabling Student Splatting and Scooping!")
-        gaussians = GaussianModel(scale_bound, use_student_t=True)
-    else:
-        print("📦 [R²] Using standard Gaussian model")
-        gaussians = GaussianModel(scale_bound, use_student_t=False)
-        
+    # ❌ 禁用 SSS（不确定实现是否正确）
+    # 初始化标准高斯模型
+    use_student_t = False  # 强制禁用 SSS
+    print("📦 [R²] Using standard Gaussian model (SSS disabled)")
+    gaussians = GaussianModel(scale_bound, use_student_t=False)
+
     initialize_gaussian(gaussians, dataset, None)
     scene.gaussians = gaussians
     gaussians.training_setup(opt)
-    
-    # SSS: Create hybrid optimizer if enabled
-    sss_optimizer = None
-    if use_student_t:
-        sss_optimizer = create_sss_optimizer(gaussians, opt)
-        if sss_optimizer:
-            print("🔥 [SSS-R²] Created hybrid SGHMC+Adam optimizer")
 
-    # 🌟 [GR-Gaussian] 初始化图结构
+    # ❌ 禁用 SSS optimizer
+    sss_optimizer = None
+
+    # ❌ 禁用 GR-Gaussian（不确定实现是否正确）
     gr_graph = None
-    if dataset.enable_graph_laplacian:
-        try:
-            from r2_gaussian.utils.graph_utils import GaussianGraph
-            gr_graph = GaussianGraph(k=dataset.graph_k, device=gaussians.get_xyz.device)
-            print(f"🌟 [GR-Gaussian] Graph initialized: k={dataset.graph_k}, "
-                  f"λ_lap={dataset.graph_lambda_lap}, update_interval={dataset.graph_update_interval}")
-        except ImportError as e:
-            print(f"⚠️  [GR-Gaussian] Failed to import graph_utils: {e}")
-            print(f"   Graph Laplacian will use fallback mode (dynamic KNN)")
-        except Exception as e:
-            print(f"⚠️  [GR-Gaussian] Failed to initialize graph: {e}")
+    print("⚠️ [R²] Graph Regularization disabled (focus on FSGS)")
     
     # FSGS Proximity-guided密化器初始化 (最新版本)
     proximity_densifier = None
-    enable_fsgs_proximity = dataset.enable_fsgs_proximity if hasattr(dataset, 'enable_fsgs_proximity') else False
-    
+    # ✅ 修复：支持从命令行参数和 dataset 两个来源激活 FSGS
+    enable_fsgs_proximity = (
+        getattr(args, 'enable_fsgs_proximity', False) or
+        (hasattr(dataset, 'enable_fsgs_proximity') and dataset.enable_fsgs_proximity)
+    )
+
     if enable_fsgs_proximity and HAS_FSGS_PROXIMITY:
         # 配置FSGS proximity参数 - 针对foot 3视角优化
         proximity_threshold = dataset.proximity_threshold if hasattr(dataset, 'proximity_threshold') else 8.0
@@ -929,6 +916,7 @@ def training(
                             
                             # 使用增强版密化函数 (FSGS proximity-guided)
                             if hasattr(GsDict[f"gs{i}"], 'enhanced_densify_and_prune'):
+                                print(f"✅ [Densify] Iter {iteration}: GS{i} 使用 FSGS enhanced_densify_and_prune")
                                 GsDict[f"gs{i}"].enhanced_densify_and_prune(
                                     sss_grad_threshold,
                                     sss_density_threshold,
@@ -941,6 +929,7 @@ def training(
                                 )
                             else:
                                 # 回退到标准密化
+                                print(f"⚠️ [Densify] Iter {iteration}: GS{i} 回退到标准 densify_and_prune (无FSGS)")
                                 GsDict[f"gs{i}"].densify_and_prune(
                                     sss_grad_threshold,
                                     sss_density_threshold,
@@ -954,6 +943,7 @@ def training(
                             # Standard densification for non-SSS gaussians
                             # 使用增强版密化函数 (FSGS proximity-guided)
                             if hasattr(GsDict[f"gs{i}"], 'enhanced_densify_and_prune'):
+                                print(f"✅ [Densify] Iter {iteration}: GS{i} 使用 FSGS enhanced_densify_and_prune (标准模式)")
                                 GsDict[f"gs{i}"].enhanced_densify_and_prune(
                         opt.densify_grad_threshold,
                         opt.density_min_threshold,
@@ -966,6 +956,7 @@ def training(
                                 )
                             else:
                                 # 回退到标准密化
+                                print(f"⚠️ [Densify] Iter {iteration}: GS{i} 回退到标准 densify_and_prune (无FSGS)")
                                 GsDict[f"gs{i}"].densify_and_prune(
                                     opt.densify_grad_threshold,
                                     opt.density_min_threshold,
@@ -1111,10 +1102,9 @@ def training_report(
             "train/total_points", scene.gaussians.get_xyz.shape[0], iteration
         )
 
-        # 🎯 CoR-GS Disagreement 日志记录 (阶段 1: 概念验证)
-        # 如果启用 CoR-GS 且有多个模型,计算并记录 Point/Rendering Disagreement
-        # 需要通过外部参数传递 dataset,这里先检查是否启用
-        enable_corgs_logging = gaussiansN >= 2 and GsDict is not None
+        # ❌ 禁用 CoR-GS Disagreement 日志记录（不确定实现是否正确）
+        # 专注于 FSGS 功能验证
+        enable_corgs_logging = False  # 强制禁用
         if iteration % 500 == 0:  # 调试输出
             print(f"[DEBUG-CORGS-1] Iter {iteration}: enable_corgs_logging={enable_corgs_logging}", flush=True)
         if enable_corgs_logging:

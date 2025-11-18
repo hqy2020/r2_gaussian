@@ -1,0 +1,107 @@
+# list of languages for which language servers are started; choose from:
+#   al               bash             clojure          cpp              csharp           csharp_omnisharp
+#   dart             elixir           elm              erlang           fortran          go
+#   haskell          java             julia            kotlin           lua              markdown
+#   nix              perl             php              python           python_jedi      r
+#   rego             ruby             ruby_solargraph  rust             scala            swift
+#   terraform        typescript       typescript_vts   zig
+# Note:
+#   - For C, use cpp
+#   - For JavaScript, use typescript
+# Special requirements:
+#   - csharp: Requires the presence of a .sln file in the project folder.
+# When using multiple languages, the first language server that supports a given file will be used for that file.
+# The first language is the default language and the respective language server will be used as a fallback.
+# Note that when using the JetBrains backend, language servers are not used and this list is correspondingly ignored.
+languages:
+- python
+- cpp
+
+# the encoding used by text files in the project
+# For a list of possible encodings, see https://docs.python.org/3.11/library/codecs.html#standard-encodings
+encoding: "utf-8"
+
+# whether to use the project's gitignore file to ignore files
+# Added on 2025-04-07
+ignore_all_files_in_gitignore: true
+
+# list of additional paths to ignore
+# same syntax as gitignore, so you can use * and **
+# Was previously called `ignored_dirs`, please update your config if you are using that.
+# Added (renamed) on 2025-04-07
+ignored_paths: []
+
+# whether the project is in read-only mode
+# If set to true, all editing tools will be disabled and attempts to use them will result in an error
+# Added on 2025-04-18
+read_only: false
+
+# list of tool names to exclude. We recommend not excluding any tools, see the readme for more details.
+# Below is the complete list of tools for convenience.
+# To make sure you have the latest list of tools, and to view their descriptions, 
+# execute `uv run scripts/print_tool_overview.py`.
+#
+#  * `activate_project`: Activates a project by name.
+#  * `check_onboarding_performed`: Checks whether project onboarding was already performed.
+#  * `create_text_file`: Creates/overwrites a file in the project directory.
+#  * `delete_lines`: Deletes a range of lines within a file.
+#  * `delete_memory`: Deletes a memory from Serena's project-specific memory store.
+#  * `execute_shell_command`: Executes a shell command.
+#  * `find_referencing_code_snippets`: Finds code snippets in which the symbol at the given location is referenced.
+#  * `find_referencing_symbols`: Finds symbols that reference the symbol at the given location (optionally filtered by type).
+#  * `find_symbol`: Performs a global (or local) search for symbols with/containing a given name/substring (optionally filtered by type).
+#  * `get_current_config`: Prints the current configuration of the agent, including the active and available projects, tools, contexts, and modes.
+#  * `get_symbols_overview`: Gets an overview of the top-level symbols defined in a given file.
+#  * `initial_instructions`: Gets the initial instructions for the current project.
+#     Should only be used in settings where the system prompt cannot be set,
+#     e.g. in clients you have no control over, like Claude Desktop.
+#  * `insert_after_symbol`: Inserts content after the end of the definition of a given symbol.
+#  * `insert_at_line`: Inserts content at a given line in a file.
+#  * `insert_before_symbol`: Inserts content before the beginning of the definition of a given symbol.
+#  * `list_dir`: Lists files and directories in the given directory (optionally with recursion).
+#  * `list_memories`: Lists memories in Serena's project-specific memory store.
+#  * `onboarding`: Performs onboarding (identifying the project structure and essential tasks, e.g. for testing or building).
+#  * `prepare_for_new_conversation`: Provides instructions for preparing for a new conversation (in order to continue with the necessary context).
+#  * `read_file`: Reads a file within the project directory.
+#  * `read_memory`: Reads the memory with the given name from Serena's project-specific memory store.
+#  * `remove_project`: Removes a project from the Serena configuration.
+#  * `replace_lines`: Replaces a range of lines within a file with new content.
+#  * `replace_symbol_body`: Replaces the full definition of a symbol.
+#  * `restart_language_server`: Restarts the language server, may be necessary when edits not through Serena happen.
+#  * `search_for_pattern`: Performs a search for a pattern in the project.
+#  * `summarize_changes`: Provides instructions for summarizing the changes made to the codebase.
+#  * `switch_modes`: Activates modes by providing a list of their names
+#  * `think_about_collected_information`: Thinking tool for pondering the completeness of collected information.
+#  * `think_about_task_adherence`: Thinking tool for determining whether the agent is still on track with the current task.
+#  * `think_about_whether_you_are_done`: Thinking tool for determining whether the task is truly completed.
+#  * `write_memory`: Writes a named memory (for future reference) to Serena's project-specific memory store.
+excluded_tools: []
+
+# initial prompt for the project. It will always be given to the LLM upon activating the project
+# (contrary to the memories, which are loaded on demand).
+initial_prompt: |
+  你正在协助 R²-Gaussian 项目的开发。这是一个基于 3D Gaussian Splatting 的 CT 断层扫描重建项目（NeurIPS 2024）。
+
+  **项目核心**：
+  - 使用 PyTorch + CUDA 实现快速 CT 重建
+  - 支持 3/6/9 视角的稀疏场景重建
+  - 主要代码在 r2_gaussian/ 模块下
+
+  **你的主要任务**：
+  - 帮助将 3DGS/NeRF 论文创新点迁移到 R²-Gaussian baseline
+  - 使用 serena 的符号搜索工具（find_symbol, find_referencing_symbols）精确定位代码
+  - 确保代码修改向下兼容，新功能默认关闭
+
+  **重要约定**：
+  - 所有 AI 文档必须在 cc-agent/ 文件夹下
+  - 训练命名格式：yyyy_MM_dd_organ_{{nums}}views_{{technique}}
+  - 场景归一化到 [-1, 1]³
+  - 优先使用中文进行交流
+
+  在开始任务前，建议阅读以下 memories：
+  - innovation_migration_guide.md（创新点移植指南）
+  - codebase_structure.md（代码库结构）
+  - suggested_commands.md（常用命令）
+
+project_name: "r2_gaussian"
+included_optional_tools: []
