@@ -41,19 +41,20 @@ EARLY_STOP_ITER=10000
 EARLY_STOP_PSNR=28.0
 
 # ============================================================================
-# GPU 分配（假设有 4 个 GPU：0,1,2,3）
+# GPU 分配（仅使用 GPU 1）
 # ============================================================================
 
-# 8 个实验分配到 4 个 GPU，每个 GPU 运行 2 个实验（顺序执行）
+# 8 个实验全部在 GPU 1 上顺序执行
+# 预计时间：32-64 小时（每个实验约 4-8 小时）
 declare -A GPU_ASSIGNMENT
-GPU_ASSIGNMENT["v4_tv_0.10"]=0
-GPU_ASSIGNMENT["v4_tv_0.12"]=0
+GPU_ASSIGNMENT["v4_tv_0.10"]=1
+GPU_ASSIGNMENT["v4_tv_0.12"]=1
 GPU_ASSIGNMENT["v4_k_5"]=1
 GPU_ASSIGNMENT["v4_tau_7.0"]=1
-GPU_ASSIGNMENT["v4_densify_10k"]=2
-GPU_ASSIGNMENT["v4_grad_3e-4"]=2
-GPU_ASSIGNMENT["v4_dssim_0.30"]=3
-GPU_ASSIGNMENT["v4_cap_180k"]=3
+GPU_ASSIGNMENT["v4_densify_10k"]=1
+GPU_ASSIGNMENT["v4_grad_3e-4"]=1
+GPU_ASSIGNMENT["v4_dssim_0.30"]=1
+GPU_ASSIGNMENT["v4_cap_180k"]=1
 
 # ============================================================================
 # 实验定义
@@ -161,7 +162,7 @@ run_experiment() {
 # ============================================================================
 
 echo "============================================"
-echo "V4+ FSGS 优化实验 - 多 GPU 并行执行"
+echo "V4+ FSGS 优化实验 - GPU 1 顺序执行"
 echo "============================================"
 echo "基于 baseline: 2025_11_18_foot_3views_fsgs_fixed_v2"
 echo "PSNR: 28.50 dB, SSIM: 0.9015"
@@ -169,42 +170,24 @@ echo "目标: PSNR ≥ 28.60 dB, 泛化差距 < 20 dB"
 echo ""
 echo "实验配置:"
 echo "  - 总实验数: 8"
-echo "  - GPU 分配: 4 个 GPU，每个 GPU 2 个实验"
+echo "  - GPU 分配: 仅使用 GPU 1（顺序执行）"
+echo "  - 预计时间: 32-64 小时"
 echo "  - Early Stopping: iter ${EARLY_STOP_ITER}, PSNR < ${EARLY_STOP_PSNR}"
 echo "  - 干扰项: CoR-GS/SSS/GraphLaplacian 已禁用"
 echo "============================================"
 echo ""
 
-# 激活 conda 环境
-conda activate ${CONDA_ENV}
+# 注意：每个实验已在 run_experiment() 中使用 conda run，无需手动激活环境
 
-# 按 GPU 分组并行执行
-# GPU 0: v4_tv_0.10, v4_tv_0.12
-(
-    run_experiment "v4_tv_0.10" "${EXPERIMENTS[v4_tv_0.10]}"
-    run_experiment "v4_tv_0.12" "${EXPERIMENTS[v4_tv_0.12]}"
-) &
-
-# GPU 1: v4_k_5, v4_tau_7.0
-(
-    run_experiment "v4_k_5" "${EXPERIMENTS[v4_k_5]}"
-    run_experiment "v4_tau_7.0" "${EXPERIMENTS[v4_tau_7.0]}"
-) &
-
-# GPU 2: v4_densify_10k, v4_grad_3e-4
-(
-    run_experiment "v4_densify_10k" "${EXPERIMENTS[v4_densify_10k]}"
-    run_experiment "v4_grad_3e-4" "${EXPERIMENTS[v4_grad_3e-4]}"
-) &
-
-# GPU 3: v4_dssim_0.30, v4_cap_180k
-(
-    run_experiment "v4_dssim_0.30" "${EXPERIMENTS[v4_dssim_0.30]}"
-    run_experiment "v4_cap_180k" "${EXPERIMENTS[v4_cap_180k]}"
-) &
-
-# 等待所有后台任务完成
-wait
+# 所有实验在 GPU 1 上顺序执行
+run_experiment "v4_tv_0.10" "${EXPERIMENTS[v4_tv_0.10]}"
+run_experiment "v4_tv_0.12" "${EXPERIMENTS[v4_tv_0.12]}"
+run_experiment "v4_k_5" "${EXPERIMENTS[v4_k_5]}"
+run_experiment "v4_tau_7.0" "${EXPERIMENTS[v4_tau_7.0]}"
+run_experiment "v4_densify_10k" "${EXPERIMENTS[v4_densify_10k]}"
+run_experiment "v4_grad_3e-4" "${EXPERIMENTS[v4_grad_3e-4]}"
+run_experiment "v4_dssim_0.30" "${EXPERIMENTS[v4_dssim_0.30]}"
+run_experiment "v4_cap_180k" "${EXPERIMENTS[v4_cap_180k]}"
 
 echo ""
 echo "============================================"

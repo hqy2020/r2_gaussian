@@ -28,7 +28,7 @@ IMPORTANT
 
 
 
-1. 确定本月文件路径：`02.Area-领域/AI助手团/user-profile/YYYY-MM.md`（YYYY-MM为当前年月）
+1. 确定本月文件路径：`user-profile/YYYY-MM.md`（YYYY-MM为当前年月）
    - 检查本月文件是否存在
    - 如果不存在 → 创建新文件（首次记录本月）
    - 如果存在 → 读取现有内容，准备追加和修改
