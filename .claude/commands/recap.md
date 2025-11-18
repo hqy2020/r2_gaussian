@@ -16,7 +16,6 @@ description: 快速回顾上次工作内容（由 @research-project-coordinator 
    - 结束流程
 
 
-
 ### 第二步：提取关键信息并生成回顾
 从 progress.md 中提取以下信息：
 - **当前状态摘要**（如果存在）
@@ -26,11 +25,6 @@ description: 快速回顾上次工作内容（由 @research-project-coordinator 
 - **待处理的事项**
 
 
-
 **重要提示：**
 - 重点关注 progress.md 中的**压缩后的关键信息**，确保快速进入工作状态
 - 如果 progress.md 内容较少，提取所有可用信息
-- 生成回顾后，询问用户是否需要：
-  - 继续之前的工作
-  - 开始新的任务
-  - 查阅归档文件获取详细历史

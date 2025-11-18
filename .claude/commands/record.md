@@ -29,9 +29,7 @@ description: 记录当前工作到 progress.md（由 @research-project-coordinat
 2. 使用中文记录
 3. 格式要求：
    ```markdown
-   # 工作进度记录
-
-   > **最后更新：** YYYY-MM-DD HH:MM:SS
+   
 
    ## 当前状态摘要
    - **最近完成：** [简要描述最近完成的主要工作]
@@ -56,3 +54,5 @@ description: 记录当前工作到 progress.md（由 @research-project-coordinat
 **重要提示：**
 - 记录应该是**压缩的、结构化的**，便于快速浏览和理解
 - 如果 progress.md 不存在，则创建新文件
+- 如果内容过多，先调用 archive 归档，再记录新内容
+
