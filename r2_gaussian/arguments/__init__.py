@@ -78,7 +78,7 @@ class ModelParams(ParamGroup):
         # 🌟 FSGS Proximity-guided密化参数 (新增)
         self.enable_fsgs_proximity = False  # 是否启用FSGS proximity-guided密化
         self.proximity_threshold = 6.0  # proximity score阈值（论文推荐值）
-        self.enable_medical_constraints = False  # 是否启用医学约束（非FSGS原文，建议关闭）
+        self.enable_medical_constraints = True  # 启用医学约束（增强FSGS性能，减少过拟合）
         self.proximity_organ_type = "foot"  # 器官类型
         self.proximity_k_neighbors = 3  # 计算proximity的邻居数量
 
@@ -134,7 +134,7 @@ class OptimizationParams(ParamGroup):
         self.densification_interval = 100
         self.densify_from_iter = 500
         self.densify_until_iter = 15000
-        self.densify_grad_threshold = 5.0e-5
+        self.densify_grad_threshold = 2.0e-4  # 提高阈值减少过拟合（原5e-5过低导致过度密化）
         self.densify_scale_threshold = 0.1  # percent of volume size
         self.max_screen_size = None
         self.max_scale = None  # percent of volume size

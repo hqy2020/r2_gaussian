@@ -318,9 +318,9 @@ class FSGSProximityDensifierOptimized:
                     all_new_positions.append(new_pos)
 
                     # 为新点分配opacity（继承自destination Gaussian）
-                    if source_opacities is not None:
-                        # 使用neighbor的opacity（destination Gaussian）
-                        neighbor_opacities = source_opacities[neighbor_indices[:, i]]
+                    if opacity_values is not None:
+                        # 🔧 修复：从完整的opacity_values中索引neighbor的opacity
+                        neighbor_opacities = opacity_values[neighbor_indices[:, i]]
                         all_new_opacities.append(neighbor_opacities)
 
                 del distances
