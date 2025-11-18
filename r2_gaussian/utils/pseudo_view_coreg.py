@@ -198,6 +198,95 @@ def find_nearest_camera_index(base_idx: int, train_cameras: List) -> int:
     return nearest_idx
 
 
+def generate_random_pseudo_cameras(
+    train_cameras: List,
+    num_pseudo: int = 10000,
+    radius_range: Tuple[float, float] = (0.8, 1.2),
+    seed: int = 42
+) -> List:
+    """
+    官方 CoR-GS 的 pseudo-view 生成策略：完全随机采样
+
+    Args:
+        train_cameras: 训练相机列表
+        num_pseudo: 生成的 pseudo-view 数量（官方默认 10000）
+        radius_range: 相机距离场景中心的半径范围（相对于平均半径）
+        seed: 随机种子
+
+    Returns:
+        pseudo_cameras: 随机生成的相机列表
+    """
+    import numpy as np
+    import torch
+
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+
+    # 1. 计算场景中心和平均半径
+    centers = torch.stack([cam.camera_center for cam in train_cameras])
+    scene_center = centers.mean(dim=0)
+    avg_radius = torch.norm(centers - scene_center, dim=1).mean().item()
+
+    # 2. 随机采样球面坐标
+    pseudo_cameras = []
+    for i in range(num_pseudo):
+        # 随机半径（在平均半径的 0.8~1.2 倍范围内）
+        r = avg_radius * np.random.uniform(radius_range[0], radius_range[1])
+
+        # 随机方向（球面均匀采样）
+        theta = np.random.uniform(0, 2 * np.pi)  # 方位角
+        phi = np.arccos(np.random.uniform(-1, 1))  # 仰角
+
+        # 球面坐标转笛卡尔坐标
+        x = r * np.sin(phi) * np.cos(theta)
+        y = r * np.sin(phi) * np.sin(theta)
+        z = r * np.cos(phi)
+
+        position = scene_center + torch.tensor([x, y, z], dtype=torch.float32, device=scene_center.device)
+
+        # 3. 计算相机朝向（始终看向场景中心）
+        forward = (scene_center - position)
+        forward = forward / torch.norm(forward)
+
+        # 4. 构造旋转矩阵（使用随机 up 向量）
+        up = torch.tensor([0.0, 0.0, 1.0], device=position.device)  # 初始 up
+        right = torch.cross(forward, up)
+        right = right / torch.norm(right)
+        up = torch.cross(right, forward)
+
+        R = torch.stack([right, up, -forward], dim=1)  # 3x3 旋转矩阵
+
+        # 5. 复制训练相机的内参
+        template_cam = train_cameras[0]
+
+        # 计算新的 T（相机外参平移）
+        # 注意: R²-Gaussian 使用 T = -R @ camera_center
+        pseudo_T = -R @ position
+
+        from r2_gaussian.dataset.cameras import Camera
+
+        pseudo_cam = Camera(
+            colmap_id=template_cam.colmap_id,
+            scanner_cfg=template_cam.scanner_cfg if hasattr(template_cam, 'scanner_cfg') else None,
+            R=R.cpu().numpy(),  # Camera 类期望 numpy 数组
+            T=pseudo_T.cpu().numpy(),
+            angle=template_cam.angle,
+            mode=template_cam.mode,
+            FoVx=template_cam.FoVx,
+            FoVy=template_cam.FoVy,
+            image=torch.zeros_like(template_cam.original_image),  # 无 GT 图像
+            image_name=f"pseudo_random_{i}",
+            uid=template_cam.uid + 10000 + i,  # 避免 ID 冲突
+            trans=template_cam.trans,
+            scale=template_cam.scale,
+            data_device=str(position.device)
+        )
+
+        pseudo_cameras.append(pseudo_cam)
+
+    return pseudo_cameras
+
+
 def generate_pseudo_view_medical(
     train_cameras: List,
     current_camera_idx: Optional[int] = None,

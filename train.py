@@ -82,6 +82,7 @@ except ImportError as e:
 try:
     from r2_gaussian.utils.pseudo_view_coreg import (
         generate_pseudo_view_medical,
+        generate_random_pseudo_cameras,
         compute_pseudo_coreg_loss_medical
     )
     HAS_PSEUDO_COREG = True
@@ -306,6 +307,23 @@ def training(
 
     # 🎯 CoR-GS: 定义背景颜色 (默认黑色)
     background = torch.tensor([0, 0, 0], dtype=torch.float32, device="cuda")
+
+    # 🎯 CoR-GS: 预生成随机 pseudo-view 相机（官方策略）
+    pseudo_cameras_corgs = None
+    if (args is not None and hasattr(args, 'enable_pseudo_coreg') and args.enable_pseudo_coreg and
+        HAS_PSEUDO_COREG and gaussiansN >= 2):
+        print("\n" + "="*60)
+        print("🎯 [CoR-GS] 生成 10,000 个随机 pseudo-view 相机...")
+        print("="*60)
+        train_cameras = scene.getTrainCameras()
+        pseudo_cameras_corgs = generate_random_pseudo_cameras(
+            train_cameras=train_cameras,
+            num_pseudo=10000,
+            radius_range=(0.8, 1.2),
+            seed=42
+        )
+        print(f"✅ [CoR-GS] Pseudo-view 生成完成: {len(pseudo_cameras_corgs)} 个")
+        print("="*60 + "\n")
 
     if use_tv:
         tv_vol_size = opt.tv_vol_size
@@ -699,18 +717,15 @@ def training(
                 LossDict[f"loss_gs{i}"] += opt.lambda_tv * loss_tv
 
         # === CoR-GS Stage 3: Pseudo-view Co-regularization (2025-11-17) ===
+        # 🔧 Bug 修复版本：修复 Bug 1/2/3/4
         if (args is not None and hasattr(args, 'enable_pseudo_coreg') and args.enable_pseudo_coreg and
-            HAS_PSEUDO_COREG and iteration >= args.pseudo_start_iter and gaussiansN >= 2):
+            HAS_PSEUDO_COREG and iteration >= args.pseudo_start_iter and gaussiansN >= 2 and
+            pseudo_cameras_corgs is not None):
 
             try:
-                # 步骤 1: 生成 pseudo-view 相机（医学适配版）
-                train_cameras = scene.getTrainCameras()
-                pseudo_camera = generate_pseudo_view_medical(
-                    train_cameras=train_cameras,
-                    current_camera_idx=None,  # 随机选择基准相机
-                    noise_std=args.pseudo_noise_std,
-                    roi_info=None  # 初始版本暂不启用 ROI 权重（快速验证阶段）
-                )
+                # 步骤 1: 从预生成的 pseudo-view 列表中随机采样（修复 Bug 1）
+                import random
+                pseudo_camera = random.choice(pseudo_cameras_corgs)
 
                 # 步骤 2: 渲染粗模型和精细模型的 pseudo-view
                 renders_pseudo = []
@@ -727,19 +742,31 @@ def training(
                     renders_pseudo.append(render_pkg_pseudo)
 
                 # 步骤 3: 计算 Co-regularization 损失（粗模型 vs 精细模型）
+                # 🔧 修复 Bug 2/3: 分别计算每个模型的 disagreement loss，使用 detach()
                 if len(renders_pseudo) >= 2:
-                    loss_pseudo_coreg_dict = compute_pseudo_coreg_loss_medical(
-                        render1=renders_pseudo[0]["render"],  # 修复: 提取渲染图像 Tensor
-                        render2=renders_pseudo[1]["render"],  # 修复: 提取渲染图像 Tensor
-                        lambda_dssim=0.2,  # 论文默认值（与 3DGS 一致）
-                        roi_weights=None   # 初始版本暂不启用 ROI 权重
+                    render_gs0 = renders_pseudo[0]["render"]
+                    render_gs1 = renders_pseudo[1]["render"]
+
+                    # gs0 的损失：render_gs0 参与梯度，render_gs1 detach
+                    loss_pseudo_coreg_dict_gs0 = compute_pseudo_coreg_loss_medical(
+                        render1=render_gs0,
+                        render2=render_gs1.detach(),  # 修复 Bug 2: detach
+                        lambda_dssim=0.2,
+                        roi_weights=None
                     )
 
-                    loss_pseudo_coreg = loss_pseudo_coreg_dict['loss']
+                    # gs1 的损失：render_gs1 参与梯度，render_gs0 detach
+                    loss_pseudo_coreg_dict_gs1 = compute_pseudo_coreg_loss_medical(
+                        render1=render_gs1,
+                        render2=render_gs0.detach(),  # 修复 Bug 2: detach
+                        lambda_dssim=0.2,
+                        roi_weights=None
+                    )
 
-                    # 步骤 4: 叠加到总损失（对两个模型都施加约束）
-                    LossDict['loss_gs0'] += args.lambda_pseudo * loss_pseudo_coreg
-                    LossDict['loss_gs1'] += args.lambda_pseudo * loss_pseudo_coreg
+                    # 步骤 4: 叠加到总损失（修复 Bug 3: 分别计算，避免梯度加倍）
+                    # 修复 Bug 4: 确保 disagreement loss 参与优化
+                    LossDict['loss_gs0'] += args.lambda_pseudo * loss_pseudo_coreg_dict_gs0['loss']
+                    LossDict['loss_gs1'] += args.lambda_pseudo * loss_pseudo_coreg_dict_gs1['loss']
 
                     # 步骤 5: TensorBoard 日志记录
                     if tb_writer is not None:
