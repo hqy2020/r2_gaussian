@@ -274,7 +274,7 @@ def generate_random_pseudo_cameras(
             mode=template_cam.mode,
             FoVx=template_cam.FoVx,
             FoVy=template_cam.FoVy,
-            image=torch.zeros_like(template_cam.original_image),  # 无 GT 图像
+            image=torch.zeros(1, 1, 3, device=position.device, dtype=torch.float32),  # 1x1 占位符，节省显存
             image_name=f"pseudo_random_{i}",
             uid=template_cam.uid + 10000 + i,  # 避免 ID 冲突
             trans=template_cam.trans,
