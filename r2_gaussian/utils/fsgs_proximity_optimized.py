@@ -440,8 +440,8 @@ def add_fsgs_proximity_to_gaussian_model_optimized(gaussian_model,
         chunk_size=chunk_size
     )
 
-    # 保存原始的densify_and_prune方法
-    original_densify_and_prune = gaussian_model.densify_and_prune
+    # 保存原始的densify_and_prune方法（未绑定版本）
+    original_densify_and_prune = type(gaussian_model).densify_and_prune
 
     def enhanced_densify_and_prune(self,
                                  max_grad,
@@ -456,8 +456,9 @@ def add_fsgs_proximity_to_gaussian_model_optimized(gaussian_model,
         增强版本的densify_and_prune (优化版本)
         """
         # 首先执行原始的gradient-based densification
+        # ✅ 修复：使用 self 调用原始方法
         grads = original_densify_and_prune(
-            max_grad, min_density, max_screen_size, max_scale,
+            self, max_grad, min_density, max_screen_size, max_scale,
             max_num_gaussians, densify_scale_threshold, bbox
         )
 
@@ -539,8 +540,9 @@ def add_fsgs_proximity_to_gaussian_model_optimized(gaussian_model,
 
         return grads
 
-    # 替换方法
-    gaussian_model.enhanced_densify_and_prune = enhanced_densify_and_prune.__get__(gaussian_model)
+    # ✅ 修复：使用 types.MethodType 正确绑定方法
+    import types
+    gaussian_model.enhanced_densify_and_prune = types.MethodType(enhanced_densify_and_prune, gaussian_model)
 
     print(f"✅ [FSGS集成-优化版] 成功添加proximity-guided densification")
     print(f"   - Proximity threshold: {proximity_threshold}")
