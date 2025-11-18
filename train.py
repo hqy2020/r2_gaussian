@@ -137,11 +137,14 @@ def training(
         pipe,
     )
 
-    # ❌ 禁用 SSS（不确定实现是否正确）
-    # 初始化标准高斯模型
-    use_student_t = False  # 强制禁用 SSS
-    print("📦 [R²] Using standard Gaussian model (SSS disabled)")
-    gaussians = GaussianModel(scale_bound, use_student_t=False)
+    # ✅ [SSS-Official] 从命令行参数启用 SSS
+    # 初始化高斯模型（支持 SSS）
+    use_student_t = args.enable_sss  # 从命令行参数读取
+    if use_student_t:
+        print("🎓 [SSS-Official] Using Student's t-distribution model")
+    else:
+        print("📦 [R²] Using standard Gaussian model")
+    gaussians = GaussianModel(scale_bound, use_student_t=use_student_t)
 
     initialize_gaussian(gaussians, dataset, None)
     scene.gaussians = gaussians
@@ -791,56 +794,23 @@ def training(
         for i in range(gaussiansN):
             if hasattr(GsDict[f"gs{i}"], 'use_student_t') and GsDict[f"gs{i}"].use_student_t:
                 opacity = GsDict[f"gs{i}"].get_opacity
-                nu = GsDict[f"gs{i}"].get_nu
 
-                # 🎯 [SSS-v5-OPTIMAL] 最优正则化 - 基于 v4 诊断结果的折中方案
-                # v4 诊断结论：
-                #   - iter 5000: 23.44 dB (峰值) - balance_loss 0.001 能达到高性能
-                #   - iter 10000: 13.13 dB (崩溃) - balance_loss 0.001 太弱，无法长期稳定
-                # v5 策略：3倍权重 + 适度目标，平衡���能与稳定性
-
-                # 🎯 [SSS-v6-FIX] 修复 Balance Loss 梯度失效 Bug
-                # Bug原因: torch.abs(pos_count - target) 对所有点影响均匀，当 pos_count→0 时梯度→0
-                # 修复策略: 直接惩罚负值 + 鼓励正值，梯度始终有效
-
-                # 惩罚负值: 负值越多/越负，损失越大
-                negative_penalty = torch.mean(torch.relu(-opacity))  # 只对负值有梯度
-
-                # 鼓励正值: 但不过度（避免所有值趋向 1）
-                positive_target = 0.7  # 目标正值比例
-                pos_ratio = (opacity > 0).float().mean()
-                positive_encouragement = torch.relu(positive_target - pos_ratio)  # 当 pos < 0.7 时惩罚
-
-                # 组合损失：强力抑制负值 + 维持正值比例
-                balance_loss = negative_penalty * 0.5 + positive_encouragement * 0.2
+                # 🎯 [SSS-Official] Balance Loss: 简单 L1 正则化
+                opacity_reg_weight = 0.01  # 官方默认权重
+                balance_loss = opacity_reg_weight * torch.abs(opacity).mean()
                 LossDict[f"loss_gs{i}"] += balance_loss
 
-                # Nu diversity loss: 保持 ν 多样性 (不影响 opacity)
-                nu_diversity_loss = -torch.std(nu) * 0.1
-                nu_range_loss = torch.mean(torch.relu(nu - 8.0)) + torch.mean(torch.relu(2.0 - nu))
-                LossDict[f"loss_gs{i}"] += 0.001 * (nu_diversity_loss + nu_range_loss)
+                # 简化的日志（每 2000 次迭代）
+                if iteration % 2000 == 0:
+                    pos_ratio = (opacity > 0).float().mean()
+                    neg_ratio = (opacity < 0).float().mean()
+                    opacity_mean = torch.abs(opacity).mean()
+                    print(f"🎯 [SSS-Official] Iter {iteration}: "
+                          f"Opacity [{opacity.min():.3f}, {opacity.max():.3f}], "
+                          f"Mean |opacity|: {opacity_mean:.3f}, "
+                          f"Balance: {pos_ratio*100:.1f}% pos / {neg_ratio*100:.1f}% neg, "
+                          f"Balance Loss: {balance_loss.item():.6f}")
 
-        # 🎯 [SSS-v6-FIX] Debug logging - 监控修复后的 opacity 动态
-        if hasattr(GsDict[f"gs0"], 'use_student_t') and GsDict[f"gs0"].use_student_t and iteration % 2000 == 0:
-            opacity = GsDict[f"gs0"].get_opacity
-            nu = GsDict[f"gs0"].get_nu
-            pos_ratio = (opacity > 0).float().mean()
-            neg_ratio = (opacity < 0).float().mean()
-            nu_mean = nu.mean()
-            nu_std = nu.std()
-
-            pos_target = 0.7  # v6目标 (70% 正值)
-
-            print(f"🔧 [SSS-v6-FIX] Iter {iteration} (Bug修复版本)")
-            print(f"   Opacity: [{opacity.min():.3f}, {opacity.max():.3f}] (range: [-0.2, 1.0])")
-            print(f"   Balance: {pos_ratio*100:.1f}% pos / {neg_ratio*100:.1f}% neg (target: {pos_target*100:.0f}% pos)")
-            print(f"   Nu: mean={nu_mean:.2f}, std={nu_std:.2f}, range=[{nu.min():.1f}, {nu.max():.1f}]")
-
-            # 记录极端情况 (v6: 负值范围缩小到 -0.2)
-            extreme_neg = (opacity < -0.15).float().mean()
-            extreme_pos = (opacity > 0.9).float().mean()
-            print(f"   Extremes: {extreme_pos*100:.1f}% >0.9, {extreme_neg*100:.1f}% <-0.15")
-            print(f"   ✅ v6 Fixes: 1)Densification 正值初始化 2)Balance loss 直接梯度 3)Opacity range [-0.2,1.0]")
         
         # 反向传播 - 为每个高斯场
         for i in range(gaussiansN):
@@ -909,47 +879,13 @@ def training(
                     
                     # 标准密化和剪枝流程
                     for i in range(gaussiansN):
-                        # SSS: Apply stricter point control for Student's t distributions
+                        # 🎯 [SSS-Official] 组件回收机制（替代传统 densification）
                         if hasattr(GsDict[f"gs{i}"], 'use_student_t') and GsDict[f"gs{i}"].use_student_t:
-                            # Reduce max points for SSS to prevent performance issues
-                            max_points_sss = min(opt.max_num_gaussians, 50000)  # Cap at 50k for SSS
-                            current_points = GsDict[f"gs{i}"].get_xyz.shape[0]
-                            
-                            # More aggressive pruning for SSS
-                            if current_points > max_points_sss * 0.8:  # Start aggressive pruning at 80% 
-                                sss_grad_threshold = opt.densify_grad_threshold * 1.5  # Harder to densify
-                                sss_density_threshold = opt.density_min_threshold * 0.8  # Easier to prune
-                            else:
-                                sss_grad_threshold = opt.densify_grad_threshold
-                                sss_density_threshold = opt.density_min_threshold
-                            
-                            print(f"🎓 [SSS-Control] Iter {iteration}: GS{i} has {current_points} points (max: {max_points_sss})")
-                            
-                            # 使用增强版密化函数 (FSGS proximity-guided)
-                            if hasattr(GsDict[f"gs{i}"], 'enhanced_densify_and_prune'):
-                                print(f"✅ [Densify] Iter {iteration}: GS{i} 使用 FSGS enhanced_densify_and_prune")
-                                GsDict[f"gs{i}"].enhanced_densify_and_prune(
-                                    sss_grad_threshold,
-                                    sss_density_threshold,
-                                    opt.max_screen_size,
-                                    max_scale,
-                                    max_points_sss,  # Use SSS-specific limit
-                                    densify_scale_threshold,
-                                    bbox,
-                                    enable_proximity_densify=enable_fsgs_proximity,
-                                )
-                            else:
-                                # 回退到标准密化
-                                print(f"⚠️ [Densify] Iter {iteration}: GS{i} 回退到标准 densify_and_prune (无FSGS)")
-                                GsDict[f"gs{i}"].densify_and_prune(
-                                    sss_grad_threshold,
-                                    sss_density_threshold,
-                                    opt.max_screen_size,
-                                    max_scale,
-                                    max_points_sss,  # Use SSS-specific limit
-                                    densify_scale_threshold,
-                                    bbox,
-                                )
+                            print(f"♻️ [SSS-Recycle] Iter {iteration}: GS{i} Using component recycling (official SSS)")
+                            GsDict[f"gs{i}"].recycle_components(
+                                opacity_threshold=0.005,
+                                max_recycle_ratio=0.05
+                            )
                         else:
                             # Standard densification for non-SSS gaussians
                             # 使用增强版密化函数 (FSGS proximity-guided)

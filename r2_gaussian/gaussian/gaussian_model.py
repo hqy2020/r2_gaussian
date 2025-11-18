@@ -69,13 +69,9 @@ class GaussianModel:
             self.nu_activation = lambda x: torch.sigmoid(x) * (8 - 2) + 2
             self.nu_inverse_activation = lambda x: inverse_sigmoid((x - 2) / (8 - 2))
 
-            # 🎯 [SSS-v6-FIX] opacity: 使用偏移 sigmoid [-0.2, 1.0]
-            # 允许少量负值 (scooping) 但主要是正值 (splatting)
-            # Bug修复: tanh [-1,1] 太对称，容易导致全负值
-            self.opacity_activation = lambda x: torch.sigmoid(x) * 1.2 - 0.2  # [-0.2, 1.0]
-            self.opacity_inverse_activation = lambda x: inverse_sigmoid(
-                (torch.clamp(x, -0.19, 0.99) + 0.2) / 1.2
-            )
+            # 🎯 [SSS-Official] opacity: 使用 tanh [-1, 1]（官方实现）
+            self.opacity_activation = torch.tanh  # [-1, 1]
+            self.opacity_inverse_activation = lambda x: 0.5 * torch.log((1 + x) / (1 - x))
         else:
             # Default: same as density for backward compatibility
             self.nu_activation = lambda x: torch.ones_like(x) * float('inf')  # Gaussian limit
@@ -202,7 +198,9 @@ class GaussianModel:
     def get_opacity(self):
         """SSS: Get opacity for scooping (positive/negative splatting)"""
         if self.use_student_t:
-            return self.opacity_activation(self._opacity)
+            opacity = self.opacity_activation(self._opacity)
+            # 官方 clamp 逻辑，避免数值不稳定
+            return torch.clamp(opacity, -1.0 + 1e-5, 1.0 - 1e-5)
         else:
             return torch.sigmoid(self._opacity)  # Default [0,1] range
 
@@ -828,6 +826,81 @@ class GaussianModel:
         torch.cuda.empty_cache()
 
         return grads
+
+    def recycle_components(self, opacity_threshold=0.005, max_recycle_ratio=0.05):
+        """
+        组件回收机制（SSS 官方实现）
+        
+        参数：
+            opacity_threshold: 低 opacity 阈值，低于此值视为 dead component
+            max_recycle_ratio: 每次最多回收的组件比例（默认 5%）
+        """
+        if not self.use_student_t:
+            return  # 仅 SSS 启用
+        
+        with torch.no_grad():
+            # 1. 识别 dead components
+            opacity = self.get_opacity
+            alive_mask = torch.abs(opacity).squeeze() > opacity_threshold  # 使用绝对值
+            dead_mask = ~alive_mask
+            
+            num_dead = dead_mask.sum().item()
+            if num_dead == 0:
+                return
+            
+            # 2. 限制回收数量（5% cap）
+            max_recycle = int(max_recycle_ratio * opacity.shape[0])
+            dead_indices = torch.where(dead_mask)[0]
+            if len(dead_indices) > max_recycle:
+                # 随机选择要回收的组件
+                perm = torch.randperm(len(dead_indices), device=dead_indices.device)
+                dead_indices = dead_indices[perm[:max_recycle]]
+            
+            num_to_recycle = len(dead_indices)
+            
+            # 3. 从存活组件中重新采样（基于 opacity 权重）
+            alive_indices = torch.where(alive_mask)[0]
+            if len(alive_indices) == 0:
+                print("⚠️ [SSS-Recycle] No alive components, skipping recycling")
+                return
+            
+            # 使用 opacity 绝对值作为采样权重
+            sample_weights = torch.abs(opacity[alive_mask].squeeze())
+            sample_weights = sample_weights / sample_weights.sum()  # 归一化
+            
+            # 重新采样源组件
+            sample_indices = torch.multinomial(sample_weights, num_to_recycle, replacement=True)
+            source_indices = alive_indices[sample_indices]
+            
+            # 4. 重新初始化 dead components
+            # Position: 添加小噪声
+            self._xyz[dead_indices] = self._xyz[source_indices].clone() + \
+                torch.randn_like(self._xyz[dead_indices]) * 0.01
+            
+            # Opacity: 重置为 0.5（官方策略）
+            opacity_init_val = 0.5 * torch.ones(num_to_recycle, 1, device="cuda")
+            self._opacity[dead_indices] = self.opacity_inverse_activation(opacity_init_val)
+            
+            # Nu: 继承源组件
+            if hasattr(self, '_nu'):
+                self._nu[dead_indices] = self._nu[source_indices].clone()
+            
+            # Scaling: 继承源组件
+            self._scaling[dead_indices] = self._scaling[source_indices].clone()
+            
+            # Rotation: 继承源组件
+            self._rotation[dead_indices] = self._rotation[source_indices].clone()
+            
+            # Density: 继承源组件
+            self._density[dead_indices] = self._density[source_indices].clone()
+            
+            # Features (SH): 继承源组件
+            self._features_dc[dead_indices] = self._features_dc[source_indices].clone()
+            self._features_rest[dead_indices] = self._features_rest[source_indices].clone()
+            
+            # 5. 日志输出
+            print(f"♻️ [SSS-Recycle] Recycled {num_to_recycle}/{num_dead} dead components "
+                  f"({num_to_recycle/opacity.shape[0]*100:.1f}% of total)")
 
     def add_densification_stats(self, viewspace_point_tensor, update_filter):
         self.xyz_gradient_accum[update_filter] += torch.norm(
