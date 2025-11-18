@@ -280,15 +280,34 @@ def compute_graph_laplacian_loss(gaussians, graph=None, k=6, Lambda_lap=8e-4):
 
     # 🌟 [GR-Gaussian] 使用预构建图
     if graph is not None and hasattr(graph, 'edge_index') and graph.edge_index is not None:
+        # ✅ 关键修复：检查图的节点数是否与当前高斯点数匹配
+        if graph.num_nodes != N:
+            # 高斯点数量变化了（due to densification/pruning），图已过期
+            # 跳过本次 Graph Laplacian 损失计算，等待下次图更新
+            return torch.tensor(0.0, device=xyz.device, requires_grad=True)
+
         src, dst = graph.edge_index[0], graph.edge_index[1]
 
-        # 计算边权重 (如果未预计算)
-        if graph.edge_weights is None:
-            graph.compute_edge_weights(xyz)
-        weights = graph.edge_weights
+        # ⚠️ 额外验证：检查索引是否越界
+        if src.numel() > 0 and (src.max() >= N or dst.max() >= N):
+            # 索引越界，图结构无效
+            return torch.tensor(0.0, device=xyz.device, requires_grad=True)
+
+        # ✅ 修复：始终重新计算边权重，因为 xyz 位置在训练中不断变化
+        # 计算边的欧氏距离
+        distances = torch.norm(xyz[src] - xyz[dst], dim=1)  # (E,)
+
+        # 计算权重（高斯核）
+        sigma = distances.mean() + 1e-7
+        weights = torch.exp(-distances / sigma)  # (E,)
 
         # 计算密度差异
         density_diff = density[src] - density[dst]  # (E,)
+
+        # ⚠️ 关键修复：确保所有张量都是 1D，避免 broadcasting 导致 OOM
+        # 强制 flatten 防止意外的形状（如 (E, 1) 导致 broadcasting 成 (E, E)）
+        weights = weights.flatten()  # 确保 (E,)
+        density_diff = density_diff.flatten()  # 确保 (E,)
 
         # 加权平方差
         weighted_loss = weights * (density_diff ** 2)  # (E,)
@@ -296,11 +315,7 @@ def compute_graph_laplacian_loss(gaussians, graph=None, k=6, Lambda_lap=8e-4):
 
         return loss
 
-    # 🚨 [GR-Gaussian 优化] 如果没有预构建图,直接返回零损失,避免昂贵的 KNN 计算
-    # 在 iteration 1000 前,graph 尚未构建,此时跳过 Graph Laplacian 损失
-    return torch.tensor(0.0, device=xyz.device, requires_grad=True)
-
-    # 下面的 GPU fallback 代码被禁用,因为它太慢了
+    # ✅ [GR-Gaussian 修复] 当没有预构建图时，使用 GPU 加速的动态 KNN 计算
     # 尝试GPU加速版本（优先）
     try:
         # 检查点数量，避免GPU内存溢出

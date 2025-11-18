@@ -150,9 +150,14 @@ def training(
     # ❌ 禁用 SSS optimizer
     sss_optimizer = None
 
-    # ❌ 禁用 GR-Gaussian（不确定实现是否正确）
-    gr_graph = None
-    print("⚠️ [R²] Graph Regularization disabled (focus on FSGS)")
+    # ✅ [GR-Gaussian] 图结构初始化（已修复）
+    if dataset.enable_graph_laplacian:
+        from r2_gaussian.utils.graph_utils import GaussianGraph
+        gr_graph = GaussianGraph(k=dataset.graph_k, device='cuda')
+        print(f"✅ [GR-Gaussian] Graph Regularization ENABLED: k={dataset.graph_k}, λ_lap={dataset.graph_lambda_lap}")
+    else:
+        gr_graph = None
+        print("⚠️ [R²] Graph Regularization disabled (enable_graph_laplacian=False)")
     
     # FSGS Proximity-guided密化器初始化 (最新版本)
     proximity_densifier = None
@@ -649,37 +654,40 @@ def training(
                     # 每500次迭代打印一次
                     if iteration % 500 == 0:
                         print(f"[深度约束] Iteration {iteration}: {consistency_loss.item():.6f}")
-        
+
         # 🌟 [GR-Gaussian] 图更新与图拉普拉斯正则化
-        if dataset.enable_graph_laplacian:
-            # 更新图结构 (每 graph_update_interval 次迭代,从 iteration 100 开始)
-            if gr_graph is not None and iteration > 0 and iteration % dataset.graph_update_interval == 0:
+        if dataset.enable_graph_laplacian and gr_graph is not None:
+            # 更新图结构 (每 graph_update_interval 次迭代)
+            if iteration > 0 and iteration % dataset.graph_update_interval == 0:
                 with torch.no_grad():
                     xyz = gaussians.get_xyz.detach()
                     gr_graph.build_knn_graph(xyz)
                     gr_graph.compute_edge_weights(xyz)
-                    if iteration % 500 == 0:
-                        print(f"[GR-Gaussian] Rebuilt graph at iteration {iteration}: "
-                              f"{gr_graph.num_nodes} nodes, {gr_graph.edge_index.shape[1]} edges")
-
-            # 计算图拉普拉斯损失 - 添加延迟启动和频率限制
-            if iteration > 5000 and iteration % 500 == 0:  # 延迟启动 + 每500次迭代计算一次
-                for i in range(gaussiansN):
-                    graph_laplacian_loss = compute_graph_laplacian_loss(
-                        GsDict[f"gs{i}"],
-                        graph=gr_graph,  # 传递预构建的图 (如果存在)
-                        k=dataset.graph_k,
-                        Lambda_lap=dataset.graph_lambda_lap
-                    )
-                    LossDict[f"loss_gs{i}"] += graph_laplacian_loss
-
-                    # 日志记录
-                    if iteration % 500 == 0:
-                        tb_writer.add_scalar(f'GR-Gaussian/graph_laplacian_gs{i}',
-                                           graph_laplacian_loss.item(), iteration)
                     if iteration % 1000 == 0:
-                        print(f"[GR-Gaussian] Iteration {iteration}, GS{i}: "
-                              f"graph_loss={graph_laplacian_loss.item():.6f}")
+                        print(f"[GR-Gaussian] Rebuilt graph at iteration {iteration}: "
+                              f"{gr_graph.num_nodes} nodes, {gr_graph.num_edges} edges")
+
+            # ✅ 计算图拉普拉斯损失（修复：每次迭代都计算，从 iteration 1000 开始）
+            # ⚠️ 关键修复：只对 gs0 应用图正则化，因为 gr_graph 是基于 gs0 构建的
+            # gs1 有独立的点数，使用同一个图会导致索引越界（CUDA OOM 510GB）
+            if iteration >= 1000:  # 延迟启动，避免早期干扰
+                i = 0  # 只对 gs0 应用
+                graph_laplacian_loss = compute_graph_laplacian_loss(
+                    GsDict[f"gs{i}"],
+                    graph=gr_graph,  # 传递预构建的图
+                    k=dataset.graph_k,
+                    Lambda_lap=dataset.graph_lambda_lap
+                )
+                LossDict[f"loss_gs{i}"] += graph_laplacian_loss
+
+                # 日志记录（每 100 次迭代）
+                if iteration % 100 == 0:
+                    tb_writer.add_scalar(f'Loss/graph_laplacian_gs{i}',
+                                       graph_laplacian_loss.item(), iteration)
+                if iteration % 1000 == 0:
+                    print(f"[GR-Gaussian] Iteration {iteration}, GS{i}: "
+                          f"graph_loss={graph_laplacian_loss.item():.6f}")
+
 
         # 3D TV 损失 - 为每个高斯场计算
         if use_tv:
