@@ -27,6 +27,7 @@ from r2_gaussian.utils.cfg_utils import load_config
 from r2_gaussian.utils.log_utils import prepare_output_and_logger
 from r2_gaussian.dataset import Scene
 from r2_gaussian.utils.loss_utils import l1_loss, ssim, tv_3d_loss
+from r2_gaussian.utils.regulation import compute_plane_tv_loss
 from r2_gaussian.utils.image_utils import metric_vol, metric_proj
 from r2_gaussian.utils.plot_utils import show_two_slice
 
@@ -68,7 +69,7 @@ def training(
     )
 
     # Set up Gaussians
-    gaussians = GaussianModel(scale_bound)
+    gaussians = GaussianModel(scale_bound, args=dataset)  # 传递 dataset (ModelParams) 以支持 K-Planes
     initialize_gaussian(gaussians, dataset, None)
     scene.gaussians = gaussians
     gaussians.training_setup(opt)
@@ -140,6 +141,17 @@ def training(
             loss_tv = tv_3d_loss(vol_pred, reduction="mean")
             loss["tv"] = loss_tv
             loss["total"] = loss["total"] + opt.lambda_tv * loss_tv
+
+        # K-Planes TV 正则化损失（X²-Gaussian）
+        if opt.lambda_plane_tv > 0 and gaussians.enable_kplanes and gaussians.kplanes_encoder is not None:
+            planes = gaussians.kplanes_encoder.get_plane_params()
+            tv_loss_planes = compute_plane_tv_loss(
+                planes=planes,
+                weights=opt.plane_tv_weight_proposal,
+                loss_type=opt.tv_loss_type,
+            )
+            loss["plane_tv"] = tv_loss_planes
+            loss["total"] = loss["total"] + opt.lambda_plane_tv * tv_loss_planes
 
         loss["total"].backward()
 
@@ -377,6 +389,7 @@ if __name__ == "__main__":
     parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[])
     parser.add_argument("--start_checkpoint", type=str, default=None)
     parser.add_argument("--config", type=str, default=None)
+    # 注意：K-Planes 相关参数已在 ModelParams 和 OptimizationParams 中定义，会自动注册
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
     args.test_iterations.append(args.iterations)

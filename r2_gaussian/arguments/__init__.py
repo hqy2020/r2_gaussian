@@ -97,6 +97,11 @@ class ModelParams(ParamGroup):
         self.graph_lambda_lap = 8e-4  # Graph Laplacian 损失权重 (论文推荐 8e-4)
         self.graph_update_interval = 100  # 图重建间隔 (iterations)
 
+        # 🎯 X²-Gaussian K-Planes 参数 (2025-01-18)
+        self.enable_kplanes = False  # 是否启用 K-Planes 空间分解
+        self.kplanes_resolution = 64  # K-Planes 平面分辨率 (默认 64)
+        self.kplanes_dim = 32  # K-Planes 特征维度 (默认 32)
+
         super().__init__(parser, "Loading Parameters", sentinel)
 
     def extract(self, args):
@@ -149,7 +154,17 @@ class OptimizationParams(ParamGroup):
         self.depth_pseudo_weight = 0
         self.feature_lr = 0.0025
         self.opacity_lr = 0.05
-        
+
+        # 🎯 X²-Gaussian K-Planes 优化参数 (2025-01-18)
+        self.kplanes_lr_init = 0.00016  # K-Planes 初始学习率 (参考 X²-Gaussian)
+        self.kplanes_lr_final = 0.0000016  # K-Planes 最终学习率
+        self.kplanes_lr_max_steps = 30000  # K-Planes 学习率衰减步数
+
+        # 🎯 X²-Gaussian TV 正则化参数 (2025-01-18)
+        self.lambda_plane_tv = 0.0  # TV 正则化权重 (0 表示不启用)
+        self.plane_tv_weight_proposal = [0.0001, 0.0001, 0.0001]  # 每个平面的 TV 权重 [xy, xz, yz]
+        self.tv_loss_type = "l1"  # TV 损失类型 ("l1" 或 "l2")
+
         super().__init__(parser, "Optimization Parameters")
 
 

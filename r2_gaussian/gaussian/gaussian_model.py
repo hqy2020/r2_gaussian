@@ -63,7 +63,7 @@ class GaussianModel:
 
         self.rotation_activation = torch.nn.functional.normalize
 
-    def __init__(self, scale_bound=None):
+    def __init__(self, scale_bound=None, args=None):
         self._xyz = torch.empty(0)  # world coordinate
         self._scaling = torch.empty(0)  # 3d scale
         self._rotation = torch.empty(0)  # rotation expressed in quaternions
@@ -75,6 +75,21 @@ class GaussianModel:
         self.spatial_lr_scale = 0
         self.scale_bound = scale_bound
         self.setup_functions()
+
+        # K-Planes 支持（可选）
+        self.enable_kplanes = getattr(args, 'enable_kplanes', False) if args is not None else False
+        if self.enable_kplanes:
+            from r2_gaussian.gaussian.kplanes import KPlanesEncoder
+            kplanes_resolution = getattr(args, 'kplanes_resolution', 64)
+            kplanes_dim = getattr(args, 'kplanes_dim', 32)
+            self.kplanes_encoder = KPlanesEncoder(
+                grid_resolution=kplanes_resolution,
+                feature_dim=kplanes_dim,
+                num_levels=1,
+                bounds=(-1.0, 1.0),
+            ).cuda()
+        else:
+            self.kplanes_encoder = None
 
     def capture(self):
         return (
@@ -129,6 +144,26 @@ class GaussianModel:
         return self.covariance_activation(
             self.get_scaling, scaling_modifier, self._rotation
         )
+
+    def get_kplanes_features(self, xyz=None):
+        """
+        获取指定位置的 K-Planes 特征
+
+        参数：
+            xyz (torch.Tensor): 高斯中心坐标，形状 [N, 3]
+                               如果为 None，则使用 self._xyz
+
+        返回：
+            features (torch.Tensor): K-Planes 特征，形状 [N, feature_dim * 3]
+                                    如果未启用 K-Planes，返回 None
+        """
+        if not self.enable_kplanes or self.kplanes_encoder is None:
+            return None
+
+        if xyz is None:
+            xyz = self._xyz
+
+        return self.kplanes_encoder(xyz)
 
     def create_from_pcd(self, xyz, density, spatial_lr_scale: float):
         self.spatial_lr_scale = spatial_lr_scale
@@ -212,6 +247,15 @@ class GaussianModel:
             },
         ]
 
+        # K-Planes 参数组（可选）
+        if self.enable_kplanes and self.kplanes_encoder is not None:
+            kplanes_lr_init = getattr(training_args, 'kplanes_lr_init', 0.00016)
+            l.append({
+                "params": self.kplanes_encoder.parameters(),
+                "lr": kplanes_lr_init,
+                "name": "kplanes"
+            })
+
         self.optimizer = torch.optim.Adam(l, lr=0.0, eps=1e-15)
         self.xyz_scheduler_args = get_expon_lr_func(
             lr_init=training_args.position_lr_init * self.spatial_lr_scale,
@@ -234,6 +278,17 @@ class GaussianModel:
             max_steps=training_args.rotation_lr_max_steps,
         )
 
+        # K-Planes 学习率调度器（可选）
+        if self.enable_kplanes and self.kplanes_encoder is not None:
+            kplanes_lr_init = getattr(training_args, 'kplanes_lr_init', 0.00016)
+            kplanes_lr_final = getattr(training_args, 'kplanes_lr_final', 0.0000016)
+            kplanes_lr_max_steps = getattr(training_args, 'kplanes_lr_max_steps', 30000)
+            self.kplanes_scheduler_args = get_expon_lr_func(
+                lr_init=kplanes_lr_init,
+                lr_final=kplanes_lr_final,
+                max_steps=kplanes_lr_max_steps,
+            )
+
     def update_learning_rate(self, iteration):
         """Learning rate scheduling per step"""
         for param_group in self.optimizer.param_groups:
@@ -249,6 +304,10 @@ class GaussianModel:
             if param_group["name"] == "rotation":
                 lr = self.rotation_scheduler_args(iteration)
                 param_group["lr"] = lr
+            if param_group["name"] == "kplanes":
+                if self.enable_kplanes and hasattr(self, 'kplanes_scheduler_args'):
+                    lr = self.kplanes_scheduler_args(iteration)
+                    param_group["lr"] = lr
 
     def construct_list_of_attributes(self):
         l = ["x", "y", "z", "nx", "ny", "nz"]
