@@ -763,45 +763,68 @@ def training(
                         roi_weights=None
                     )
 
-                    # 步骤 4: 叠加到总损失（修复 Bug 3: 分别计算，避免梯度加倍）
-                    # 修复 Bug 4: 确保 disagreement loss 参与优化
-                    LossDict['loss_gs0'] += args.lambda_pseudo * loss_pseudo_coreg_dict_gs0['loss']
-                    LossDict['loss_gs1'] += args.lambda_pseudo * loss_pseudo_coreg_dict_gs1['loss']
+                    # 步骤 4: 添加 Warm-up 机制（修复 Bug 4）
+                    # 官方实现：loss_scale = min((iteration - start_iter) / 500, 1.0)
+                    warmup_iters = 500
+                    if iteration < args.pseudo_start_iter + warmup_iters:
+                        loss_scale = (iteration - args.pseudo_start_iter) / warmup_iters
+                    else:
+                        loss_scale = 1.0
 
-                    # 步骤 5: TensorBoard 日志记录
+                    # 步骤 5: 叠加到总损失（修复 Bug 3: 分别计算，避免梯度加倍）
+                    # 修复 Bug 4: 确保 disagreement loss 参与优化，使用 warm-up
+                    LossDict['loss_gs0'] += args.lambda_pseudo * loss_scale * loss_pseudo_coreg_dict_gs0['loss']
+                    LossDict['loss_gs1'] += args.lambda_pseudo * loss_scale * loss_pseudo_coreg_dict_gs1['loss']
+
+                    # 步骤 5: TensorBoard 日志记录（修复：使用正确的变量名）
                     if tb_writer is not None:
+                        # 使用 gs0 的损失作为代表（两个模型的损失应该相近）
+                        avg_loss = (loss_pseudo_coreg_dict_gs0['loss'] + loss_pseudo_coreg_dict_gs1['loss']) / 2.0
+                        avg_l1 = (loss_pseudo_coreg_dict_gs0['l1'] + loss_pseudo_coreg_dict_gs1['l1']) / 2.0
+                        avg_dssim = (loss_pseudo_coreg_dict_gs0['d_ssim'] + loss_pseudo_coreg_dict_gs1['d_ssim']) / 2.0
+                        avg_ssim = (loss_pseudo_coreg_dict_gs0['ssim'] + loss_pseudo_coreg_dict_gs1['ssim']) / 2.0
+
                         tb_writer.add_scalar(
                             "train_loss_patches/pseudo_coreg_total",
-                            loss_pseudo_coreg.item(),
+                            avg_loss.item(),
                             iteration
                         )
                         tb_writer.add_scalar(
                             "train_loss_patches/pseudo_coreg_l1",
-                            loss_pseudo_coreg_dict['l1'].item(),
+                            avg_l1.item(),
                             iteration
                         )
                         tb_writer.add_scalar(
                             "train_loss_patches/pseudo_coreg_dssim",
-                            loss_pseudo_coreg_dict['d_ssim'].item(),
+                            avg_dssim.item(),
                             iteration
                         )
                         tb_writer.add_scalar(
                             "train_loss_patches/pseudo_coreg_ssim",
-                            loss_pseudo_coreg_dict['ssim'].item(),
+                            avg_ssim.item(),
                             iteration
                         )
                         tb_writer.add_scalar(
-                            "train_loss_patches/pseudo_coreg_weighted",
-                            (args.lambda_pseudo * loss_pseudo_coreg).item(),
+                            "train_loss_patches/pseudo_coreg_weighted_gs0",
+                            (args.lambda_pseudo * loss_pseudo_coreg_dict_gs0['loss']).item(),
+                            iteration
+                        )
+                        tb_writer.add_scalar(
+                            "train_loss_patches/pseudo_coreg_weighted_gs1",
+                            (args.lambda_pseudo * loss_pseudo_coreg_dict_gs1['loss']).item(),
                             iteration
                         )
 
                     # 步骤 6: 控制台日志（每 100 iterations 输出一次）
                     if iteration % 100 == 0:
-                        print(f"  [Pseudo Co-reg] Loss: {loss_pseudo_coreg.item():.6f}, "
-                              f"L1: {loss_pseudo_coreg_dict['l1'].item():.6f}, "
-                              f"SSIM: {loss_pseudo_coreg_dict['ssim'].item():.4f}, "
-                              f"Weighted: {(args.lambda_pseudo * loss_pseudo_coreg).item():.6f}")
+                        avg_loss = (loss_pseudo_coreg_dict_gs0['loss'] + loss_pseudo_coreg_dict_gs1['loss']) / 2.0
+                        avg_l1 = (loss_pseudo_coreg_dict_gs0['l1'] + loss_pseudo_coreg_dict_gs1['l1']) / 2.0
+                        avg_ssim = (loss_pseudo_coreg_dict_gs0['ssim'] + loss_pseudo_coreg_dict_gs1['ssim']) / 2.0
+                        print(f"  [Pseudo Co-reg] Loss: {avg_loss.item():.6f}, "
+                              f"L1: {avg_l1.item():.6f}, "
+                              f"SSIM: {avg_ssim.item():.4f}, "
+                              f"Weighted_gs0: {(args.lambda_pseudo * loss_pseudo_coreg_dict_gs0['loss']).item():.6f}, "
+                              f"Weighted_gs1: {(args.lambda_pseudo * loss_pseudo_coreg_dict_gs1['loss']).item():.6f}")
 
             except Exception as e:
                 # 异常处理：打印警告但不中断训练（向下兼容）
