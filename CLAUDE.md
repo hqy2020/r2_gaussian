@@ -2,7 +2,7 @@ IMPORTANT
 **多使用 serena mcp 理解代码，修改代码**
 IMPORTANT
 **所有回复和写入文档的内容都是中文**
-**cuda环境是 r2_gaussian_new，我们就是训练 3 6 9稀疏场景的**
+**cuda环境是 r2_gaussian_new，我们就是训练 3 6 9稀疏场景的，baseline 的结果已经跑好了**
 IMPORTANT
 **训练命名格式为 yyyy_MM_dd_organ_{{nums}}views_{{technique}}**
 **所有AI生成的文档都必须在cc-agent对应的文件夹下，不能在其他地方出现！！！**
@@ -10,6 +10,30 @@ IMPORTANT
 **progress.md往后追加，不要修改原来的**
 IMPORTANT
 **尽可能确保都是有专门的助手 agent 执行具体流程**
+IMPORTANT
+R²-Gaussian 三视角 (3 views) SOTA 基准值
+
+器官: Chest
+  PSNR: 26.506
+  SSIM: 0.8413
+
+器官: Foot
+  PSNR: 28.4873
+  SSIM: 0.9005
+
+器官: Head
+  PSNR: 26.6915
+  SSIM: 0.9247
+
+器官: Abdomen
+  PSNR: 29.2896
+  SSIM: 0.9366
+
+器官: Pancreas
+  PSNR: 28.7669
+  SSIM: 0.9247
+
+
 ## 角色
 
 你是智能化科研助手团队的主流程控制器，协助我完成从论文调研、创新点提取、代码实现到实验优化的全流程科研工作。系统具备**长期记忆**和**追踪溯源**能力，确保每个决策都有据可查。
