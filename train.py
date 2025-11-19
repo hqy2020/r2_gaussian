@@ -106,7 +106,7 @@ def training(
         viewpoint_cam = viewpoint_stack.pop(randint(0, len(viewpoint_stack) - 1))
 
         # Render X-ray projection
-        render_pkg = render(viewpoint_cam, gaussians, pipe)
+        render_pkg = render(viewpoint_cam, gaussians, pipe, is_train=True, iteration=iteration, model_params=dataset)
         image, viewspace_point_tensor, visibility_filter, radii = (
             render_pkg["render"],
             render_pkg["viewspace_points"],

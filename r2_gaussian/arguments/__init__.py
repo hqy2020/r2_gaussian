@@ -97,6 +97,10 @@ class ModelParams(ParamGroup):
         self.graph_lambda_lap = 8e-4  # Graph Laplacian 损失权重 (论文推荐 8e-4)
         self.graph_update_interval = 100  # 图重建间隔 (iterations)
 
+        # 🎯 DropGaussian 参数 (2025-11-19 CVPR 2025)
+        self.use_drop_gaussian = False  # 是否启用 DropGaussian 稀疏视角正则化
+        self.drop_gamma = 0.2  # DropGaussian 渐进式调整因子 (论文推荐 0.2)
+
         super().__init__(parser, "Loading Parameters", sentinel)
 
     def extract(self, args):

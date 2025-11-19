@@ -82,9 +82,17 @@ def render(
     pc: GaussianModel,
     pipe: PipelineParams,
     scaling_modifier=1.0,
+    is_train=False,
+    iteration=0,
+    model_params=None,
 ):
     """
     Render an X-ray projection with rasterization.
+
+    Args:
+        is_train: 是否为训练模式（DropGaussian 仅在训练时启用）
+        iteration: 当前迭代数（用于 DropGaussian 渐进式调整）
+        model_params: 模型参数（用于获取 DropGaussian 配置）
     """
 
     # Create zero tensor. We will use it to make pytorch return gradients of the 2D (screen-space) means
@@ -140,6 +148,24 @@ def render(
     else:
         scales = pc.get_scaling
         rotations = pc.get_rotation
+
+    # 🎯 DropGaussian: 稀疏视角正则化 (CVPR 2025)
+    # 仅在训练时应用，测试时使用全部 Gaussian
+    if is_train and model_params is not None and model_params.use_drop_gaussian:
+        # 创建补偿因子向量（初始全为 1）
+        compensation = torch.ones(density.shape[0], dtype=torch.float32, device="cuda")
+
+        # 渐进式调整 drop_rate: r_t = γ * (t / t_total)
+        # 论文推荐 γ=0.2, 随训练进行逐步增加丢弃率
+        drop_rate = model_params.drop_gamma * (iteration / 30000)  # 30000 为默认总迭代数
+        drop_rate = min(drop_rate, model_params.drop_gamma)  # 上限为 gamma
+
+        # 使用 PyTorch Dropout 随机丢弃（自动补偿因子为 1/(1-p)）
+        d = torch.nn.Dropout(p=drop_rate)
+        compensation = d(compensation)
+
+        # 应用补偿因子到 density (opacity)
+        density = density * compensation[:, None]
 
     # Rasterize visible Gaussians to image, obtain their radii (on screen).
     rendered_image, radii = rasterizer(
