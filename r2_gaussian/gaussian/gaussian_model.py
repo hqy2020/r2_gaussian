@@ -394,21 +394,26 @@ class GaussianModel:
     def _prune_optimizer(self, mask):
         optimizable_tensors = {}
         for group in self.optimizer.param_groups:
-            stored_state = self.optimizer.state.get(group["params"][0], None)
+            # 🎯 跳过 K-Planes 参数组（形状不匹配，不需要 prune）
+            param = group["params"][0]
+            if param.shape[0] != mask.shape[0]:
+                continue
+            
+            stored_state = self.optimizer.state.get(param, None)
             if stored_state is not None:
                 stored_state["exp_avg"] = stored_state["exp_avg"][mask]
                 stored_state["exp_avg_sq"] = stored_state["exp_avg_sq"][mask]
 
-                del self.optimizer.state[group["params"][0]]
+                del self.optimizer.state[param]
                 group["params"][0] = nn.Parameter(
-                    (group["params"][0][mask].requires_grad_(True))
+                    (param[mask].requires_grad_(True))
                 )
                 self.optimizer.state[group["params"][0]] = stored_state
 
                 optimizable_tensors[group["name"]] = group["params"][0]
             else:
                 group["params"][0] = nn.Parameter(
-                    group["params"][0][mask].requires_grad_(True)
+                    param[mask].requires_grad_(True)
                 )
                 optimizable_tensors[group["name"]] = group["params"][0]
         return optimizable_tensors
@@ -430,6 +435,10 @@ class GaussianModel:
     def cat_tensors_to_optimizer(self, tensors_dict):
         optimizable_tensors = {}
         for group in self.optimizer.param_groups:
+            # 🎯 跳过 K-Planes 参数组（不需要 densification）
+            if group["name"] not in tensors_dict:
+                continue
+            
             assert len(group["params"]) == 1
             extension_tensor = tensors_dict[group["name"]]
             stored_state = self.optimizer.state.get(group["params"][0], None)
