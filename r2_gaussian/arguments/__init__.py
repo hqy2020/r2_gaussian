@@ -100,6 +100,8 @@ class ModelParams(ParamGroup):
         # 🎯 DropGaussian 参数 (2025-11-19 CVPR 2025)
         self.use_drop_gaussian = False  # 是否启用 DropGaussian 稀疏视角正则化
         self.drop_gamma = 0.2  # DropGaussian 渐进式调整因子 (论文推荐 0.2)
+        self.use_importance_aware_drop = False  # 是否启用 Importance-Aware Drop（保护高 opacity Gaussians）
+        self.importance_protect_ratio = 0.2  # 保护 top X% 高 opacity Gaussians（默认 20%）
 
         super().__init__(parser, "Loading Parameters", sentinel)
 

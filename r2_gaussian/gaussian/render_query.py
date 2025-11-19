@@ -152,17 +152,55 @@ def render(
     # 🎯 DropGaussian: 稀疏视角正则化 (CVPR 2025)
     # 仅在训练时应用，测试时使用全部 Gaussian
     if is_train and model_params is not None and model_params.use_drop_gaussian:
-        # 创建补偿因子向量（初始全为 1）
-        compensation = torch.ones(density.shape[0], dtype=torch.float32, device="cuda")
-
         # 渐进式调整 drop_rate: r_t = γ * (t / t_total)
         # 论文推荐 γ=0.2, 随训练进行逐步增加丢弃率
         drop_rate = model_params.drop_gamma * (iteration / 30000)  # 30000 为默认总迭代数
         drop_rate = min(drop_rate, model_params.drop_gamma)  # 上限为 gamma
 
-        # 使用 PyTorch Dropout 随机丢弃（自动补偿因子为 1/(1-p)）
-        d = torch.nn.Dropout(p=drop_rate)
-        compensation = d(compensation)
+        # 🔥 Importance-Aware Drop: 保护高 opacity Gaussians
+        if model_params.use_importance_aware_drop:
+            # 计算激活后的 opacity (sigmoid(density))
+            opacity_activated = torch.sigmoid(density.squeeze())
+
+            # 确定 top X% 的 opacity 阈值
+            k = int(len(opacity_activated) * model_params.importance_protect_ratio)
+            if k > 0:
+                # 获取 top k 的 opacity 阈值
+                top_k_values, _ = torch.topk(opacity_activated, k)
+                threshold = top_k_values[-1]  # top X% 的最小值作为阈值
+
+                # 创建重要性 mask（高 opacity = 重要）
+                is_important = opacity_activated >= threshold
+
+                # 对于重要的 Gaussians：使用 20% 的 drop rate（大幅保护）
+                # 对于不重要的 Gaussians：使用正常 drop rate
+                adaptive_drop_rate = torch.where(
+                    is_important,
+                    torch.tensor(drop_rate * 0.2, device="cuda"),  # 保护：drop rate 降低 80%
+                    torch.tensor(drop_rate, device="cuda")  # 正常 drop rate
+                )
+
+                # 应用自适应 dropout（逐元素）
+                # 生成随机 mask：rand() > drop_rate 时保留
+                random_mask = torch.rand(len(adaptive_drop_rate), device="cuda")
+                keep_mask = random_mask > adaptive_drop_rate
+
+                # 计算补偿因子（保留的需要放大以补偿被丢弃的）
+                compensation = torch.where(
+                    keep_mask,
+                    1.0 / (1.0 - adaptive_drop_rate).clamp(min=1e-6),  # 补偿因子
+                    torch.tensor(0.0, device="cuda")  # 被丢弃的设为 0
+                )
+            else:
+                # 如果 k=0（数量太少），退回到标准 dropout
+                compensation = torch.ones(density.shape[0], dtype=torch.float32, device="cuda")
+                d = torch.nn.Dropout(p=drop_rate)
+                compensation = d(compensation)
+        else:
+            # 标准 DropGaussian（均匀随机 drop）
+            compensation = torch.ones(density.shape[0], dtype=torch.float32, device="cuda")
+            d = torch.nn.Dropout(p=drop_rate)
+            compensation = d(compensation)
 
         # 应用补偿因子到 density (opacity)
         density = density * compensation[:, None]
