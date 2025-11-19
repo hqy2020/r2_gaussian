@@ -176,7 +176,7 @@
 - **进行中：** 准备完整实验验证（30K iterations）
 - **待处理：** EXP-1/2/3 完整实验，性能分析，结果报告
 
-## [2025-01-19] 测试验证阶段
+## [2025-11-19] 测试验证阶段
 
 ### 发现的问题
 - **参数重复注册冲突**：
@@ -242,3 +242,76 @@
 **记录时间：** 2025-01-19
 **记录者：** @research-project-coordinator
 **项目阶段：** 测试验证完成 → 完整实验准备阶段
+
+## 当前状态摘要
+- **最近发现：** K-Planes 特征被计算但从未用于渲染（致命 bug）
+- **原因分析：** render_query.py 直接使用原始 density，完全未调用 get_kplanes_features()
+- **影响范围：** 393,216 个 K-Planes 参数被优化但对渲染无任何影响，PSNR 暴跌 5.15 dB
+- **进行中：** 修复密度调制逻辑并重新实验验证
+
+## [2025-11-19 继续] K-Planes 致命 Bug 修复
+
+### 发现的问题
+- **K-Planes 特征未使用（致命）**：
+  - get_kplanes_features() 在 GaussianModel 中定义但从未被调用
+  - render_query.py 的渲染函数直接使用 self.density，完全绕过 K-Planes 特征
+  - 导致 393,216 个参数被优化但梯度全是噪声（虚假学习）
+  - 实验结果：PSNR 从 28.49 暴跌至 23.34（-5.15 dB，失败）
+
+- **TV 正则化默认未启用**：
+  - lambda_plane_tv = 0.0（硬编码默认值）
+  - 需要显式启用正则化才能稳定特征平面
+
+### 修改的主要内容
+- **gaussian_model.py (行 140-156)**：修复 get_density 属性
+  - 从纯 self.density 改为 K-Planes 调制
+  - 调制公式：density_modulated = self.density × (0.8 + 0.4 × tanh(kplanes_feature))
+  - 保守调制范围 [0.8, 1.2]，避免破坏原始密度分布
+
+- **train.py (行 89-111)**：K-Planes 启动诊断
+  - 输出参数数量、分辨率、维度、TV 权重状态
+  - 确保用户知道 K-Planes 是否真的被使用
+
+- **train.py (行 180-187)**：前 3 迭代诊断输出
+  - 打印 K-Planes 特征统计信息（均值、标准差、范围）
+  - 确认特征被正确计算和传播
+
+- **train.py (行 228-242)**：增强进度条输出
+  - 显示 tv_kp（K-Planes TV 损失）和 tv_3d（3D Gaussian TV 损失）
+  - 实时监控两个正则化项的贡献
+
+- **scripts/run_kplanes_experiment.sh**：新增修复后的实验脚本
+  - 包含 K-Planes 启用和 TV 权重配置
+  - 支持便捷重复实验
+
+- **cc-agent/code/KPLANES_FIX_SUMMARY.md**：创建详细修复总结
+  - 问题诊断过程、根本原因分析、修复策略
+  - 下一步实验计划和预期结果
+
+### 将来要修改的内容
+- **立即执行（P0）**：
+  - 重新运行 Foot 3 views 实验（enable_kplanes=True, lambda_plane_tv=0.01）
+  - 验证 PSNR 是否恢复到 ≥ 28.49
+  - 收集诊断日志确认 K-Planes 特征被正确使用
+
+- **如果修复成功（P1）**：
+  - 消融实验：Baseline vs. +K-Planes（无TV）vs. +K-Planes+TV
+  - 超参数调优（TV 权重 0.001~0.1 范围扫描）
+  - 多器官验证（Chest, Head, Abdomen, Pancreas）
+
+- **如果修复仍不成功（P1）**：
+  - 调整调制策略（乘法 → 加法 → 混合）
+  - 降低 K-Planes 维度和分辨率（参数过多？）
+  - 考虑实现完整多头解码器（参考 X²-Gaussian）
+
+### 技术分析
+- **问题根源**：架构设计缺陷，新特征模块与渲染流程解耦
+- **修复原理**：在 density 属性级别应用 K-Planes 调制，确保渲染时使用
+- **风险评估**：低（调制系数保守，向下兼容）
+- **预期改进**：PSNR +4.5~5.15 dB（恢复到基线水平或更高）
+
+---
+
+**记录时间：** 2025-11-19
+**记录者：** @research-project-coordinator
+**项目阶段：** Bug 修复 → 重新实验验证阶段

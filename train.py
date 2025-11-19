@@ -86,6 +86,30 @@ def training(
         tv_vol_nVoxel = torch.tensor([tv_vol_size, tv_vol_size, tv_vol_size])
         tv_vol_sVoxel = torch.tensor(scanner_cfg["dVoxel"]) * tv_vol_nVoxel
 
+    # 🎯 K-Planes 诊断信息
+    if gaussians.enable_kplanes and gaussians.kplanes_encoder is not None:
+        print("=" * 70)
+        print("✓ K-Planes Encoder 已启用")
+        print(f"  - 平面分辨率: {dataset.kplanes_resolution}")
+        print(f"  - 特征维度: {dataset.kplanes_dim}")
+        print(f"  - 总特征维度: {dataset.kplanes_dim * 3} (3 个平面)")
+
+        kplanes_params = sum(p.numel() for p in gaussians.kplanes_encoder.parameters())
+        print(f"  - K-Planes 参数量: {kplanes_params:,}")
+
+        # 检查 TV 正则化
+        if opt.lambda_plane_tv > 0:
+            print(f"✓ K-Planes TV 正则化已启用")
+            print(f"  - lambda_plane_tv: {opt.lambda_plane_tv}")
+            print(f"  - TV 权重: {opt.plane_tv_weight_proposal}")
+            print(f"  - TV 损失类型: {opt.tv_loss_type}")
+        else:
+            print("⚠️ 警告：K-Planes 已启用但 TV 正则化未启用 (lambda_plane_tv = 0)")
+
+        print("=" * 70)
+    else:
+        print("⚠️ K-Planes 未启用（使用标准 R²-Gaussian）")
+
     # Train
     iter_start = torch.cuda.Event(enable_timing=True)
     iter_end = torch.cuda.Event(enable_timing=True)
@@ -153,6 +177,15 @@ def training(
             loss["plane_tv"] = tv_loss_planes
             loss["total"] = loss["total"] + opt.lambda_plane_tv * tv_loss_planes
 
+            # 🎯 在前几个迭代输出诊断信息
+            if iteration <= 3:
+                kplanes_feat = gaussians.get_kplanes_features()
+                print(f"[Iter {iteration}] K-Planes 诊断:")
+                print(f"  - K-Planes 特征形状: {kplanes_feat.shape}")
+                print(f"  - 特征范围: [{kplanes_feat.min().item():.4f}, {kplanes_feat.max().item():.4f}]")
+                print(f"  - TV loss (plane): {tv_loss_planes.item():.6f}")
+                print(f"  - TV loss (weighted): {(opt.lambda_plane_tv * tv_loss_planes).item():.6f}")
+
         loss["total"].backward()
 
         iter_end.record()
@@ -203,12 +236,18 @@ def training(
 
             # Progress bar
             if iteration % 10 == 0:
-                progress_bar.set_postfix(
-                    {
-                        "loss": f"{loss['total'].item():.1e}",
-                        "pts": f"{gaussians.get_density.shape[0]:2.1e}",
-                    }
-                )
+                postfix = {
+                    "loss": f"{loss['total'].item():.1e}",
+                    "pts": f"{gaussians.get_density.shape[0]:2.1e}",
+                }
+                # 添加 K-Planes TV loss（如果启用）
+                if "plane_tv" in loss:
+                    postfix["tv_kp"] = f"{loss['plane_tv'].item():.1e}"
+                # 添加 3D TV loss（如果启用）
+                if "tv" in loss:
+                    postfix["tv_3d"] = f"{loss['tv'].item():.1e}"
+
+                progress_bar.set_postfix(postfix)
                 progress_bar.update(10)
             if iteration == opt.iterations:
                 progress_bar.close()

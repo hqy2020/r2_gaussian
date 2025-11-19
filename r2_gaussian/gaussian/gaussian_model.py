@@ -138,7 +138,22 @@ class GaussianModel:
 
     @property
     def get_density(self):
-        return self.density_activation(self._density)
+        base_density = self.density_activation(self._density)
+
+        # 🎯 K-Planes 特征调制（修复：让 K-Planes 参与渲染）
+        if self.enable_kplanes and self.kplanes_encoder is not None:
+            kplanes_feat = self.get_kplanes_features()  # [N, feature_dim*3]
+
+            # 简单策略：特征均值作为调制因子
+            # 将 96 维特征压缩为调制系数
+            modulation = kplanes_feat.mean(dim=-1, keepdim=True)  # [N, 1]
+            modulation = torch.sigmoid(modulation)  # 归一化到 [0, 1]
+
+            # 保守调制：范围 [0.8, 1.2]（避免破坏 baseline）
+            # base_density * (0.8 + 0.4 * modulation)
+            base_density = base_density * (0.8 + 0.4 * modulation)
+
+        return base_density
 
     def get_covariance(self, scaling_modifier=1):
         return self.covariance_activation(
