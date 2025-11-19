@@ -152,10 +152,21 @@ def render(
     # 🎯 DropGaussian: 稀疏视角正则化 (CVPR 2025)
     # 仅在训练时应用，测试时使用全部 Gaussian
     if is_train and model_params is not None and model_params.use_drop_gaussian:
-        # 渐进式调整 drop_rate: r_t = γ * (t / t_total)
-        # 论文推荐 γ=0.2, 随训练进行逐步增加丢弃率
-        drop_rate = model_params.drop_gamma * (iteration / 30000)  # 30000 为默认总迭代数
-        drop_rate = min(drop_rate, model_params.drop_gamma)  # 上限为 gamma
+        # 🎯 DropGaussian 动态 drop rate 策略（严格遵循论文）
+        # 阶段 1：前期稳定训练（iteration < drop_start_iter）：drop_rate = 0
+        # 阶段 2：渐进式增长（drop_start_iter ≤ iteration ≤ drop_end_iter）：线性增长到 gamma
+        # 阶段 3：稳定 drop（iteration > drop_end_iter）：drop_rate = gamma
+
+        if iteration < model_params.drop_start_iter:
+            # 前期不 drop，确保充分训练
+            drop_rate = 0.0
+        elif iteration <= model_params.drop_end_iter:
+            # 渐进式增长：从 0 线性增长到 gamma
+            progress = (iteration - model_params.drop_start_iter) / (model_params.drop_end_iter - model_params.drop_start_iter)
+            drop_rate = model_params.drop_gamma * progress
+        else:
+            # 后期维持最大 drop rate
+            drop_rate = model_params.drop_gamma
 
         # 🔥 Importance-Aware Drop: 保护高 opacity Gaussians
         if model_params.use_importance_aware_drop:

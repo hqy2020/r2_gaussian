@@ -23,83 +23,75 @@ class ModelParams(ParamGroup):
         self._source_path = ""
         self._model_path = ""
         self.data_device = "cuda"
-        self.ply_path = ""  # Path to initialization point cloud (if None, we will try to find `init_*.npy`.)
-        self.scale_min = 0.0005  # percent of volume size
-        self.scale_max = 0.5  # percent of volume size
+        self.ply_path = ""
+        self.scale_min = 0.0005
+        self.scale_max = 0.5
         self.eval = True
-        
-        # 多高斯、伪标签、深度功能参数 - 参考X-Gaussian-depth实现
-        self.gaussiansN = 2  # 高斯场数量
-        self.coreg = True     # 协同注册
-        self.coprune = True   # 协同剪枝
+
+        # Coarse-Registration (CoReg) 参数
+        self.coreg = True  # 是否启用粗配准
+        self.coprune = True  # 是否启用协同剪枝
         self.coprune_threshold = 5  # 协同剪枝阈值
-        self.perturbation = False  # 扰动损失
-        self.onlyrgb = False  # 是否只用RGB损失
-        self.normal = True    # 是否使用归一化图像
-        self.pseudo_strategy = "single"  # 伪标签策略
-        self.sample_method = "uniform"   # 采样方法
-        self.add_num = 50  # 额外视角数量
+        self.perturbation = False  # 是否对参数加噪声
+        self.onlyrgb = False  # 是否仅使用 RGB 数据
+        self.normal = True  # 是否使用法向量
+        self.pseudo_strategy = "single"  # 伪标签策略 single or multi
+        self.sample_method = "uniform"  # 采样方法：uniform or maxmin
+        self.add_num = 50  # 添加多少个伪视角
 
-        # 🎯 CoR-GS (Co-Regularization Gaussian Splatting) 参数 (2025-11-16)
-        self.enable_corgs = False  # 是否启用完整的 CoR-GS 双模型协同训练
-        self.corgs_tau = 0.3  # Co-pruning KNN 距离阈值 (适配 CT 尺度, 原论文 τ=5 for RGB)
-        self.corgs_coprune_freq = 500  # Co-pruning 触发频率 (迭代数)
-        self.corgs_pseudo_weight = 1.0  # 伪视图协同正则化损失权重 λ_p
-        self.corgs_log_freq = 500  # Disagreement 日志记录频率
-        
-        # Opacity decay功能
-        self.opacity_decay = False  # 是否启用opacity decay
-        
-        # Depth功能参数
-        self.enable_depth = False  # 是否启用深度功能
+        # CoRGS (Co-Regularized Gaussian Splatting) 参数
+        self.enable_corgs = False  # 是否启用 CoRGS 正则化
+        self.corgs_tau = 0.3  # 温度参数，控制稀疏性
+        self.corgs_coprune_freq = 500  # 协同剪枝频率
+        self.corgs_pseudo_weight = 1.0  # 伪标签损失权重
+        self.corgs_log_freq = 500  # 日志记录频率
+
+        # Opacity Decay 相关参数
+        self.opacity_decay = False  # 是否启用透明度衰减
+
+        # Depth-supervised learning 深度监督学习参数
+        self.enable_depth = False  # 是否启用深度监督
         self.depth_loss_weight = 0.0  # 深度损失权重
-        self.depth_loss_type = 'pearson'  # 深度损失类型 ('l1', 'l2', 'pearson')
-        self.depth_threshold = 0.01  # 深度提取阈值
-        
-        # 原有的参数（保持兼容性）
-        self.multi_gaussian = True  # 是否启用多高斯训练
-        self.pseudo_labels = True   # 是否启用伪标签
-        self.depth_constraint = False  # r2-gaussian不支持深度输出，禁用深度约束
-        self.num_additional_views = 50  # 额外视角数量（更新为50）
+        self.depth_loss_type = "pearson"  # 深度损失类型：pearson, l1, l2
+        self.depth_threshold = 0.01  # 深度有效性阈值
+
+        # Multi-Gaussian and Pseudo-Label parameters
+        self.multi_gaussian = True  # 是否使用多高斯拟合
+        self.pseudo_labels = True  # 是否生成伪标签视角
+        self.depth_constraint = False  # 是否使用深度约束
+        self.num_additional_views = 50  # 额外生成的伪标签视角数量
         self.pseudo_confidence_threshold = 0.8  # 伪标签置信度阈值
-        self.multi_gaussian_weight = 0.05  # 多高斯损失权重（更新为0.05）
+        self.multi_gaussian_weight = 0.05  # 多高斯损失权重
         self.pseudo_label_weight = 0.05  # 伪标签损失权重
-        self.depth_loss_weight = 0.0  # r2-gaussian不支持深度输出，设置深度损失权重为0
-        
-        # 🎯 FSGS伪标签改进参数 (向下兼容)
-        self.enable_fsgs_pseudo = False  # 是否启用FSGS风格伪标签 (默认关闭确保兼容性)
-        self.fsgs_version = "improved"  # FSGS版本 ("improved", "original")
-        self.fsgs_noise_std = 0.05  # FSGS伪视角位置噪声标准差
-        self.fsgs_proximity_threshold = 8.0  # FSGS Proximity-guided阈值
-        self.fsgs_depth_model = "dpt_large"  # FSGS深度估计模型 ("dpt_large", "dpt_hybrid", "midas_small", "midas_large", "disabled")
-        self.fsgs_depth_weight = 0.05  # FSGS深度监督权重 (参考FSGS论文λ₃=0.05)
-        self.fsgs_start_iter = 2000  # FSGS伪标签启动迭代数 (FSGS论文推荐2000)
-        
-        # 🌟 FSGS Proximity-guided密化参数 (新增)
-        self.enable_fsgs_proximity = False  # 是否启用FSGS proximity-guided密化
-        self.proximity_threshold = 6.0  # proximity score阈值（论文推荐值）
-        self.enable_medical_constraints = False  # 是否启用医学约束（非FSGS原文，建议关闭）
+
+        # FSGS (Few-Shot Gaussian Splatting) 参数
+        self.enable_fsgs_pseudo = False  # 是否启用 FSGS 伪标签生成
+        self.fsgs_version = "improved"  # FSGS 版本: original, improved, adaptive
+        self.fsgs_noise_std = 0.05  # 伪视角添加的噪声标准差
+        self.fsgs_proximity_threshold = 8.0  # proximity 阈值
+        self.fsgs_depth_model = "dpt_large"  # 深度估计模型
+        self.fsgs_depth_weight = 0.05  # 深度损失权重
+        self.fsgs_start_iter = 2000  # 开始应用 FSGS 的迭代次数
+        self.enable_fsgs_proximity = False  # 是否启用 proximity 约束
+        self.proximity_threshold = 6.0  # proximity 阈值
+        self.enable_medical_constraints = False  # 是否启用医学约束
         self.proximity_organ_type = "foot"  # 器官类型
-        self.proximity_k_neighbors = 3  # 计算proximity的邻居数量
-
-        # 🌟🌟 FSGS 深度监督参数 (完整FSGS实现 - 2025-11-15)
-        self.enable_fsgs_depth = True  # 是否启用深度监督（FSGS核心创新）
-        self.fsgs_depth_model = "dpt_large"  # 深度估计模型: dpt_large/dpt_hybrid/midas_small/disabled
-        self.fsgs_depth_weight = 0.05  # 深度loss权重（论文建议0.01-0.1）
-        self.enable_fsgs_pseudo_views = True  # 是否启用伪视角生成（FSGS核心创新）
+        self.proximity_k_neighbors = 3  # k 近邻数量
+        self.enable_fsgs_depth = True  # 是否启用深度约束
+        self.enable_fsgs_pseudo_views = True  # 是否生成伪视角
         self.num_fsgs_pseudo_views = 10  # 伪视角数量
-        self.fsgs_noise_std = 0.05  # 伪视角位置噪声标准差（用于相机位置，论文Eq.5）
-        self.fsgs_start_iter = 2000  # FSGS功能启动迭代数
 
-        # 🌟 GR-Gaussian 参数 (2025-11-17)
-        self.enable_graph_laplacian = False  # 是否启用 Graph Laplacian 正则化
-        self.graph_k = 6  # KNN 邻居数量 (论文推荐 6)
-        self.graph_lambda_lap = 8e-4  # Graph Laplacian 损失权重 (论文推荐 8e-4)
+        # Graph Laplacian Regularization 参数 (SSS/GGS)
+        self.enable_graph_laplacian = False  # 是否启用图拉普拉斯正则化
+        self.graph_k = 6  # k-NN 图的邻居数量
+        self.graph_lambda_lap = 0.0008  # 拉普拉斯正则化权重
         self.graph_update_interval = 100  # 图重建间隔 (iterations)
 
         # 🎯 DropGaussian 参数 (2025-11-19 CVPR 2025)
         self.use_drop_gaussian = False  # 是否启用 DropGaussian 稀疏视角正则化
-        self.drop_gamma = 0.2  # DropGaussian 渐进式调整因子 (论文推荐 0.2)
+        self.drop_gamma = 0.1  # DropGaussian 最大 drop rate（论文推荐 0.2，稀疏场景建议 0.1）
+        self.drop_start_iter = 5000  # 开始 drop 的迭代次数（前期稳定训练）
+        self.drop_end_iter = 30000  # 达到最大 drop rate 的迭代次数
         self.use_importance_aware_drop = False  # 是否启用 Importance-Aware Drop（保护高 opacity Gaussians）
         self.importance_protect_ratio = 0.2  # 保护 top X% 高 opacity Gaussians（默认 20%）
 
