@@ -18,5 +18,4 @@ data/
 r2_gaussian/submodules/simple-knn
 *.pickle
 nohup.out
-
 logs/
