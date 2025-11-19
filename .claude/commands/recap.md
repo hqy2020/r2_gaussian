@@ -1,8 +1,7 @@
 ---
-description: 快速回顾上次工作内容（由 @research-project-coordinator 处理）
+description: 快速回顾上次工作内容
 ---
 
-请使用 Task 工具调用 @research-project-coordinator 执行以下任务：
 
 **任务类型：** 快速加载工作状态并回顾进度
 

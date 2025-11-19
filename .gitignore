@@ -14,7 +14,7 @@ other_scripts
 model/
 data/
 *.whl
-*.png
+/*.png
 r2_gaussian/submodules/simple-knn
 *.pickle
 nohup.out
