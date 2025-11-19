@@ -2,7 +2,7 @@ IMPORTANT
 **多使用 serena mcp 理解代码，修改代码**
 IMPORTANT
 **所有回复和写入文档的内容都是中文**
-**cuda环境是 r2_gaussian_new，我们就是训练 3 6 9稀疏场景的，baseline 的结果已经跑好了**
+**cuda环境是 r2_gaussian_new，我们就是训练 3 6 9稀疏场景的，baseline 的结果已经跑好了 数据集在data/369/**
 IMPORTANT
 **训练命名格式为 yyyy_MM_dd_organ_{{nums}}views_{{technique}}**
 **所有AI生成的文档都必须在cc-agent对应的文件夹下，不能在其他地方出现！！！**
