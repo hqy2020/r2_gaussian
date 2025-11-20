@@ -139,7 +139,7 @@ class OptimizationParams(ParamGroup):
         self.max_screen_size = None
         self.max_scale = None  # percent of volume size
         self.max_num_gaussians = 500_000
-        
+
         # 伪标签和深度相关参数 - 参考X-Gaussian-depth实现
         self.sample_pseudo_interval = 1
         self.start_sample_pseudo = 2000
@@ -149,7 +149,12 @@ class OptimizationParams(ParamGroup):
         self.depth_pseudo_weight = 0
         self.feature_lr = 0.0025
         self.opacity_lr = 0.05
-        
+
+        # Bino: Opacity Decay Strategy (不透明度衰减策略)
+        # 论文: Binocular-Guided 3D Gaussian Splatting (NeurIPS 2024)
+        self.enable_opacity_decay = False  # 默认关闭，保持向下兼容
+        self.opacity_decay_factor = 0.995  # 衰减系数，论文推荐值
+
         super().__init__(parser, "Optimization Parameters")
 
 

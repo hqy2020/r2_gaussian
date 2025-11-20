@@ -549,6 +549,31 @@ class GaussianModel:
 
         return grads
 
+    def opacity_decay(self, factor=0.995):
+        """
+        应用不透明度衰减策略（Binocular3DGS方法）
+        
+        对 density 应用指数衰减，自动过滤梯度低的冗余 Gaussians。
+        在激活空间应用衰减（density *= factor），然后转回逆激活空间存储。
+        
+        论文来源: Binocular-Guided 3D Gaussian Splatting with View Consistency 
+                  for Sparse View Synthesis (NeurIPS 2024)
+        
+        Args:
+            factor (float): 衰减系数，论文推荐值 0.995
+                          - 梯度高的点：opacity增长 > 衰减 → 保留
+                          - 梯度低的点：opacity增长 < 衰减 → 逐渐被剪枝
+        
+        Note:
+            - R²-Gaussian使用Softplus激活([0,+∞))，而非标准3DGS的Sigmoid([0,1])
+            - 衰减原理相同：降低低贡献点的密度值
+            - 应在 densify_from_iter 后每次迭代调用
+        """
+        # 在激活空间应用衰减
+        density = self.get_density * factor
+        # 转回逆激活空间存储
+        self._density.data = self.density_inverse_activation(density)
+
     def add_densification_stats(self, viewspace_point_tensor, update_filter):
         self.xyz_gradient_accum[update_filter] += torch.norm(
             viewspace_point_tensor.grad[update_filter, :2], dim=-1, keepdim=True

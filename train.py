@@ -171,6 +171,11 @@ def training(
                     "No Gaussian left. Change adaptive control hyperparameters!"
                 )
 
+            # Opacity Decay (Binocular3DGS策略)
+            # 在密度控制开始后的每次迭代应用衰减，过滤低梯度的冗余Gaussians
+            if iteration > opt.densify_from_iter and opt.enable_opacity_decay:
+                gaussians.opacity_decay(factor=opt.opacity_decay_factor)
+
             # Optimization
             if iteration < opt.iterations:
                 gaussians.optimizer.step()
