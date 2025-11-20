@@ -150,10 +150,27 @@ def render(
         rotations=rotations,
         cov3D_precomp=cov3D_precomp,
     )
+
+    # === IPSM Addition: Render depth map ===
+    # Use Z-coordinate as "color" to render depth
+    depth_colors = means3D[:, 2:3]  # (N, 1) - Z coordinates
+    depth_map, _ = rasterizer(
+        means3D=means3D,
+        means2D=means2D,
+        shs=None,
+        colors_precomp=depth_colors,
+        opacities=density,
+        scales=scales,
+        rotations=rotations,
+        cov3D_precomp=cov3D_precomp,
+    )
+    depth_map = depth_map.squeeze(0)  # (1, H, W) -> (H, W)
+
     # Those Gaussians that were frustum culled or had a radius of 0 were not visible.
     # They will be excluded from value updates used in the splitting criteria.
     return {
         "render": rendered_image,
+        "depth": depth_map,  # IPSM: 新增深度输出
         "viewspace_points": screenspace_points,
         "visibility_filter": radii > 0,
         "radii": radii,

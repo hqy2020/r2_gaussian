@@ -153,6 +153,39 @@ class OptimizationParams(ParamGroup):
         super().__init__(parser, "Optimization Parameters")
 
 
+class IPSMParams(ParamGroup):
+    """IPSM (Inline Prior Guided Score Matching) Parameters"""
+    def __init__(self, parser, sentinel=False):
+        # === 核心开关 ===
+        self.enable_ipsm = False  # 是否启用IPSM
+
+        # === 训练区间 ===
+        self.ipsm_start_iter = 2000   # IPSM开始迭代
+        self.ipsm_end_iter = 9500     # IPSM结束迭代
+
+        # === 损失权重 ===
+        self.lambda_ipsm = 1.0         # Score distillation loss权重（降低，考虑CT domain gap）
+        self.lambda_ipsm_depth = 0.5   # 深度正则化权重
+        self.lambda_ipsm_geo = 4.0     # 几何一致性权重（提高，增强inline prior）
+
+        # === 子参数 ===
+        self.ipsm_eta_r = 0.1          # R1和R2平衡参数（L_IPSM = η_r * L_R1 + L_R2）
+        self.ipsm_eta_d = 0.1          # seen/unseen深度权重平衡
+
+        # === Mask阈值 ===
+        self.ipsm_mask_tau = 0.3       # Warping一致性mask阈值
+        self.ipsm_mask_tau_geo = 0.1   # 几何一致性mask阈值（更严格）
+
+        # === 扩散模型参数 ===
+        self.ipsm_cfg_scale = 7.5      # Classifier-Free Guidance强度
+        self.sd_model_path = "stabilityai/stable-diffusion-2-inpainting"  # SD模型路径
+
+        # === 伪视角采样 ===
+        self.ipsm_pseudo_angle_range = 15.0  # 伪视角角度扰动范围（度）
+
+        super().__init__(parser, "IPSM Parameters", sentinel)
+
+
 def get_combined_args(parser: ArgumentParser):
     cmdlne_string = sys.argv[1:]
     cfgfile_string = "Namespace()"

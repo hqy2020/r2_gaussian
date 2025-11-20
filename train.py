@@ -20,7 +20,7 @@ import numpy as np
 import yaml
 
 sys.path.append("./")
-from r2_gaussian.arguments import ModelParams, OptimizationParams, PipelineParams
+from r2_gaussian.arguments import ModelParams, OptimizationParams, PipelineParams, IPSMParams
 from r2_gaussian.gaussian import GaussianModel, render, query, initialize_gaussian
 from r2_gaussian.utils.general_utils import safe_state
 from r2_gaussian.utils.cfg_utils import load_config
@@ -35,6 +35,7 @@ def training(
     dataset: ModelParams,
     opt: OptimizationParams,
     pipe: PipelineParams,
+    ipsm: "IPSMParams",  # IPSM参数
     tb_writer,
     testing_iterations,
     saving_iterations,
@@ -85,6 +86,29 @@ def training(
         tv_vol_nVoxel = torch.tensor([tv_vol_size, tv_vol_size, tv_vol_size])
         tv_vol_sVoxel = torch.tensor(scanner_cfg["dVoxel"]) * tv_vol_nVoxel
 
+    # === IPSM初始化 ===
+    ipsm_warp = None
+    diffusion_guide = None
+    depth_estimator = None
+
+    if ipsm.enable_ipsm:
+        from r2_gaussian.utils.ipsm_utils import XRayIPSMWarping
+        from r2_gaussian.utils.diffusion_utils import DiffusionGuidance
+        from r2_gaussian.utils.depth_estimator import get_depth_estimator
+        from r2_gaussian.utils.loss_utils import (
+            ipsm_depth_regularization,
+            geometry_consistency_loss
+        )
+        from r2_gaussian.utils.ipsm_utils import sample_nearby_viewpoint
+        from r2_gaussian.utils.diffusion_utils import ct_to_rgb
+
+        ipsm_warp = XRayIPSMWarping(scanner_cfg, pipe)
+        diffusion_guide = DiffusionGuidance(ipsm.sd_model_path)
+        depth_estimator = get_depth_estimator()
+
+        print(f"✓ IPSM enabled: iter {ipsm.ipsm_start_iter}-{ipsm.ipsm_end_iter}")
+        print(f"  λ_IPSM={ipsm.lambda_ipsm}, λ_depth={ipsm.lambda_ipsm_depth}, λ_geo={ipsm.lambda_ipsm_geo}")
+
     # Train
     iter_start = torch.cuda.Event(enable_timing=True)
     iter_end = torch.cuda.Event(enable_timing=True)
@@ -96,6 +120,11 @@ def training(
     first_iter += 1
     for iteration in range(first_iter, opt.iterations + 1):
         iter_start.record()
+
+        # === 动态加载扩散模型 ===
+        if ipsm.enable_ipsm and iteration == ipsm.ipsm_start_iter:
+            print(f"[ITER {iteration}] Loading diffusion model...")
+            diffusion_guide.load_model()
 
         # Update learning rate
         gaussians.update_learning_rate(iteration)
@@ -140,6 +169,66 @@ def training(
             loss_tv = tv_3d_loss(vol_pred, reduction="mean")
             loss["tv"] = loss_tv
             loss["total"] = loss["total"] + opt.lambda_tv * loss_tv
+
+        # === IPSM guidance ===
+        if ipsm.enable_ipsm and ipsm.ipsm_start_iter <= iteration < ipsm.ipsm_end_iter:
+            # 1. 采样伪视角
+            pseudo_cam = sample_nearby_viewpoint(
+                viewpoint_cam,
+                angle_range=ipsm.ipsm_pseudo_angle_range
+            )
+
+            # 2. 渲染伪视角
+            pseudo_pkg = render(pseudo_cam, gaussians, pipe)
+            x_0_j = pseudo_pkg["render"]
+            depth_unseen = pseudo_pkg["depth"]
+
+            # 3. Inverse warping
+            I_warped, mask_warp = ipsm_warp.warp_via_voxel_projection(
+                gt_image,
+                viewpoint_cam,
+                pseudo_cam,
+                depth_unseen,
+                tau=ipsm.ipsm_mask_tau
+            )
+
+            # 4. 深度正则化
+            depth_seen = render_pkg["depth"]
+            depth_mono_seen = depth_estimator.estimate(gt_image)
+            depth_mono_unseen = depth_estimator.estimate(x_0_j)
+
+            loss_ipsm_depth = ipsm_depth_regularization(
+                depth_seen, depth_mono_seen,
+                depth_unseen, depth_mono_unseen,
+                eta_d=ipsm.ipsm_eta_d
+            )
+            loss["ipsm_depth"] = loss_ipsm_depth
+            loss["total"] = loss["total"] + ipsm.lambda_ipsm_depth * loss_ipsm_depth
+
+            # 5. 几何一致性（更严格mask）
+            _, mask_geo = ipsm_warp.warp_via_voxel_projection(
+                gt_image, viewpoint_cam, pseudo_cam, depth_unseen,
+                tau=ipsm.ipsm_mask_tau_geo
+            )
+            loss_geo = geometry_consistency_loss(x_0_j, I_warped, mask_geo)
+            loss["ipsm_geo"] = loss_geo
+            loss["total"] = loss["total"] + ipsm.lambda_ipsm_geo * loss_geo
+
+            # 6. Score distillation
+            loss_ipsm_sd = diffusion_guide.compute_ipsm_loss(
+                ct_to_rgb(x_0_j),
+                ct_to_rgb(I_warped),
+                mask_warp,
+                eta_r=ipsm.ipsm_eta_r,
+                cfg_scale=ipsm.ipsm_cfg_scale
+            )
+            loss["ipsm_sd"] = loss_ipsm_sd
+            loss["total"] = loss["total"] + ipsm.lambda_ipsm * loss_ipsm_sd
+
+        # === 卸载扩散模型 ===
+        if ipsm.enable_ipsm and iteration == ipsm.ipsm_end_iter:
+            print(f"[ITER {iteration}] Unloading diffusion model...")
+            diffusion_guide.unload_model()
 
         loss["total"].backward()
 
@@ -370,6 +459,7 @@ if __name__ == "__main__":
     lp = ModelParams(parser)
     op = OptimizationParams(parser)
     pp = PipelineParams(parser)
+    ipsm_p = IPSMParams(parser)  # IPSM参数
     parser.add_argument("--detect_anomaly", action="store_true", default=False)
     parser.add_argument("--test_iterations", nargs="+", type=int, default=[5_000, 10_000, 20_000])
     parser.add_argument("--save_iterations", nargs="+", type=int, default=[])
@@ -404,6 +494,7 @@ if __name__ == "__main__":
         lp.extract(args),
         op.extract(args),
         pp.extract(args),
+        ipsm_p.extract(args),  # IPSM参数
         tb_writer,
         args.test_iterations,
         args.save_iterations,
