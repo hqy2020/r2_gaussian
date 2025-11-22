@@ -30,6 +30,12 @@ R²-Gaussian 三视角 (3 views) SOTA 基准值
 器官: Pancreas
   PSNR: 28.7669
   SSIM: 0.9247
+## Memory Tool Usage
+- Store all memory for this project in database: 'neo4j'
+- Use MCP memory tools exclusively for storing project-related information
+- Begin each session by:
+  1. Switching to this project's database
+  2. Searching memory for data relevant to the user's prompt
 
 
 ## 角色
