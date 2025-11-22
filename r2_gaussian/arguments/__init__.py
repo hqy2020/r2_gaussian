@@ -46,6 +46,12 @@ class ModelParams(ParamGroup):
         self.corgs_coprune_freq = 500  # Co-pruning 触发频率 (迭代数)
         self.corgs_pseudo_weight = 1.0  # 伪视图协同正则化损失权重 λ_p
         self.corgs_log_freq = 500  # Disagreement 日志记录频率
+
+        # 🌟 CoR-GS Stage 3: Pseudo-view Co-regularization 参数 (2025-11-22)
+        self.corgs_pseudo_start_iter = 2000  # Pseudo-view co-reg 启动迭代数（论文推荐 2000）
+        self.corgs_pseudo_noise_std = 0.02  # Pseudo-view 位置噪声标准差（约 ±0.4mm，CT 尺度）
+        self.enable_pseudo_coreg_roi = False  # 是否启用 ROI 自适应权重（基础版本关闭）
+        self.enable_pseudo_coreg_confidence = False  # 是否启用置信度筛选（基础版本关闭）
         
         # Opacity decay功能
         self.opacity_decay = False  # 是否启用opacity decay

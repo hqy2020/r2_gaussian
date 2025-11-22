@@ -28,6 +28,18 @@ from r2_gaussian.utils.log_utils import prepare_output_and_logger
 from r2_gaussian.dataset import Scene
 from r2_gaussian.utils.loss_utils import l1_loss, ssim, tv_3d_loss
 from r2_gaussian.utils.image_utils import metric_vol, metric_proj
+
+# CoR-GS Stage 3: Pseudo-view Co-regularization
+try:
+    from r2_gaussian.utils.pseudo_view_coreg import (
+        generate_pseudo_view_medical,
+        compute_pseudo_coreg_loss_medical
+    )
+    HAS_PSEUDO_COREG = True
+    print("✅ CoR-GS Stage 3 Pseudo-view Co-regularization modules loaded")
+except ImportError as e:
+    HAS_PSEUDO_COREG = False
+    print(f"📦 Pseudo-view Co-regularization modules not available: {e}")
 from r2_gaussian.utils.plot_utils import show_two_slice
 
 
@@ -67,15 +79,44 @@ def training(
         pipe,
     )
 
-    # Set up Gaussians
-    gaussians = GaussianModel(scale_bound)
-    initialize_gaussian(gaussians, dataset, None)
-    scene.gaussians = gaussians
-    gaussians.training_setup(opt)
+    # Set up Gaussians (支持多模型 CoR-GS 训练)
+    gaussiansN = dataset.gaussiansN  # 获取模型数量（默认 2）
+    gaussians_list = []
+
+    print(f"🔧 初始化 {gaussiansN} 个 Gaussian 模型...")
+    for idx in range(gaussiansN):
+        gs = GaussianModel(scale_bound)
+        initialize_gaussian(gs, dataset, None)
+        gs.training_setup(opt)
+        gaussians_list.append(gs)
+        print(f"  ✓ 模型 {idx+1}/{gaussiansN} 初始化完成")
+
+    # 向下兼容：单模型时使用原有变量名
+    if gaussiansN == 1:
+        gaussians = gaussians_list[0]
+        scene.gaussians = gaussians
+    else:
+        gaussians = gaussians_list[0]  # 默认使用第一个模型（用于兼容性）
+        scene.gaussians = gaussians_list  # 多模型时存储列表
+
+    # 加载 checkpoint（支持多模型）
     if checkpoint is not None:
-        (model_params, first_iter) = torch.load(checkpoint)
-        gaussians.restore(model_params, opt)
-        print(f"Load checkpoint {osp.basename(checkpoint)}.")
+        checkpoint_data = torch.load(checkpoint)
+        if gaussiansN == 1:
+            (model_params, first_iter) = checkpoint_data
+            gaussians.restore(model_params, opt)
+        else:
+            # 多模型 checkpoint 加载逻辑
+            if isinstance(checkpoint_data, tuple) and len(checkpoint_data) == 2:
+                # 单模型 checkpoint -> 复制到所有模型
+                (model_params, first_iter) = checkpoint_data
+                for idx, gs in enumerate(gaussians_list):
+                    gs.restore(model_params, opt)
+                    print(f"  ✓ 模型 {idx+1} 从 checkpoint 加载")
+            else:
+                # 多模型 checkpoint（未来扩展）
+                print("⚠️ 多模型 checkpoint 加载暂未实现，使用随机初始化")
+        print(f"✓ Checkpoint {osp.basename(checkpoint)} 加载完成")
 
     # Set up loss
     use_tv = opt.lambda_tv > 0
@@ -97,115 +138,224 @@ def training(
     for iteration in range(first_iter, opt.iterations + 1):
         iter_start.record()
 
-        # Update learning rate
-        gaussians.update_learning_rate(iteration)
+        # Update learning rate (所有模型)
+        for idx in range(gaussiansN):
+            current_gs = gaussians_list[idx] if gaussiansN > 1 else gaussians
+            current_gs.update_learning_rate(iteration)
 
         # Get one camera for training
         if not viewpoint_stack:
             viewpoint_stack = scene.getTrainCameras().copy()
         viewpoint_cam = viewpoint_stack.pop(randint(0, len(viewpoint_stack) - 1))
 
-        # Render X-ray projection
-        render_pkg = render(viewpoint_cam, gaussians, pipe)
-        image, viewspace_point_tensor, visibility_filter, radii = (
-            render_pkg["render"],
-            render_pkg["viewspace_points"],
-            render_pkg["visibility_filter"],
-            render_pkg["radii"],
-        )
+        # Render X-ray projection (多模型)
+        renders = []
+        viewspace_points = []
+        visibility_filters = []
+        radiis = []
 
-        # Compute loss
+        for idx in range(gaussiansN):
+            current_gs = gaussians_list[idx] if gaussiansN > 1 else gaussians
+            pkg = render(viewpoint_cam, current_gs, pipe)
+            renders.append(pkg)
+            viewspace_points.append(pkg["viewspace_points"])
+            visibility_filters.append(pkg["visibility_filter"])
+            radiis.append(pkg["radii"])
+
+        # Compute loss (每个模型独立计算)
         gt_image = viewpoint_cam.original_image.cuda()
-        loss = {"total": 0.0}
-        render_loss = l1_loss(image, gt_image)
-        loss["render"] = render_loss
-        loss["total"] += loss["render"]
-        if opt.lambda_dssim > 0:
-            loss_dssim = 1.0 - ssim(image, gt_image)
-            loss["dssim"] = loss_dssim
-            loss["total"] = loss["total"] + opt.lambda_dssim * loss_dssim
-        # 3D TV loss
+        losses = []
+
+        for idx in range(gaussiansN):
+            loss_dict = {"total": 0.0}
+            render_loss = l1_loss(renders[idx]["render"], gt_image)
+            loss_dict["render"] = render_loss
+            loss_dict["total"] += render_loss
+
+            if opt.lambda_dssim > 0:
+                loss_dssim = 1.0 - ssim(renders[idx]["render"], gt_image)
+                loss_dict["dssim"] = loss_dssim
+                loss_dict["total"] += opt.lambda_dssim * loss_dssim
+
+            losses.append(loss_dict)
+        # 3D TV loss (仅应用于第一个模型以节省计算)
         if use_tv:
-            # Randomly get the tiny volume center
             tv_vol_center = (bbox[0] + tv_vol_sVoxel / 2) + (
                 bbox[1] - tv_vol_sVoxel - bbox[0]
             ) * torch.rand(3)
+            current_gs = gaussians_list[0] if gaussiansN > 1 else gaussians
             vol_pred = query(
-                gaussians,
+                current_gs,
                 tv_vol_center,
                 tv_vol_nVoxel,
                 tv_vol_sVoxel,
                 pipe,
             )["vol"]
             loss_tv = tv_3d_loss(vol_pred, reduction="mean")
-            loss["tv"] = loss_tv
-            loss["total"] = loss["total"] + opt.lambda_tv * loss_tv
+            losses[0]["tv"] = loss_tv
+            losses[0]["total"] += opt.lambda_tv * loss_tv
 
-        loss["total"].backward()
+        # ========== CoR-GS Stage 3: Pseudo-view Co-regularization ==========
+        if (HAS_PSEUDO_COREG and
+            gaussiansN >= 2 and
+            hasattr(dataset, 'enable_corgs') and dataset.enable_corgs and
+            hasattr(dataset, 'corgs_pseudo_start_iter') and
+            iteration >= dataset.corgs_pseudo_start_iter):
+
+            try:
+                # 生成 pseudo-view（基础版本：不启用 ROI 适配）
+                noise_std = dataset.corgs_pseudo_noise_std if hasattr(dataset, 'corgs_pseudo_noise_std') else 0.02
+                pseudo_camera = generate_pseudo_view_medical(
+                    scene.getTrainCameras(),
+                    current_camera_idx=None,  # 随机选择
+                    noise_std=noise_std,
+                    roi_info=None  # 基础版本不启用 ROI
+                )
+
+                # 渲染两个模型的 pseudo-view（仅前 2 个模型）
+                pseudo_renders = []
+                for idx in range(min(2, gaussiansN)):
+                    pseudo_pkg = render(pseudo_camera, gaussians_list[idx], pipe)
+                    pseudo_renders.append(pseudo_pkg)
+
+                # 计算 Co-regularization 损失
+                pseudo_coreg_loss_dict = compute_pseudo_coreg_loss_medical(
+                    pseudo_renders[0],
+                    pseudo_renders[1],
+                    lambda_dssim=opt.lambda_dssim,
+                    roi_weights=None  # 基础版本不启用 ROI 权重
+                )
+
+                # 叠加到总损失（仅影响前 2 个模型）
+                pseudo_weight = dataset.corgs_pseudo_weight if hasattr(dataset, 'corgs_pseudo_weight') else 1.0
+                loss_pseudo = pseudo_coreg_loss_dict['loss']
+                losses[0]["pseudo"] = loss_pseudo
+                losses[1]["pseudo"] = loss_pseudo
+                losses[0]["total"] += pseudo_weight * loss_pseudo
+                losses[1]["total"] += pseudo_weight * loss_pseudo
+
+                # TensorBoard 日志（每 10 iterations 记录）
+                if iteration % 10 == 0 and tb_writer:
+                    tb_writer.add_scalar('corgs/pseudo_total', loss_pseudo.item(), iteration)
+                    tb_writer.add_scalar('corgs/pseudo_l1', pseudo_coreg_loss_dict['l1'].item(), iteration)
+                    tb_writer.add_scalar('corgs/pseudo_ssim', pseudo_coreg_loss_dict['ssim'].item(), iteration)
+
+                # 定期打印日志（每 500 iterations）
+                if iteration % 500 == 0:
+                    print(f"[CoR-GS] Iter {iteration}: "
+                          f"pseudo_loss={loss_pseudo.item():.6f}, "
+                          f"SSIM={pseudo_coreg_loss_dict['ssim'].item():.4f}")
+
+            except Exception as e:
+                # 异常处理：pseudo-view 生成失败不影响主训练
+                if iteration % 1000 == 0:
+                    print(f"⚠️ [CoR-GS] Pseudo-view failed at iter {iteration}: {e}")
+
+        # 反向传播所有模型的损失
+        for idx in range(gaussiansN):
+            # 使用 retain_graph 避免计算图被清除（除了最后一个模型）
+            losses[idx]["total"].backward(retain_graph=(idx < gaussiansN - 1))
 
         iter_end.record()
         torch.cuda.synchronize()
 
         with torch.no_grad():
-            # Adaptive control
-            gaussians.max_radii2D[visibility_filter] = torch.max(
-                gaussians.max_radii2D[visibility_filter], radii[visibility_filter]
-            )
-            gaussians.add_densification_stats(viewspace_point_tensor, visibility_filter)
-            if iteration < opt.densify_until_iter:
-                if (
-                    iteration > opt.densify_from_iter
-                    and iteration % opt.densification_interval == 0
-                ):
-                    gaussians.densify_and_prune(
-                        opt.densify_grad_threshold,
-                        opt.density_min_threshold,
-                        opt.max_screen_size,
-                        max_scale,
-                        opt.max_num_gaussians,
-                        densify_scale_threshold,
-                        bbox,
-                    )
-            if gaussians.get_density.shape[0] == 0:
-                raise ValueError(
-                    "No Gaussian left. Change adaptive control hyperparameters!"
+            # Adaptive control (所有模型)
+            for idx in range(gaussiansN):
+                current_gs = gaussians_list[idx] if gaussiansN > 1 else gaussians
+                current_visibility = visibility_filters[idx]
+                current_radii = radiis[idx]
+                current_viewspace = viewspace_points[idx]
+
+                current_gs.max_radii2D[current_visibility] = torch.max(
+                    current_gs.max_radii2D[current_visibility],
+                    current_radii[current_visibility]
                 )
+                current_gs.add_densification_stats(current_viewspace, current_visibility)
 
-            # Optimization
+                if iteration < opt.densify_until_iter:
+                    if (iteration > opt.densify_from_iter and
+                        iteration % opt.densification_interval == 0):
+                        current_gs.densify_and_prune(
+                            opt.densify_grad_threshold,
+                            opt.density_min_threshold,
+                            opt.max_screen_size,
+                            max_scale,
+                            opt.max_num_gaussians,
+                            densify_scale_threshold,
+                            bbox,
+                        )
+
+                if current_gs.get_density.shape[0] == 0:
+                    raise ValueError(
+                        f"Model {idx+1}: No Gaussian left. Change adaptive control hyperparameters!"
+                    )
+
+            # Optimization (所有模型)
             if iteration < opt.iterations:
-                gaussians.optimizer.step()
-                gaussians.optimizer.zero_grad(set_to_none=True)
+                for idx in range(gaussiansN):
+                    current_gs = gaussians_list[idx] if gaussiansN > 1 else gaussians
+                    current_gs.optimizer.step()
+                    current_gs.optimizer.zero_grad(set_to_none=True)
 
-            # Save gaussians
+            # Save gaussians (多模型：仅保存第一个模型)
             if iteration in saving_iterations or iteration == opt.iterations:
                 tqdm.write(f"[ITER {iteration}] Saving Gaussians")
                 scene.save(iteration, queryfunc)
 
-            # Save checkpoints
+            # Save checkpoints (多模型：保存所有模型)
             if iteration in checkpoint_iterations:
                 tqdm.write(f"[ITER {iteration}] Saving Checkpoint")
-                torch.save(
-                    (gaussians.capture(), iteration),
-                    ckpt_save_path + "/chkpnt" + str(iteration) + ".pth",
-                )
+                if gaussiansN == 1:
+                    torch.save(
+                        (gaussians.capture(), iteration),
+                        ckpt_save_path + "/chkpnt" + str(iteration) + ".pth",
+                    )
+                else:
+                    # 多模型：保存所有模型的状态
+                    checkpoint_dict = {
+                        'iteration': iteration,
+                        'models': [gs.capture() for gs in gaussians_list]
+                    }
+                    torch.save(
+                        checkpoint_dict,
+                        ckpt_save_path + "/chkpnt" + str(iteration) + ".pth",
+                    )
 
-            # Progress bar
+            # Progress bar (显示第一个模型的信息)
             if iteration % 10 == 0:
+                first_gs = gaussians_list[0] if gaussiansN > 1 else gaussians
+                avg_loss = sum(l["total"].item() for l in losses) / gaussiansN
                 progress_bar.set_postfix(
                     {
-                        "loss": f"{loss['total'].item():.1e}",
-                        "pts": f"{gaussians.get_density.shape[0]:2.1e}",
+                        "loss": f"{avg_loss:.1e}",
+                        "pts": f"{first_gs.get_density.shape[0]:2.1e}",
+                        "models": gaussiansN,
                     }
                 )
                 progress_bar.update(10)
             if iteration == opt.iterations:
                 progress_bar.close()
 
-            # Logging
+            # Logging (记录所有模型的平均损失)
             metrics = {}
-            for l in loss:
-                metrics["loss_" + l] = loss[l].item()
-            for param_group in gaussians.optimizer.param_groups:
+            # 计算所有模型的平均损失
+            for loss_key in losses[0].keys():
+                if loss_key in losses[0]:
+                    avg_loss_value = sum(l.get(loss_key, 0) for l in losses if isinstance(l.get(loss_key, 0), torch.Tensor)) / gaussiansN
+                    if isinstance(avg_loss_value, torch.Tensor):
+                        metrics[f"train/loss_{loss_key}"] = avg_loss_value.item()
+
+            # 记录每个模型的独立损失（多模型场景）
+            if gaussiansN > 1:
+                for idx in range(gaussiansN):
+                    for loss_key, loss_val in losses[idx].items():
+                        if isinstance(loss_val, torch.Tensor):
+                            metrics[f"train/model{idx+1}/loss_{loss_key}"] = loss_val.item()
+
+            # 记录学习率（所有模型）
+            first_gs = gaussians_list[0] if gaussiansN > 1 else gaussians
+            for param_group in first_gs.optimizer.param_groups:
                 metrics[f"lr_{param_group['name']}"] = param_group["lr"]
             training_report(
                 tb_writer,
@@ -234,9 +384,20 @@ def training_report(
         for key in list(metrics_train.keys()):
             tb_writer.add_scalar(f"train/{key}", metrics_train[key], iteration)
         tb_writer.add_scalar("train/iter_time", elapsed, iteration)
-        tb_writer.add_scalar(
-            "train/total_points", scene.gaussians.get_xyz.shape[0], iteration
-        )
+
+        # 处理多模型场景
+        if isinstance(scene.gaussians, list):
+            # 多模型：记录第一个模型的点数
+            total_points = scene.gaussians[0].get_xyz.shape[0]
+            tb_writer.add_scalar("train/total_points", total_points, iteration)
+            # 记录每个模型的点数
+            for idx, gs in enumerate(scene.gaussians):
+                tb_writer.add_scalar(f"train/model{idx+1}/points", gs.get_xyz.shape[0], iteration)
+        else:
+            # 单模型
+            tb_writer.add_scalar(
+                "train/total_points", scene.gaussians.get_xyz.shape[0], iteration
+            )
 
     if iteration in testing_iterations:
         # Evaluate 2D rendering performance
@@ -254,12 +415,13 @@ def training_report(
                 images = []
                 gt_images = []
                 image_show_2d = []
-                # Render projections
+                # Render projections（多模型场景使用第一个模型）
                 show_idx = np.linspace(0, len(config["cameras"]), 7).astype(int)[1:-1]
+                gaussians_for_eval = scene.gaussians[0] if isinstance(scene.gaussians, list) else scene.gaussians
                 for idx, viewpoint in enumerate(config["cameras"]):
                     image = renderFunc(
                         viewpoint,
-                        scene.gaussians,
+                        gaussians_for_eval,
                     )["render"]
                     gt_image = viewpoint.original_image.to("cuda")
                     images.append(image)
@@ -312,8 +474,9 @@ def training_report(
                         config["name"] + "/ssim_2d", ssim_2d, iteration
                     )
 
-        # Evaluate 3D reconstruction performance
-        vol_pred = queryFunc(scene.gaussians)["vol"]
+        # Evaluate 3D reconstruction performance（多模型场景使用第一个模型）
+        gaussians_for_query = scene.gaussians[0] if isinstance(scene.gaussians, list) else scene.gaussians
+        vol_pred = queryFunc(gaussians_for_query)["vol"]
         vol_gt = scene.vol_gt
         psnr_3d, _ = metric_vol(vol_gt, vol_pred, "psnr")
         ssim_3d, ssim_3d_axis = metric_vol(vol_gt, vol_pred, "ssim")
@@ -354,10 +517,11 @@ def training_report(
             f"[ITER {iteration}] Evaluating: psnr3d {psnr_3d:.3f}, ssim3d {ssim_3d:.3f}, psnr2d {psnr_2d:.3f}, ssim2d {ssim_2d:.3f}"
         )
 
-        # Record other metrics
+        # Record other metrics（多模型场景使用第一个模型）
         if tb_writer:
+            gaussians_for_hist = scene.gaussians[0] if isinstance(scene.gaussians, list) else scene.gaussians
             tb_writer.add_histogram(
-                "scene/density_histogram", scene.gaussians.get_density, iteration
+                "scene/density_histogram", gaussians_for_hist.get_density, iteration
             )
 
     torch.cuda.empty_cache()

@@ -80,11 +80,22 @@ class Scene:
         point_cloud_path = osp.join(
             self.model_path, "point_cloud/iteration_{}".format(iteration)
         )
-        self.gaussians.save_ply(
+        # 多模型场景：保存第一个模型（主模型）
+        gaussians_to_save = self.gaussians[0] if isinstance(self.gaussians, list) else self.gaussians
+        gaussians_to_save.save_ply(
             osp.join(point_cloud_path, "point_cloud.pickle")
         )  # Save pickle rather than ply
+
+        # 多模型场景：保存所有模型（可选）
+        if isinstance(self.gaussians, list) and len(self.gaussians) > 1:
+            for idx in range(1, len(self.gaussians)):
+                self.gaussians[idx].save_ply(
+                    osp.join(point_cloud_path, f"point_cloud_model{idx+1}.pickle")
+                )
+
         if queryfunc is not None:
-            vol_pred = queryfunc(self.gaussians)["vol"]
+            # 多模型场景：使用第一个模型进行3D重建评估
+            vol_pred = queryfunc(gaussians_to_save)["vol"]
             vol_gt = self.vol_gt
             np.save(osp.join(point_cloud_path, "vol_gt.npy"), t2a(vol_gt))
             np.save(
