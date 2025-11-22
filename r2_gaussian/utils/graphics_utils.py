@@ -17,9 +17,9 @@ from plyfile import PlyData, PlyElement
 
 
 class BasicPointCloud(NamedTuple):
-    points: np.ndarray
-    colors: np.ndarray
-    normals: np.ndarray
+    points: np.array
+    colors: np.array
+    normals: np.array
 
 
 def fetchPly(path):
