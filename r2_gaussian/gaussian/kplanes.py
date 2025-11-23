@@ -169,6 +169,66 @@ class KPlanesEncoder(nn.Module):
         return self.feature_dim * 3
 
 
+class DensityMLPDecoder(nn.Module):
+    """
+    MLP Decoder：将 K-Planes 特征映射到 density 调制因子
+
+    对齐 X²-Gaussian 原版的 deformation network 架构，
+    使用多层 MLP 学习从 K-Planes 特征到 density offset 的映射。
+
+    参数：
+        input_dim (int): 输入特征维度（默认 96，对应 feature_dim * 3）
+        hidden_dim (int): 隐藏层维度（默认 128）
+        num_layers (int): MLP 层数（默认 3）
+
+    输出：
+        density_offset (torch.Tensor): 形状 [N, 1]，density 的调制因子
+    """
+
+    def __init__(self, input_dim: int = 96, hidden_dim: int = 128, num_layers: int = 3):
+        super().__init__()
+
+        self.input_dim = input_dim
+        self.hidden_dim = hidden_dim
+        self.num_layers = num_layers
+
+        # 构建 MLP 网络
+        layers = []
+
+        # 第一层：input_dim -> hidden_dim
+        layers.append(nn.Linear(input_dim, hidden_dim))
+        layers.append(nn.ReLU(inplace=True))
+
+        # 中间层：hidden_dim -> hidden_dim
+        for _ in range(num_layers - 2):
+            layers.append(nn.Linear(hidden_dim, hidden_dim))
+            layers.append(nn.ReLU(inplace=True))
+
+        # 输出层：hidden_dim -> 1
+        layers.append(nn.Linear(hidden_dim, 1))
+
+        self.network = nn.Sequential(*layers)
+
+        # 初始化权重（使用 Xavier 初始化）
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight)
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+
+    def forward(self, kplanes_feat: torch.Tensor) -> torch.Tensor:
+        """
+        前向传播：将 K-Planes 特征映射到 density offset
+
+        参数：
+            kplanes_feat (torch.Tensor): K-Planes 特征，形状 [N, input_dim]
+
+        返回：
+            density_offset (torch.Tensor): density 调制因子，形状 [N, 1]
+        """
+        return self.network(kplanes_feat)
+
+
 # 测试代码（可选）
 if __name__ == "__main__":
     # 简单功能测试

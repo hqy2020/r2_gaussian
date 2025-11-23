@@ -102,6 +102,10 @@ class ModelParams(ParamGroup):
         self.kplanes_resolution = 64  # K-Planes 平面分辨率 (默认 64)
         self.kplanes_dim = 32  # K-Planes 特征维度 (默认 32)
 
+        # 🎯 K-Planes MLP Decoder 参数 (2025-11-24)
+        self.kplanes_decoder_hidden = 128  # Decoder 隐藏层维度 (默认 128)
+        self.kplanes_decoder_layers = 3  # Decoder MLP 层数 (默认 3)
+
         super().__init__(parser, "Loading Parameters", sentinel)
 
     def extract(self, args):

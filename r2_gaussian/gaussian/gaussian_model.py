@@ -79,7 +79,7 @@ class GaussianModel:
         # K-Planes 支持（可选）
         self.enable_kplanes = getattr(args, 'enable_kplanes', False) if args is not None else False
         if self.enable_kplanes:
-            from r2_gaussian.gaussian.kplanes import KPlanesEncoder
+            from r2_gaussian.gaussian.kplanes import KPlanesEncoder, DensityMLPDecoder
             kplanes_resolution = getattr(args, 'kplanes_resolution', 64)
             kplanes_dim = getattr(args, 'kplanes_dim', 32)
             self.kplanes_encoder = KPlanesEncoder(
@@ -88,8 +88,18 @@ class GaussianModel:
                 num_levels=1,
                 bounds=(-1.0, 1.0),
             ).cuda()
+
+            # 🎯 MLP Decoder: 将 K-Planes 特征映射到 density 调制因子
+            kplanes_decoder_hidden = getattr(args, 'kplanes_decoder_hidden', 128)
+            kplanes_decoder_layers = getattr(args, 'kplanes_decoder_layers', 3)
+            self.density_decoder = DensityMLPDecoder(
+                input_dim=self.kplanes_encoder.get_output_dim(),  # 96
+                hidden_dim=kplanes_decoder_hidden,
+                num_layers=kplanes_decoder_layers
+            ).cuda()
         else:
             self.kplanes_encoder = None
+            self.density_decoder = None
 
     def capture(self):
         return (
@@ -140,18 +150,19 @@ class GaussianModel:
     def get_density(self):
         base_density = self.density_activation(self._density)
 
-        # 🎯 K-Planes 特征调制（修复：让 K-Planes 参与渲染）
-        if self.enable_kplanes and self.kplanes_encoder is not None:
-            kplanes_feat = self.get_kplanes_features()  # [N, feature_dim*3]
+        # 🎯 K-Planes 特征调制（X²-Gaussian 多头解码器架构）
+        if self.enable_kplanes and self.kplanes_encoder is not None and self.density_decoder is not None:
+            kplanes_feat = self.get_kplanes_features()  # [N, 96]
 
-            # 简单策略：特征均值作为调制因子
-            # 将 96 维特征压缩为调制系数
-            modulation = kplanes_feat.mean(dim=-1, keepdim=True)  # [N, 1]
-            modulation = torch.sigmoid(modulation)  # 归一化到 [0, 1]
+            # 使用 MLP Decoder 将 96 维特征映射到 density offset
+            density_offset = self.density_decoder(kplanes_feat)  # [N, 1]
 
-            # 保守调制：范围 [0.8, 1.2]（避免破坏 baseline）
-            # base_density * (0.8 + 0.4 * modulation)
-            base_density = base_density * (0.8 + 0.4 * modulation)
+            # 使用 exp 调制（对齐 X²-Gaussian deformation 风格）
+            # clamp 防止数值溢出：exp(-5) ≈ 0.0067, exp(5) ≈ 148.4
+            modulation = torch.exp(torch.clamp(density_offset, -5.0, 5.0))
+
+            # 调制 base_density
+            base_density = base_density * modulation
 
         return base_density
 
@@ -271,6 +282,14 @@ class GaussianModel:
                 "name": "kplanes"
             })
 
+            # 🎯 K-Planes Decoder 参数组（与 kplanes 使用相同学习率）
+            if self.density_decoder is not None:
+                l.append({
+                    "params": self.density_decoder.parameters(),
+                    "lr": kplanes_lr_init,
+                    "name": "kplanes_decoder"
+                })
+
         self.optimizer = torch.optim.Adam(l, lr=0.0, eps=1e-15)
         self.xyz_scheduler_args = get_expon_lr_func(
             lr_init=training_args.position_lr_init * self.spatial_lr_scale,
@@ -320,6 +339,11 @@ class GaussianModel:
                 lr = self.rotation_scheduler_args(iteration)
                 param_group["lr"] = lr
             if param_group["name"] == "kplanes":
+                if self.enable_kplanes and hasattr(self, 'kplanes_scheduler_args'):
+                    lr = self.kplanes_scheduler_args(iteration)
+                    param_group["lr"] = lr
+            # 🎯 K-Planes Decoder 学习率（与 kplanes 保持一致）
+            if param_group["name"] == "kplanes_decoder":
                 if self.enable_kplanes and hasattr(self, 'kplanes_scheduler_args'):
                     lr = self.kplanes_scheduler_args(iteration)
                     param_group["lr"] = lr
