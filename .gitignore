@@ -20,3 +20,4 @@ r2_gaussian/submodules/simple-knn
 nohup.out
 logs/
 node_modules/
+.claude/mcp.json
