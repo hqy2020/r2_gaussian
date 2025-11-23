@@ -26,7 +26,7 @@ from r2_gaussian.utils.general_utils import safe_state
 from r2_gaussian.utils.cfg_utils import load_config
 from r2_gaussian.utils.log_utils import prepare_output_and_logger
 from r2_gaussian.dataset import Scene
-from r2_gaussian.utils.loss_utils import l1_loss, ssim, tv_3d_loss
+from r2_gaussian.utils.loss_utils import l1_loss, ssim, tv_3d_loss, compute_graph_laplacian_loss
 from r2_gaussian.utils.image_utils import metric_vol, metric_proj
 from r2_gaussian.utils.plot_utils import show_two_slice
 
@@ -76,6 +76,28 @@ def training(
         (model_params, first_iter) = torch.load(checkpoint)
         gaussians.restore(model_params, opt)
         print(f"Load checkpoint {osp.basename(checkpoint)}.")
+
+    # 🌟 [GR-Gaussian] 初始化 Graph 结构
+    gr_graph = None
+    if dataset.enable_graph_laplacian:
+        from r2_gaussian.utils.graph_utils import GaussianGraph
+
+        gr_graph = GaussianGraph(
+            k=dataset.graph_k,
+            device='cuda',
+            sigma=None  # 自动估计
+        )
+
+        # 初始化图结构
+        with torch.no_grad():
+            xyz = gaussians.get_xyz.detach()
+            gr_graph.build_knn_graph(xyz)
+            gr_graph.compute_edge_weights(xyz)
+
+        print(f"✅ [GR-Gaussian] Graph initialized: {gr_graph.num_nodes} nodes, "
+              f"{gr_graph.num_edges} edges, k={dataset.graph_k}")
+    else:
+        print("ℹ️ [R²-Gaussian] Graph Laplacian disabled (baseline mode)")
 
     # Set up loss
     use_tv = opt.lambda_tv > 0
@@ -141,6 +163,16 @@ def training(
             loss["tv"] = loss_tv
             loss["total"] = loss["total"] + opt.lambda_tv * loss_tv
 
+        # 🌟 [GR-Gaussian] Graph Laplacian 正则化损失
+        if dataset.enable_graph_laplacian and gr_graph is not None:
+            loss_graph_lap = compute_graph_laplacian_loss(
+                gaussians,
+                gr_graph,
+                lambda_lap=dataset.graph_lambda_lap
+            )
+            loss["graph_lap"] = loss_graph_lap
+            loss["total"] = loss["total"] + loss_graph_lap
+
         loss["total"].backward()
 
         iter_end.record()
@@ -166,6 +198,17 @@ def training(
                         densify_scale_threshold,
                         bbox,
                     )
+
+                    # 🌟 [GR-Gaussian] Densification 后更新图结构
+                    if dataset.enable_graph_laplacian and gr_graph is not None:
+                        if iteration % dataset.graph_update_interval == 0:
+                            xyz = gaussians.get_xyz.detach()
+                            gr_graph.build_knn_graph(xyz)
+                            gr_graph.compute_edge_weights(xyz)
+                            if iteration % 1000 == 0:  # 每1000步打印一次
+                                print(f"[GR] Iteration {iteration}: Graph updated - "
+                                      f"{gr_graph.num_nodes} nodes, {gr_graph.num_edges} edges")
+
             if gaussians.get_density.shape[0] == 0:
                 raise ValueError(
                     "No Gaussian left. Change adaptive control hyperparameters!"

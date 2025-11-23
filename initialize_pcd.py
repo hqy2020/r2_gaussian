@@ -30,6 +30,11 @@ class InitParams(ParamGroup):
         self.density_thresh = 0.05
         self.density_rescale = 0.15
         self.random_density_max = 1.0  # Parameters for random mode
+
+        # 🌟 GR-Gaussian De-Init 参数
+        self.enable_denoise = False  # 是否启用降噪初始化
+        self.denoise_sigma = 3.0  # 高斯滤波标准差（论文推荐值）
+
         super().__init__(parser, "Initialization Parameters")
 
 
@@ -62,6 +67,15 @@ def init_pcd(
             f"Initialize point clouds with the volume reconstructed from {recon_method}."
         )
         vol = recon_volume(projs, angles, copy.deepcopy(geo), recon_method)
+
+        # 🌟 [GR-Gaussian De-Init] 高斯滤波降噪
+        if args.enable_denoise:
+            from scipy.ndimage import gaussian_filter
+            print(f"[De-Init] Applying Gaussian filter with sigma={args.denoise_sigma}")
+            vol_before = vol.copy()
+            vol = gaussian_filter(vol, sigma=args.denoise_sigma)
+            noise_reduced = np.abs(vol - vol_before).mean()
+            print(f"[De-Init] Noise reduced: {noise_reduced:.6f} (mean absolute change)")
         # show_one_volume(vol)
 
         density_mask = vol > args.density_thresh
