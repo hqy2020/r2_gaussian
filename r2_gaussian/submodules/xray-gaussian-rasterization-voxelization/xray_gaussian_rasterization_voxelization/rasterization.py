@@ -31,7 +31,12 @@ def rasterize_gaussians(
     rotations,
     cov3Ds_precomp,
     raster_settings,
+    nus=None,  # 🎯 [SSS] Student's t degrees of freedom
 ):
+    # 🎯 [SSS] If nus is None, use empty tensor (Gaussian mode)
+    if nus is None:
+        nus = torch.Tensor([])
+
     return _RasterizeGaussians.apply(
         means3D,
         means2D,
@@ -40,6 +45,7 @@ def rasterize_gaussians(
         rotations,
         cov3Ds_precomp,
         raster_settings,
+        nus,  # 🎯 [SSS] Pass nus to autograd function
     )
 
 
@@ -54,6 +60,7 @@ class _RasterizeGaussians(torch.autograd.Function):
         rotations,
         cov3Ds_precomp,
         raster_settings,
+        nus,  # 🎯 [SSS] Student's t degrees of freedom
     ):
 
         # Restructure arguments the way that the C++ lib expects them
@@ -74,6 +81,7 @@ class _RasterizeGaussians(torch.autograd.Function):
             raster_settings.prefiltered,
             raster_settings.mode,
             raster_settings.debug,
+            nus,  # 🎯 [SSS] Add nus to C++ args
         )
 
         # Invoke C++/CUDA rasterizer
@@ -109,6 +117,7 @@ class _RasterizeGaussians(torch.autograd.Function):
             geomBuffer,
             binningBuffer,
             imgBuffer,
+            nus,  # 🎯 [SSS] Save nus for backward
         )
         return color, radii
 
@@ -128,6 +137,7 @@ class _RasterizeGaussians(torch.autograd.Function):
             geomBuffer,
             binningBuffer,
             imgBuffer,
+            nus,  # 🎯 [SSS] Restore nus from saved tensors
         ) = ctx.saved_tensors
 
         # Restructure args as C++ method expects them
@@ -150,6 +160,7 @@ class _RasterizeGaussians(torch.autograd.Function):
             imgBuffer,
             mode,
             raster_settings.debug,
+            nus,  # 🎯 [SSS] Add nus to backward args
         )
 
         # Compute gradients for relevant tensors by invoking backward method
@@ -166,6 +177,7 @@ class _RasterizeGaussians(torch.autograd.Function):
                     grad_cov3Ds_precomp,
                     grad_scales,
                     grad_rotations,
+                    grad_nus,  # 🎯 [SSS] Receive nu gradient
                 ) = _C.rasterize_gaussians_backward(*args)
             except Exception as ex:
                 torch.save(cpu_args, "snapshot_bw.dump")
@@ -182,6 +194,7 @@ class _RasterizeGaussians(torch.autograd.Function):
                 grad_cov3Ds_precomp,
                 grad_scales,
                 grad_rotations,
+                grad_nus,  # 🎯 [SSS] Receive nu gradient
             ) = _C.rasterize_gaussians_backward(*args)
         grads = (
             grad_means3D,
@@ -190,7 +203,8 @@ class _RasterizeGaussians(torch.autograd.Function):
             grad_scales,
             grad_rotations,
             grad_cov3Ds_precomp,
-            None,
+            None,  # raster_settings
+            grad_nus,  # 🎯 [SSS] Return nu gradient
         )
 
         return grads
@@ -234,6 +248,7 @@ class GaussianRasterizer(nn.Module):
         scales=None,
         rotations=None,
         cov3D_precomp=None,
+        nus=None,  # 🎯 [SSS] Student's t degrees of freedom
     ):
 
         raster_settings = self.raster_settings
@@ -261,4 +276,5 @@ class GaussianRasterizer(nn.Module):
             rotations,
             cov3D_precomp,
             raster_settings,
+            nus,  # 🎯 [SSS] Pass nus to rasterizer
         )

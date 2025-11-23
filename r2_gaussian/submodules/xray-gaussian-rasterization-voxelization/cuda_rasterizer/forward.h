@@ -56,7 +56,8 @@ namespace FORWARD
 		const float4* conic_opacity,
 		const float* mus,
 		uint32_t* n_contrib,
-		float* out_color);
+		float* out_color,
+		const float* nus = nullptr);  // 🎯 [SSS] Student's t degrees of freedom
 }
 
 

@@ -68,7 +68,16 @@ def training(
     )
 
     # Set up Gaussians
-    gaussians = GaussianModel(scale_bound)
+    # 🎯 [SSS-Official] 支持 Student's t 分布模式
+    use_student_t = getattr(opt, 'enable_sss', False)  # 从参数读取SSS开关
+    if use_student_t:
+        print("🎓 [SSS-Official] Using Student's t-distribution model")
+        print("   • Opacity activation: torch.tanh, range [-1, 1]")
+        print("   • Component recycling: enabled")
+    else:
+        print("📦 [R²-Gaussian] Using standard Gaussian model")
+
+    gaussians = GaussianModel(scale_bound, use_student_t=use_student_t)
     initialize_gaussian(gaussians, dataset, None)
     scene.gaussians = gaussians
     gaussians.training_setup(opt)
@@ -141,6 +150,32 @@ def training(
             loss["tv"] = loss_tv
             loss["total"] = loss["total"] + opt.lambda_tv * loss_tv
 
+        # 🎯 [SSS-Official] Balance Loss: L1 正则化
+        # ⚠️  注意：由于尚未实现Student's t分布渲染，暂时禁用Balance Loss
+        # 当前高斯渲染下，L1正则化会将所有opacity压缩到0，破坏训练
+        if use_student_t:
+            opacity = gaussians.get_opacity
+            opacity_reg_weight = getattr(opt, 'opacity_reg_weight', 0.0)  # 暂时禁用 (0.0)
+
+            # 仅用于监控，不加入loss
+            if opacity_reg_weight > 0:
+                balance_loss = opacity_reg_weight * torch.abs(opacity).mean()
+                loss["balance"] = balance_loss
+                loss["total"] = loss["total"] + balance_loss
+            else:
+                balance_loss = torch.tensor(0.0)
+
+            # 简化日志（每 2000 次迭代）
+            if iteration % 2000 == 0:
+                pos_ratio = (opacity > 0).float().mean()
+                neg_ratio = (opacity < 0).float().mean()
+                opacity_mean = torch.abs(opacity).mean()
+                print(f"🎯 [SSS-Official] Iter {iteration}: "
+                      f"Opacity [{opacity.min().item():.3f}, {opacity.max().item():.3f}], "
+                      f"Mean |opacity|: {opacity_mean.item():.3f}, "
+                      f"Balance: {pos_ratio.item()*100:.1f}% pos / {neg_ratio.item()*100:.1f}% neg"
+                      + (f", Balance Loss: {balance_loss.item():.6f}" if opacity_reg_weight > 0 else " (Balance Loss: DISABLED)"))
+
         loss["total"].backward()
 
         iter_end.record()
@@ -157,15 +192,27 @@ def training(
                     iteration > opt.densify_from_iter
                     and iteration % opt.densification_interval == 0
                 ):
-                    gaussians.densify_and_prune(
-                        opt.densify_grad_threshold,
-                        opt.density_min_threshold,
-                        opt.max_screen_size,
-                        max_scale,
-                        opt.max_num_gaussians,
-                        densify_scale_threshold,
-                        bbox,
-                    )
+                    # 🎯 [SSS-Official] 组件回收机制（替代传统 densification）
+                    if use_student_t:
+                        if iteration % 2000 == 0:  # 每2000次迭代打印一次
+                            print(f"♻️ [SSS-Recycle] Iter {iteration}: Using component recycling (official SSS)")
+                        opacity_threshold = getattr(opt, 'opacity_threshold', 0.005)
+                        max_recycle_ratio = getattr(opt, 'max_recycle_ratio', 0.05)
+                        gaussians.recycle_components(
+                            opacity_threshold=opacity_threshold,
+                            max_recycle_ratio=max_recycle_ratio
+                        )
+                    else:
+                        # Baseline: 传统 densification
+                        gaussians.densify_and_prune(
+                            opt.densify_grad_threshold,
+                            opt.density_min_threshold,
+                            opt.max_screen_size,
+                            max_scale,
+                            opt.max_num_gaussians,
+                            densify_scale_threshold,
+                            bbox,
+                        )
             if gaussians.get_density.shape[0] == 0:
                 raise ValueError(
                     "No Gaussian left. Change adaptive control hyperparameters!"

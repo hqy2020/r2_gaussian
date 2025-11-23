@@ -53,7 +53,8 @@ namespace CudaRasterizer
 			const int mode,
 			float* out_color,
 			int* radii = nullptr,
-			bool debug = false);
+			bool debug = false,
+			const float* nus = nullptr);  // 🎯 [SSS] Student's t degrees of freedom
 
 		static void backward(
 			const int P, int R,
@@ -81,7 +82,9 @@ namespace CudaRasterizer
 			float* dL_dscale,
 			float* dL_drot,
 			const int mode,
-			bool debug);
+			bool debug,
+			const float* nus = nullptr,  // 🎯 [SSS] Student's t degrees of freedom
+			float* dL_dnus = nullptr);    // 🎯 [SSS] Nu gradient output
 	};
 
 };

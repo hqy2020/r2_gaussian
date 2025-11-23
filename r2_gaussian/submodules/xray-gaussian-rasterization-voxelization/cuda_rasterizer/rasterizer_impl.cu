@@ -197,7 +197,7 @@ int CudaRasterizer::Rasterizer::forward(
 	std::function<char* (size_t)> geometryBuffer,
 	std::function<char* (size_t)> binningBuffer,
 	std::function<char* (size_t)> imageBuffer,
-	const int P, 
+	const int P,
 	const int width, int height,
 	const float* means3D,
 	const float* opacities,
@@ -213,7 +213,8 @@ int CudaRasterizer::Rasterizer::forward(
 	const int mode,
 	float* out_color,
 	int* radii,
-	bool debug)
+	bool debug,
+	const float* nus)  // 🎯 [SSS] Student's t degrees of freedom
 {	
 
 	const float focal_y = height / (2.0f * tan_fovy);  // tan_fovy=1 when parallel
@@ -325,7 +326,8 @@ int CudaRasterizer::Rasterizer::forward(
 		geomState.conic_opacity,
 		geomState.mus,
 		imgState.n_contrib,
-		out_color), debug)
+		out_color,
+		nus), debug)  // 🎯 [SSS] Pass nus to render kernel
 
 	return num_rendered;
 }
@@ -333,7 +335,7 @@ int CudaRasterizer::Rasterizer::forward(
 // Produce necessary gradients for optimization, corresponding
 // to forward render pass
 void CudaRasterizer::Rasterizer::backward(
-	const int P, int R, 
+	const int P, int R,
 	const int width, int height,
 	const float* means3D,
 	const float* scales,
@@ -358,7 +360,9 @@ void CudaRasterizer::Rasterizer::backward(
 	float* dL_dscale,
 	float* dL_drot,
 	const int mode,
-	bool debug)
+	bool debug,
+	const float* nus,      // 🎯 [SSS] Student's t degrees of freedom
+	float* dL_dnus)        // 🎯 [SSS] Nu gradient output
 {
 	GeometryState geomState = GeometryState::fromChunk(geom_buffer, P);
 	BinningState binningState = BinningState::fromChunk(binning_buffer, R);
@@ -392,7 +396,9 @@ void CudaRasterizer::Rasterizer::backward(
 		(float3*)dL_dmean2D,
 		(float4*)dL_dconic,
 		dL_dopacity,
-		dL_dmu), debug)
+		dL_dmu,
+		nus,      // 🎯 [SSS] Pass nus to backward render
+		dL_dnus), debug)  // 🎯 [SSS] Pass grad_nus pointer
 
 	// Take care of the rest of preprocessing. Was the precomputed covariance
 	// given to us or a scales/rot pair? If precomputed, pass that. If not,

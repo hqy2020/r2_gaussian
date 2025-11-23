@@ -141,6 +141,9 @@ def render(
         scales = pc.get_scaling
         rotations = pc.get_rotation
 
+    # 🎯 [SSS] Get Student's t degrees of freedom (nus)
+    nus = pc.get_nu
+
     # Rasterize visible Gaussians to image, obtain their radii (on screen).
     rendered_image, radii = rasterizer(
         means3D=means3D,
@@ -149,6 +152,7 @@ def render(
         scales=scales,
         rotations=rotations,
         cov3D_precomp=cov3D_precomp,
+        nus=nus,  # 🎯 [SSS] Pass Student's t degrees of freedom
     )
     # Those Gaussians that were frustum culled or had a radius of 0 were not visible.
     # They will be excluded from value updates used in the splitting criteria.

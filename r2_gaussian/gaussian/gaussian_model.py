@@ -63,7 +63,26 @@ class GaussianModel:
 
         self.rotation_activation = torch.nn.functional.normalize
 
-    def __init__(self, scale_bound=None):
+        # 🎯 [SSS-Official] Opacity 激活函数
+        if self.use_student_t:
+            # SSS 模式：使用 tanh 激活函数，输出范围 [-1, 1]
+            self.opacity_activation = torch.tanh
+            self.opacity_inverse_activation = lambda x: 0.5 * torch.log(
+                (1 + torch.clamp(x, -0.99, 0.99)) / (1 - torch.clamp(x, -0.99, 0.99))
+            )  # arctanh with numerical stability
+
+            # Nu (degrees of freedom) 激活函数：确保 nu > 0
+            self.nu_activation = lambda x: torch.nn.functional.softplus(x) + 1.0
+            self.nu_inverse_activation = lambda x: inverse_softplus(torch.clamp(x - 1.0, min=1e-5))
+
+    def __init__(self, scale_bound=None, use_student_t=False):
+        """
+        初始化 Gaussian Model
+
+        Args:
+            scale_bound: 尺度边界 (min, max)，用于限制高斯尺度范围
+            use_student_t: 是否使用 Student's t 分布 (SSS模式)
+        """
         self._xyz = torch.empty(0)  # world coordinate
         self._scaling = torch.empty(0)  # 3d scale
         self._rotation = torch.empty(0)  # rotation expressed in quaternions
@@ -74,6 +93,13 @@ class GaussianModel:
         self.optimizer = None
         self.spatial_lr_scale = 0
         self.scale_bound = scale_bound
+
+        # 🎯 [SSS] Student's t 分布模式
+        self.use_student_t = use_student_t
+        if use_student_t:
+            self._opacity = torch.empty(0)  # Signed opacity [-1, 1] for splatting/scooping
+            self._nu = torch.empty(0)  # Student's t degrees of freedom
+
         self.setup_functions()
 
     def capture(self):
@@ -125,6 +151,38 @@ class GaussianModel:
     def get_density(self):
         return self.density_activation(self._density)
 
+    @property
+    def get_opacity(self):
+        """
+        获取 opacity 值
+
+        Returns:
+            torch.Tensor: 
+                - SSS 模式: Signed opacity in [-1, 1] (经过 tanh 激活)
+                - Baseline 模式: Standard opacity in [0, 1] (基于 density)
+        """
+        if self.use_student_t:
+            opacity = self.opacity_activation(self._opacity)
+            # 添加 clamp 防止数值不稳定
+            return torch.clamp(opacity, -1.0 + 1e-5, 1.0 - 1e-5)
+        else:
+            # Baseline: 使用 density 作为 opacity
+            return torch.sigmoid(self._density)
+
+    @property
+    def get_nu(self):
+        """
+        获取 Student's t 分布的自由度参数
+
+        Returns:
+            torch.Tensor: Nu (degrees of freedom), 范围 [1, +inf)
+        """
+        if self.use_student_t and hasattr(self, '_nu'):
+            return self.nu_activation(self._nu)
+        else:
+            # 返回一个较大的值，使其接近 Gaussian 分布
+            return torch.ones_like(self._density) * 100.0
+
     def get_covariance(self, scaling_modifier=1):
         return self.covariance_activation(
             self.get_scaling, scaling_modifier, self._rotation
@@ -162,6 +220,22 @@ class GaussianModel:
         self._rotation = nn.Parameter(rots.requires_grad_(True))
         self._density = nn.Parameter(fused_density.requires_grad_(True))
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
+
+        # 🎯 [SSS] 初始化 Student's t 分布参数
+        if self.use_student_t:
+            n_points = fused_point_cloud.shape[0]
+
+            # Opacity: 初始化为 0.5（中性值，论文策略）
+            opacity_init = torch.ones(n_points, 1, device="cuda") * 0.5
+            self._opacity = nn.Parameter(
+                self.opacity_inverse_activation(opacity_init).requires_grad_(True)
+            )
+
+            # Nu (degrees of freedom): 初始化为 10（论文默认值）
+            nu_init = torch.ones(n_points, 1, device="cuda") * 10.0
+            self._nu = nn.Parameter(
+                self.nu_inverse_activation(nu_init).requires_grad_(True)
+            )
 
         #! Generate one gaussian for debugging purpose
         if False:
@@ -212,6 +286,19 @@ class GaussianModel:
             },
         ]
 
+        # 🎯 [SSS-Official] 添加 Student's t 分布参数到优化器
+        if self.use_student_t:
+            l.append({
+                "params": [self._opacity],
+                "lr": getattr(training_args, 'opacity_lr_init', 0.005) * self.spatial_lr_scale,
+                "name": "opacity",
+            })
+            l.append({
+                "params": [self._nu],
+                "lr": getattr(training_args, 'nu_lr_init', 0.001) * self.spatial_lr_scale,
+                "name": "nu",
+            })
+
         self.optimizer = torch.optim.Adam(l, lr=0.0, eps=1e-15)
         self.xyz_scheduler_args = get_expon_lr_func(
             lr_init=training_args.position_lr_init * self.spatial_lr_scale,
@@ -234,6 +321,19 @@ class GaussianModel:
             max_steps=training_args.rotation_lr_max_steps,
         )
 
+        # 🎯 [SSS-Official] 添加 SSS 参数的学习率调度器
+        if self.use_student_t:
+            self.opacity_scheduler_args = get_expon_lr_func(
+                lr_init=getattr(training_args, 'opacity_lr_init', 0.005) * self.spatial_lr_scale,
+                lr_final=getattr(training_args, 'opacity_lr_final', 0.0005) * self.spatial_lr_scale,
+                max_steps=training_args.position_lr_max_steps,
+            )
+            self.nu_scheduler_args = get_expon_lr_func(
+                lr_init=getattr(training_args, 'nu_lr_init', 0.001) * self.spatial_lr_scale,
+                lr_final=getattr(training_args, 'nu_lr_final', 0.0001) * self.spatial_lr_scale,
+                max_steps=training_args.position_lr_max_steps,
+            )
+
     def update_learning_rate(self, iteration):
         """Learning rate scheduling per step"""
         for param_group in self.optimizer.param_groups:
@@ -249,6 +349,14 @@ class GaussianModel:
             if param_group["name"] == "rotation":
                 lr = self.rotation_scheduler_args(iteration)
                 param_group["lr"] = lr
+            # 🎯 [SSS-Official] 更新 SSS 参数的学习率
+            if self.use_student_t:
+                if param_group["name"] == "opacity":
+                    lr = self.opacity_scheduler_args(iteration)
+                    param_group["lr"] = lr
+                if param_group["name"] == "nu":
+                    lr = self.nu_scheduler_args(iteration)
+                    param_group["lr"] = lr
 
     def construct_list_of_attributes(self):
         l = ["x", "y", "z", "nx", "ny", "nz"]
@@ -276,7 +384,14 @@ class GaussianModel:
             "scale": scale,
             "rotation": rotation,
             "scale_bound": self.scale_bound,
+            "use_student_t": self.use_student_t,  # 🎯 [SSS] 保存模式标志
         }
+
+        # 🎯 [SSS] 保存 Student's t 分布参数
+        if self.use_student_t:
+            out["opacity"] = t2a(self._opacity)
+            out["nu"] = t2a(self._nu)
+
         with open(path, "wb") as f:
             pickle.dump(out, f, pickle.HIGHEST_PROTOCOL)
 
@@ -315,6 +430,21 @@ class GaussianModel:
             ).requires_grad_(True)
         )
         self.scale_bound = data["scale_bound"]
+
+        # 🎯 [SSS] 加载 Student's t 分布参数
+        self.use_student_t = data.get("use_student_t", False)
+        if self.use_student_t:
+            self._opacity = nn.Parameter(
+                torch.tensor(
+                    data["opacity"], dtype=torch.float, device="cuda"
+                ).requires_grad_(True)
+            )
+            self._nu = nn.Parameter(
+                torch.tensor(
+                    data["nu"], dtype=torch.float, device="cuda"
+                ).requires_grad_(True)
+            )
+
         self.setup_functions()  # Reset activation functions
 
     def replace_tensor_to_optimizer(self, tensor, name):

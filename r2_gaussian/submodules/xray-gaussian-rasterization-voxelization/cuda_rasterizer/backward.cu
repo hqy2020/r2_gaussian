@@ -458,7 +458,9 @@ renderCUDA(
 	float3* __restrict__ dL_dmean2D,
 	float4* __restrict__ dL_dconic2D,
 	float* __restrict__ dL_dopacity,
-	float* __restrict__ dL_dmu)
+	float* __restrict__ dL_dmu,
+	const float* __restrict__ nus,     // 🎯 [SSS] Student's t degrees of freedom
+	float* __restrict__ dL_dnus)        // 🎯 [SSS] Nu gradient output
 {	
 	// We rasterize again. Compute necessary block info.
 	auto block = cg::this_thread_block();
@@ -481,6 +483,7 @@ renderCUDA(
 	__shared__ float2 collected_xy[BLOCK_SIZE];
 	__shared__ float4 collected_conic_opacity[BLOCK_SIZE];
 	__shared__ float collected_mu[BLOCK_SIZE];
+	__shared__ float collected_nu[BLOCK_SIZE];  // 🎯 [SSS] Nu values for Student's t
 
 	// We start from the back. The ID of the last contributing
 	// Gaussian is known from each pixel from the forward.
@@ -511,6 +514,8 @@ renderCUDA(
 			collected_xy[block.thread_rank()] = points_xy_image[coll_id];
 			collected_conic_opacity[block.thread_rank()] = conic_opacity[coll_id];
 			collected_mu[block.thread_rank()] = mus[coll_id];
+			// 🎯 [SSS] Collect nu values (use 0.0 for Gaussian mode when nus == nullptr)
+			collected_nu[block.thread_rank()] = (nus != nullptr) ? nus[coll_id] : 0.0f;
 		}
 		block.sync();
 
@@ -532,11 +537,39 @@ renderCUDA(
 			if (power > 0.0f)
 				continue;
 
-			const float G = exp(power);
+			// 🎯 [SSS] Compute alpha with Student's t or Gaussian distribution
+			float G, alpha, dL_dG;
+			float nu = collected_nu[j];
+			const int global_id = collected_id[j];
 
-			// const float alpha = min(1.0f, con_o.w * mu * G);
-			const float alpha = con_o.w * mu * G;
-			if (alpha <0.00001f)
+			if (nu > 0.0f && nus != nullptr)
+			{
+				// Student's t distribution mode
+				float mahalanobis_sq = -2.0f * power;
+
+				if (nu > 100.0f)
+				{
+					// Large nu: approaches Gaussian
+					G = exp(power);
+					alpha = con_o.w * mu * G;
+				}
+				else
+				{
+					// Student's t kernel: (1 + r²/ν)^(-(ν+2)/2)
+					float u = 1.0f + mahalanobis_sq / nu;
+					float t_kernel = powf(u, -(nu + 2.0f) / 2.0f);
+					G = t_kernel;
+					alpha = con_o.w * mu * t_kernel;
+				}
+			}
+			else
+			{
+				// Gaussian mode (original behavior)
+				G = exp(power);
+				alpha = con_o.w * mu * G;
+			}
+
+			if (alpha < 0.00001f)
 				continue;
 
 			// Propagate gradients to per-Gaussian colors and keep
@@ -544,15 +577,31 @@ renderCUDA(
 			// pair).
 			// Since we are simple sum, dchannel_dalpha = 1.0
 			float dL_dalpha = 0.0f;
-			const int global_id = collected_id[j];
 			for (int ch = 0; ch < C; ch++)
 			{
 				const float dL_dchannel = dL_dpixel[ch];
 				dL_dalpha += 1.f * dL_dchannel;
 			}
 
+			// Compute gradient w.r.t. G (kernel value)
+			dL_dG = con_o.w * mu * dL_dalpha;
+
+			// 🎯 [SSS] Compute gradient w.r.t. nu (if in Student's t mode)
+			if (nu > 0.0f && nus != nullptr && nu <= 100.0f && dL_dnus != nullptr)
+			{
+				// For Student's t: G = (1 + r²/ν)^(-(ν+2)/2)
+				// Let u = 1 + r²/ν,  p = -(ν+2)/2
+				// ∂G/∂ν = G * [∂p/∂ν * ln(u) + p * ∂u/∂ν / u]
+				//       = G * [-ln(u)/2 + (ν+2)*r² / (2*ν²*u)]
+				float mahalanobis_sq = -2.0f * power;
+				float u = 1.0f + mahalanobis_sq / nu;
+				float ln_u = logf(u);
+				float dG_dnu = G * (-ln_u / 2.0f + (nu + 2.0f) * mahalanobis_sq / (2.0f * nu * nu * u));
+				float dL_dnu = con_o.w * mu * dL_dalpha * dG_dnu;
+				atomicAdd(&(dL_dnus[global_id]), dL_dnu);
+			}
+
 			// Helpful reusable temporary variables
-			const float dL_dG = con_o.w * mu * dL_dalpha;
 			const float gdx = G * d.x;
 			const float gdy = G * d.y;
 			const float dG_ddelx = -gdx * con_o.x - gdy * con_o.y;
@@ -649,8 +698,9 @@ void BACKWARD::render(
 	float3* dL_dmean2D,
 	float4* dL_dconic2D,
 	float* dL_dopacity,
-	float* dL_dmu
-	)
+	float* dL_dmu,
+	const float* nus,     // 🎯 [SSS] Student's t degrees of freedom
+	float* dL_dnus)        // 🎯 [SSS] Nu gradient output
 {
 	renderCUDA<NUM_CHANNELS> << <grid, block >> >(
 		ranges,
@@ -664,7 +714,8 @@ void BACKWARD::render(
 		dL_dmean2D,
 		dL_dconic2D,
 		dL_dopacity,
-		dL_dmu
-		);
+		dL_dmu,
+		nus,      // 🎯 [SSS] Pass nus to backward render kernel
+		dL_dnus); // 🎯 [SSS] Pass grad_nus pointer to kernel
 }
 

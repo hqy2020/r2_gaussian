@@ -301,7 +301,8 @@ renderCUDA(
 	const float4* __restrict__ conic_opacity,
 	const float* __restrict__ mus,
 	uint32_t* __restrict__ n_contrib,
-	float* __restrict__ out_color)
+	float* __restrict__ out_color,
+	const float* __restrict__ nus)  // 🎯 [SSS] Student's t degrees of freedom
 {
 	// Identify current tile and associated min/max pixel range.
 	auto block = cg::this_thread_block();
@@ -327,6 +328,7 @@ renderCUDA(
 	__shared__ float2 collected_xy[BLOCK_SIZE];
 	__shared__ float4 collected_conic_opacity[BLOCK_SIZE];
 	__shared__ float collected_mu[BLOCK_SIZE];
+	__shared__ float collected_nu[BLOCK_SIZE];  // 🎯 [SSS] Nu values for Student's t
 
 	// Initialize helper variables
 	uint32_t contributor = 0;
@@ -350,6 +352,8 @@ renderCUDA(
 			collected_xy[block.thread_rank()] = points_xy_image[coll_id];
 			collected_conic_opacity[block.thread_rank()] = conic_opacity[coll_id];
 			collected_mu[block.thread_rank()] = mus[coll_id];
+			// 🎯 [SSS] Collect nu values (use 0.0 for Gaussian mode when nus == nullptr)
+			collected_nu[block.thread_rank()] = (nus != nullptr) ? nus[coll_id] : 0.0f;
 		}
 		block.sync();
 
@@ -359,7 +363,7 @@ renderCUDA(
 			// Keep track of current position in range
 			contributor++;
 
-			// Resample using conic matrix (cf. "Surface 
+			// Resample using conic matrix (cf. "Surface
 			// Splatting" by Zwicker et al., 2001)
 			float2 xy = collected_xy[j];
 			float2 d = { xy.x - pixf.x, xy.y - pixf.y };
@@ -369,8 +373,36 @@ renderCUDA(
 			if (power > 0.0f)
 				continue;
 
-			//! We compute mu to consider integration.
-			const float alpha = con_o.w * mu * exp(power);
+			//! Compute alpha with Student's t or Gaussian distribution
+			float alpha;
+			float nu = collected_nu[j];
+
+			// 🎯 [SSS] Student's t distribution when nu > 0, otherwise Gaussian
+			if (nu > 0.0f && nus != nullptr)
+			{
+				// Student's t distribution: (1 + r²/ν)^(-(ν+2)/2)
+				// power = -0.5 * r², so r² = -2 * power (Mahalanobis distance squared)
+				float mahalanobis_sq = -2.0f * power;
+
+				// For numerical stability, handle large nu (approaches Gaussian)
+				if (nu > 100.0f)
+				{
+					// When nu is large, Student's t → Gaussian
+					alpha = con_o.w * mu * exp(power);
+				}
+				else
+				{
+					// Student's t kernel: (1 + r²/ν)^(-(ν+2)/2)
+					float t_kernel = powf(1.0f + mahalanobis_sq / nu, -(nu + 2.0f) / 2.0f);
+					alpha = con_o.w * mu * t_kernel;
+				}
+			}
+			else
+			{
+				// Gaussian mode (original behavior)
+				alpha = con_o.w * mu * exp(power);
+			}
+
 			if (alpha < 0.00001f)
 				continue;
 		
@@ -404,7 +436,8 @@ void FORWARD::render(
 	const float4* conic_opacity,
 	const float* mus,
 	uint32_t* n_contrib,
-	float* out_color)
+	float* out_color,
+	const float* nus)  // 🎯 [SSS] Student's t degrees of freedom
 {
 	renderCUDA<NUM_CHANNELS> << <grid, block >> > (
 		ranges,
@@ -414,7 +447,8 @@ void FORWARD::render(
 		conic_opacity,
 		mus,
 		n_contrib,
-		out_color);
+		out_color,
+		nus);  // 🎯 [SSS] Pass nus to kernel
 }
 
 

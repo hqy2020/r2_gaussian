@@ -149,7 +149,17 @@ class OptimizationParams(ParamGroup):
         self.depth_pseudo_weight = 0
         self.feature_lr = 0.0025
         self.opacity_lr = 0.05
-        
+
+        # 🎯 [SSS-Official] Student's t Splatting and Scooping 参数
+        self.enable_sss = False  # 是否启用 SSS (Student's t 分布模式)
+        self.nu_lr_init = 0.001  # Nu (degrees of freedom) 学习率
+        self.nu_lr_final = 0.0001  # Nu 最终学习率
+        self.opacity_lr_init = 0.005  # SSS模式下的 Opacity 学习率（官方推荐）
+        self.opacity_lr_final = 0.0005  # SSS模式下的 Opacity 最终学习率
+        self.opacity_reg_weight = 0.0  # Balance Loss 权重（L1正则化）- 暂时禁用，等Student's t渲染实现后再启用
+        self.opacity_threshold = 0.005  # 组件回收：低opacity阈值
+        self.max_recycle_ratio = 0.05  # 组件回收：最大回收比例（5%）
+
         super().__init__(parser, "Optimization Parameters")
 
 

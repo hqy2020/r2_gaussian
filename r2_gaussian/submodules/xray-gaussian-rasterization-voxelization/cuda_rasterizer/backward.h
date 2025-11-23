@@ -33,7 +33,9 @@ namespace BACKWARD
 		float3* dL_dmean2D,
 		float4* dL_dconic2D,
 		float* dL_dopacity,
-		float* dL_dmu);
+		float* dL_dmu,
+		const float* nus = nullptr,     // 🎯 [SSS] Student's t degrees of freedom
+		float* dL_dnus = nullptr);       // 🎯 [SSS] Nu gradient output
 
 	void preprocess(
 		int P,

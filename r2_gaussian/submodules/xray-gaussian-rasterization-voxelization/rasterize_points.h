@@ -25,16 +25,17 @@ RasterizeGaussiansCUDA(
 	const torch::Tensor& cov3D_precomp,
 	const torch::Tensor& viewmatrix,
 	const torch::Tensor& projmatrix,
-	const float tan_fovx, 
+	const float tan_fovx,
 	const float tan_fovy,
     const int image_height,
     const int image_width,
 	const torch::Tensor& campos,
 	const bool prefiltered,
 	const int mode,
-	const bool debug);
+	const bool debug,
+	const torch::Tensor& nus);  // 🎯 [SSS] Student's t degrees of freedom
 
-std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
+std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
 RasterizeGaussiansBackwardCUDA(
 	const torch::Tensor& means3D,
 	const torch::Tensor& radii,
@@ -44,7 +45,7 @@ RasterizeGaussiansBackwardCUDA(
 	const torch::Tensor& cov3D_precomp,
 	const torch::Tensor& viewmatrix,
     const torch::Tensor& projmatrix,
-	const float tan_fovx, 
+	const float tan_fovx,
 	const float tan_fovy,
     const torch::Tensor& dL_dout_color,
 	const torch::Tensor& campos,
@@ -53,7 +54,8 @@ RasterizeGaussiansBackwardCUDA(
 	const torch::Tensor& binningBuffer,
 	const torch::Tensor& imageBuffer,
 	const int mode,
-	const bool debug);
+	const bool debug,
+	const torch::Tensor& nus);  // 🎯 [SSS] Student's t degrees of freedom
 		
 torch::Tensor markVisible(
 		torch::Tensor& means3D,
