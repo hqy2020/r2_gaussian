@@ -144,11 +144,16 @@ def render(
     # 🎯 [SSS] Get Student's t degrees of freedom (nus)
     nus = pc.get_nu
 
+    # 🎯 [SSS] Use signed opacity for Student's t mode, otherwise use density
+    # This is critical: SSS uses learnable _opacity parameter (range [-1,1]),
+    # while baseline uses density parameter (range [0,1])
+    opacity = pc.get_opacity if pc.use_student_t else None
+
     # Rasterize visible Gaussians to image, obtain their radii (on screen).
     rendered_image, radii = rasterizer(
         means3D=means3D,
         means2D=means2D,
-        opacities=density,
+        opacities=opacity if opacity is not None else density,  # 🎯 [SSS-FIX] Use opacity in SSS mode
         scales=scales,
         rotations=rotations,
         cov3D_precomp=cov3D_precomp,
