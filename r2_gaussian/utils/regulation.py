@@ -15,20 +15,20 @@ from typing import List
 
 def compute_plane_tv(
     plane: torch.Tensor,
-    loss_type: str = "l1",
+    loss_type: str = "l2",
 ) -> torch.Tensor:
     """
-    计算单个平面的 Total Variation (TV) 损失
+    计算单个平面的 Total Variation (TV) 损失（对齐 X²-Gaussian 原版）
 
     Total Variation 鼓励相邻像素之间的特征平滑，防止过拟合和伪影。
 
-    公式：
-        TV(P) = Σ |P[i+1,j] - P[i,j]| + |P[i,j+1] - P[i,j]|
-        （L1 版本）
+    公式（X²-Gaussian 原版）：
+        TV(P) = 2 * (Σ(P[i+1,j] - P[i,j])² / count_h + Σ(P[i,j+1] - P[i,j])² / count_w)
+        其中 count_h = batch * C * (H-1) * W, count_w = batch * C * H * (W-1)
 
     参数：
         plane (torch.Tensor): 特征平面，形状 [1, C, H, W] 或 [C, H, W]
-        loss_type (str): 损失类型，"l1" 或 "l2"（默认 "l1"）
+        loss_type (str): 损失类型，"l1" 或 "l2"（默认 "l2"，对齐原版）
 
     返回：
         torch.Tensor: 标量损失值
@@ -39,21 +39,33 @@ def compute_plane_tv(
 
     assert plane.dim() == 4, f"期望 plane 是 4D 张量，但得到 {plane.dim()}D"
 
+    batch_size, c, h, w = plane.shape
+
+    # 计算精确的计数（X²-Gaussian 原版方式）
+    count_h = batch_size * c * (h - 1) * w
+    count_w = batch_size * c * h * (w - 1)
+
     # 计算水平梯度（相邻列之间的差异）
     # plane[:, :, :, 1:] - plane[:, :, :, :-1]
-    # 形状：[1, C, H, W-1]
-    grad_horizontal = plane[:, :, :, 1:] - plane[:, :, :, :-1]
+    # 形状：[batch, C, H, W-1]
+    grad_h = plane[:, :, :, 1:] - plane[:, :, :, :-1]
 
     # 计算垂直梯度（相邻行之间的差异）
     # plane[:, :, 1:, :] - plane[:, :, :-1, :]
-    # 形状：[1, C, H-1, W]
-    grad_vertical = plane[:, :, 1:, :] - plane[:, :, :-1, :]
+    # 形状：[batch, C, H-1, W]
+    grad_w = plane[:, :, 1:, :] - plane[:, :, :-1, :]
 
-    # 根据损失类型计算范数
-    if loss_type == "l1":
-        tv_loss = grad_horizontal.abs().mean() + grad_vertical.abs().mean()
-    elif loss_type == "l2":
-        tv_loss = grad_horizontal.pow(2).mean() + grad_vertical.pow(2).mean()
+    # 根据损失类型计算（默认 L2）
+    if loss_type == "l2":
+        # X²-Gaussian 原版公式：平方差求和再归一化
+        h_tv = torch.square(grad_h).sum()
+        w_tv = torch.square(grad_w).sum()
+        tv_loss = 2 * (h_tv / count_h + w_tv / count_w)
+    elif loss_type == "l1":
+        # L1 版本（保留向下兼容）
+        h_tv = grad_h.abs().sum()
+        w_tv = grad_w.abs().sum()
+        tv_loss = 2 * (h_tv / count_h + w_tv / count_w)
     else:
         raise ValueError(f"不支持的 loss_type: {loss_type}，请选择 'l1' 或 'l2'")
 
@@ -63,7 +75,7 @@ def compute_plane_tv(
 def compute_plane_tv_loss(
     planes: List[torch.Tensor],
     weights: List[float],
-    loss_type: str = "l1",
+    loss_type: str = "l2",
 ) -> torch.Tensor:
     """
     计算所有平面的加权 Total Variation 损失
@@ -73,7 +85,7 @@ def compute_plane_tv_loss(
             例如：[plane_xy, plane_xz, plane_yz]
         weights (List[float]): 每个平面的权重列表，长度与 planes 相同
             例如：[0.0001, 0.0001, 0.0001]
-        loss_type (str): 损失类型，"l1" 或 "l2"（默认 "l1"）
+        loss_type (str): 损失类型，"l1" 或 "l2"（默认 "l2"，对齐 X²-Gaussian）
 
     返回：
         torch.Tensor: 加权 TV 损失，标量

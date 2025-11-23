@@ -48,7 +48,7 @@ class KPlanesEncoder(nn.Module):
 
         # 初始化 3 个空间平面特征网格
         # 形状：[1, feature_dim, resolution, resolution]
-        # 使用 Xavier 均匀初始化（小的随机值，避免初始特征过大）
+        # 注意：将使用 uniform(0.1, 0.5) 初始化（对齐 X²-Gaussian 原版）
         self.plane_xy = nn.Parameter(
             torch.empty(1, feature_dim, grid_resolution, grid_resolution)
         )
@@ -59,10 +59,11 @@ class KPlanesEncoder(nn.Module):
             torch.empty(1, feature_dim, grid_resolution, grid_resolution)
         )
 
-        # 初始化参数
-        nn.init.xavier_uniform_(self.plane_xy)
-        nn.init.xavier_uniform_(self.plane_xz)
-        nn.init.xavier_uniform_(self.plane_yz)
+        # 初始化参数（对齐 X²-Gaussian 原版）
+        # 空间平面使用 uniform(0.1, 0.5) 初始化
+        nn.init.uniform_(self.plane_xy, a=0.1, b=0.5)
+        nn.init.uniform_(self.plane_xz, a=0.1, b=0.5)
+        nn.init.uniform_(self.plane_yz, a=0.1, b=0.5)
 
     def forward(self, xyz: torch.Tensor) -> torch.Tensor:
         """

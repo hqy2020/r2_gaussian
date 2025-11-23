@@ -155,15 +155,17 @@ class OptimizationParams(ParamGroup):
         self.feature_lr = 0.0025
         self.opacity_lr = 0.05
 
-        # 🎯 X²-Gaussian K-Planes 优化参数 (2025-01-18)
-        self.kplanes_lr_init = 0.00016  # K-Planes 初始学习率 (参考 X²-Gaussian)
-        self.kplanes_lr_final = 0.0000016  # K-Planes 最终学习率
+        # 🎯 X²-Gaussian K-Planes 优化参数 (2025-01-18, 修正 2025-01-23)
+        # 对齐 X²-Gaussian 原版设置：grid_lr_init=0.002, grid_lr_final=0.0002
+        self.kplanes_lr_init = 0.002  # K-Planes 初始学习率（修正：0.00016 → 0.002，提升 12.5 倍）
+        self.kplanes_lr_final = 0.0002  # K-Planes 最终学习率（修正：0.0000016 → 0.0002，提升 125 倍）
         self.kplanes_lr_max_steps = 30000  # K-Planes 学习率衰减步数
 
-        # 🎯 X²-Gaussian TV 正则化参数 (2025-01-18)
+        # 🎯 X²-Gaussian TV 正则化参数 (2025-01-18, 修正 2025-01-23)
+        # 对齐 X²-Gaussian 原版设置：plane_tv_weight=0.0001, L2 损失
         self.lambda_plane_tv = 0.0  # TV 正则化权重 (0 表示不启用)
         self.plane_tv_weight_proposal = [0.0001, 0.0001, 0.0001]  # 每个平面的 TV 权重 [xy, xz, yz]
-        self.tv_loss_type = "l1"  # TV 损失类型 ("l1" 或 "l2")
+        self.tv_loss_type = "l2"  # TV 损失类型（修正："l1" → "l2"，对齐原版）
 
         super().__init__(parser, "Optimization Parameters")
 
