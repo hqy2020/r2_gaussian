@@ -157,6 +157,8 @@ class GaussianModel:
             # 使用 MLP Decoder 将 96 维特征映射到 density offset
             # Decoder 输出范围 [-1, 1] (通过 Tanh 约束)
             density_offset = self.density_decoder(kplanes_feat)  # [N, 1], range: [-1, 1]
+            # Decoder 输出范围 [-1, 1] (通过 Tanh 约束)
+            density_offset = self.density_decoder(kplanes_feat)  # [N, 1], range: [-1, 1]
 
             # 🎯 v3 超保守调制：使用 sigmoid 平滑映射到 [0.7, 1.3]（±30% 调制范围）
             # 公式：modulation = 0.7 + 0.6 * sigmoid(density_offset)
