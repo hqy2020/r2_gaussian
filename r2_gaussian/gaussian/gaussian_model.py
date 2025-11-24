@@ -158,10 +158,10 @@ class GaussianModel:
             # Decoder 输出范围 [-1, 1] (通过 Tanh 约束)
             density_offset = self.density_decoder(kplanes_feat)  # [N, 1], range: [-1, 1]
 
-            # 🎯 温和调制：将 [-1, 1] 映射到 [0.5, 1.5]（±50% 调制范围）
-            # 公式：modulation = 1.0 + 0.5 * tanh_output
-            # 避免极端值，防止低质量视角过拟合
-            modulation = 1.0 + 0.5 * density_offset
+            # 🎯 v3 超保守调制：使用 sigmoid 平滑映射到 [0.7, 1.3]（±30% 调制范围）
+            # 公式：modulation = 0.7 + 0.6 * sigmoid(density_offset)
+            # sigmoid 提供平滑过渡，避免极端值，减少过拟合
+            modulation = 0.7 + 0.6 * torch.sigmoid(density_offset)
 
             # 调制 base_density
             base_density = base_density * modulation
@@ -284,11 +284,13 @@ class GaussianModel:
                 "name": "kplanes"
             })
 
-            # 🎯 K-Planes Decoder 参数组（与 kplanes 使用相同学习率）
+            # 🎯 K-Planes Decoder 参数组（使用更低学习率防止过拟合）
+            # v3 改进：decoder 学习率降低到 encoder 的 0.5 倍
             if self.density_decoder is not None:
+                decoder_lr_init = kplanes_lr_init * 0.5
                 l.append({
                     "params": self.density_decoder.parameters(),
-                    "lr": kplanes_lr_init,
+                    "lr": decoder_lr_init,
                     "name": "kplanes_decoder"
                 })
 
@@ -344,10 +346,10 @@ class GaussianModel:
                 if self.enable_kplanes and hasattr(self, 'kplanes_scheduler_args'):
                     lr = self.kplanes_scheduler_args(iteration)
                     param_group["lr"] = lr
-            # 🎯 K-Planes Decoder 学习率（与 kplanes 保持一致）
+            # 🎯 K-Planes Decoder 学习率（v3：使用 0.5 倍防止过拟合）
             if param_group["name"] == "kplanes_decoder":
                 if self.enable_kplanes and hasattr(self, 'kplanes_scheduler_args'):
-                    lr = self.kplanes_scheduler_args(iteration)
+                    lr = self.kplanes_scheduler_args(iteration) * 0.5
                     param_group["lr"] = lr
 
     def construct_list_of_attributes(self):
