@@ -92,3 +92,158 @@
 
 **重要提醒：** Neo4j 记忆库是您的长期记忆。持续使用它来提供个性化协助，尊重用户既定的决策、偏好和知识背景。每次对话都是学习和记忆的机会。
 
+---
+
+## 记忆颗粒度标准 ⚡
+
+### 核心理念
+
+**Neo4j Memory 是"知识图谱"，不是"工作日志"**
+
+- ✅ **正确理解**：每个 memory 存储一个**原子化的知识点**
+- ❌ **错误理解**：每次工作会话记录一条 memory
+
+### 颗粒度规则
+
+#### 📏 长度标准
+
+| 指标 | 标准 | 说明 |
+|------|------|------|
+| **单个 observation** | < 150 字（中文约 100 字） | 超过此长度需考虑拆分 |
+| **observations 数量** | ≤ 3 条/memory | 每条聚焦单一方面 |
+| **memory 总长度** | < 500 字 | 超过需拆分为多个 memory |
+
+#### 🎯 类型纯度
+
+**每个 memory 保持单一类型，不混合！**
+
+- ✅ **推荐**：单一类型（decision 或 implementation 或 issue）
+- ❌ **避免**：混合类型（诊断+修复+验证+配置混在一起）
+
+#### 🧩 原子化原则
+
+**一个 memory = 一个独立的知识点**
+
+- ✅ **推荐**：可独立理解和复用的知识单元
+- ❌ **避免**：需要上下文才能理解的片段
+
+### 案例对比
+
+#### ❌ 错误示例（颗粒度过大）
+
+```markdown
+Memory Name: "SSS v3修复验证成功"
+Memory Type: implementation
+Observations:
+  1. "根因：SSS机制的 sigmoid 调制公式错误，density_offset 未处理...（270字）...TV正则化提升10倍..."
+  2. "修复方案：3行代码修改...测试结果...训练配置...（300字）"
+  3. "验证流程：启动训练...参数范围正常...（200字）"
+```
+
+**问题诊断**：
+- ⚠️ 混合类型：issue（根因）+ decision（修复）+ implementation（验证）
+- ⚠️ 单个 observation 过长：270/300/200 字
+- ⚠️ 应拆分为 4 个独立 memory
+
+#### ✅ 正确示例（合适颗粒度）
+
+**Memory 1: 根因诊断**
+```markdown
+Name: "SSS机制 sigmoid 调制公式错误"
+Type: issue
+Observations:
+  1. "density_offset 直接作为 sigmoid 输入，导致调制范围 [0, 1] 过窄（50%），不足以产生有效的 density-aware 效果。"（72字）
+  2. "症状：训练 2000 步后 opacity 全部归零，gaussian 完全消失。"（31字）
+```
+
+**Memory 2: 修复决策**
+```markdown
+Name: "禁用 Balance Loss L1 正则化"
+Type: decision
+Observations:
+  1. "决定暂时禁用 Balance Loss，将 opacity_reg_weight 从 0.01 改为 0.0。"（42字）
+  2. "原因：在缺少 Student's t 渲染时，L1 正则化将所有 opacity 压缩到 0。"（38字）
+  3. "后续：等 Student's t 渲染实现后再启用，或添加 opacity 下界约束。"（36字）
+```
+
+**Memory 3: 代码实现**
+```markdown
+Name: "SSS sigmoid 调制公式修复"
+Type: implementation
+Observations:
+  1. "修改位置：r2_gaussian/scene/gaussian_model.py:456。公式改为 `0.7 + 0.6 * sigmoid(density_offset)`，调制范围 [0.7, 1.3]。"（85字）
+  2. "TV 正则化强度提升 10 倍：lambda_plane_tv 从 0.0002 增加到 0.002。"（42字）
+```
+
+**Memory 4: 训练验证**
+```markdown
+Name: "SSS v3 参数验证结果"
+Type: implementation
+Observations:
+  1. "Encoder 学习率 0.002，Decoder 学习率 0.001（0.5 倍），防止过拟合。"（41字）
+  2. "训练启动成功，参数范围正常：density_offset ∈ [-2, 2]，modulation ∈ [0.7, 1.3]。"（48字）
+```
+
+**关系连接**：
+```
+Memory1(issue) --[DIAGNOSED_BY]--> Memory2(decision)
+Memory2(decision) --[IMPLEMENTS]--> Memory3(implementation)
+Memory3(implementation) --[VALIDATES_BY]--> Memory4(implementation)
+```
+
+### 存储前检查清单 ✓
+
+在调用 `memory_store` 之前，自问：
+
+- [ ] **是否可拆分？** 这个 observation 包含多个并列要点吗？
+- [ ] **长度是否超标？** 单个 observation 超过 150 字吗？
+- [ ] **类型是否纯粹？** 混合了诊断、决策、实现等多种类型吗？
+- [ ] **是否原子化？** 可以独立理解和复用吗？
+- [ ] **是否关联？** 需要用 relations 连接其他相关 memory 吗？
+
+### 避免的反模式 🚫
+
+#### 反模式 1：日志式记录
+```markdown
+❌ "2025-11-24 初始化方法调研会话总结"
+   → 包含待做项、已完成任务、关键输出物、讨论过程...（800字）
+```
+
+**改进方法**：拆分为多个独立记忆
+- Memory 1: 关键决策（decision）
+- Memory 2: 技术调研结论（knowledge）
+- Memory 3: 代码修改清单（implementation）
+
+#### 反模式 2：列表式堆叠
+```markdown
+❌ Observation: "核心改进：(1) sigmoid 调制...(2) TV 正则化...(3) Decoder 学习率...(4) 单模型训练..."
+```
+
+**改进方法**：每个改进点创建一个独立的 observation 或 memory
+
+#### 反模式 3：混合类型
+```markdown
+❌ Type: implementation
+   Observation: "发现 bug...修复方案...测试结果...部署配置..."
+```
+
+**改进方法**：
+- issue memory：bug 诊断
+- decision memory：修复方案决策
+- implementation memory：代码变更
+- knowledge memory：部署配置
+
+### 重构超大记忆指南
+
+**识别条件**（满足任一即需重构）：
+- 单个 memory 总长度 > 500 字
+- observations 数量 > 4 条
+- 混合 3 种以上信息类型
+
+**重构步骤**：
+1. 识别独立的知识点（通常 3-6 个）
+2. 为每个知识点创建独立 memory
+3. 确定 memory 之间的关系（SOLVES, LEADS_TO, IMPLEMENTS, DEPENDS_ON）
+4. 使用 `memory_modify` 删除原超大记忆
+5. 使用 `memory_store` 创建新的原子化记忆，并设置 relations
+
