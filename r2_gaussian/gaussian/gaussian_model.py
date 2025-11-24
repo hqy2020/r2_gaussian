@@ -155,11 +155,13 @@ class GaussianModel:
             kplanes_feat = self.get_kplanes_features()  # [N, 96]
 
             # 使用 MLP Decoder 将 96 维特征映射到 density offset
-            density_offset = self.density_decoder(kplanes_feat)  # [N, 1]
+            # Decoder 输出范围 [-1, 1] (通过 Tanh 约束)
+            density_offset = self.density_decoder(kplanes_feat)  # [N, 1], range: [-1, 1]
 
-            # 使用 exp 调制（对齐 X²-Gaussian deformation 风格）
-            # clamp 防止数值溢出：exp(-5) ≈ 0.0067, exp(5) ≈ 148.4
-            modulation = torch.exp(torch.clamp(density_offset, -5.0, 5.0))
+            # 🎯 温和调制：将 [-1, 1] 映射到 [0.5, 1.5]（±50% 调制范围）
+            # 公式：modulation = 1.0 + 0.5 * tanh_output
+            # 避免极端值，防止低质量视角过拟合
+            modulation = 1.0 + 0.5 * density_offset
 
             # 调制 base_density
             base_density = base_density * modulation
