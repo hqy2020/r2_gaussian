@@ -206,6 +206,8 @@ class DensityMLPDecoder(nn.Module):
 
         # 输出层：hidden_dim -> 1
         layers.append(nn.Linear(hidden_dim, 1))
+        # 🎯 约束输出到 [-1, 1] 防止极端调制
+        layers.append(nn.Tanh())
 
         self.network = nn.Sequential(*layers)
 

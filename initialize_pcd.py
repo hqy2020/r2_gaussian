@@ -30,6 +30,16 @@ class InitParams(ParamGroup):
         self.density_thresh = 0.05
         self.density_rescale = 0.15
         self.random_density_max = 1.0  # Parameters for random mode
+
+        # 🆕 De-Init 降噪参数
+        self.enable_denoise = False
+        self.denoise_sigma = 3.0
+
+        # 🆕 智能采样参数
+        self.enable_smart_sampling = False
+        self.high_density_thresh = 0.3  # 高密度区域阈值
+        self.high_density_ratio = 0.7   # 高密度区域采样比例
+
         super().__init__(parser, "Initialization Parameters")
 
 
@@ -64,6 +74,15 @@ def init_pcd(
         vol = recon_volume(projs, angles, copy.deepcopy(geo), recon_method)
         # show_one_volume(vol)
 
+        # 🆕 De-Init: 降噪处理
+        if args.enable_denoise:
+            from scipy.ndimage import gaussian_filter
+            print(f"Applying De-Init denoising with sigma={args.denoise_sigma}")
+            vol_original = vol.copy()
+            vol = gaussian_filter(vol, sigma=args.denoise_sigma)
+            noise_reduction = np.std(vol_original) - np.std(vol)
+            print(f"  Noise reduction: {noise_reduction:.4f} (std decreased)")
+
         density_mask = vol > args.density_thresh
         valid_indices = np.argwhere(density_mask)
         offOrigin = np.array(scanner_cfg["offOrigin"])
@@ -74,9 +93,43 @@ def init_pcd(
             valid_indices.shape[0] >= n_points
         ), "Valid voxels less than target number of sampling. Check threshold"
 
-        sampled_indices = valid_indices[
-            np.random.choice(len(valid_indices), n_points, replace=False)
-        ]
+        # 🆕 智能采样：密度加权采样
+        if args.enable_smart_sampling:
+            print(f"Using smart density-weighted sampling")
+            # 分离高密度和低密度区域
+            high_density_mask = vol > args.high_density_thresh
+            high_density_indices = np.argwhere(high_density_mask & density_mask)
+            low_density_indices = np.argwhere(~high_density_mask & density_mask)
+
+            n_high = int(n_points * args.high_density_ratio)
+            n_low = n_points - n_high
+
+            # 高密度区域采样
+            if len(high_density_indices) >= n_high:
+                sampled_high = high_density_indices[
+                    np.random.choice(len(high_density_indices), n_high, replace=False)
+                ]
+            else:
+                sampled_high = high_density_indices
+                print(f"  Warning: High density voxels ({len(high_density_indices)}) < target ({n_high})")
+
+            # 低密度区域采样
+            if len(low_density_indices) >= n_low:
+                sampled_low = low_density_indices[
+                    np.random.choice(len(low_density_indices), n_low, replace=False)
+                ]
+            else:
+                sampled_low = low_density_indices
+                print(f"  Warning: Low density voxels ({len(low_density_indices)}) < target ({n_low})")
+
+            sampled_indices = np.concatenate([sampled_high, sampled_low], axis=0)
+            print(f"  Sampled {len(sampled_high)} high-density + {len(sampled_low)} low-density points")
+        else:
+            # 原始均匀随机采样
+            sampled_indices = valid_indices[
+                np.random.choice(len(valid_indices), n_points, replace=False)
+            ]
+
         sampled_positions = sampled_indices * dVoxel - sVoxel / 2 + offOrigin
         sampled_densities = vol[
             sampled_indices[:, 0],
