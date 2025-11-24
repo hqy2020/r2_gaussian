@@ -187,3 +187,74 @@ class GaussianGraph:
     def __repr__(self):
         return (f"GaussianGraph(k={self.k}, num_nodes={self.num_nodes}, "
                 f"num_edges={self.num_edges}, device={self.device})")
+
+
+def apply_pga_gradient(density_param: torch.nn.Parameter,
+                      graph: GaussianGraph,
+                      lambda_g: float = 1e-4) -> None:
+    """
+    应用 PGA (Pixel-Graph-Aware Gradient Strategy)
+
+    功能：
+        在梯度中引入邻居密度差异信息，引导高斯点向合理的密度值调整
+
+    公式：
+        g_i += λ_g · Σ(Δρ_ij) / k
+        其中 Δρ_ij = ρ_j - ρ_i (邻居密度差异)
+
+    Args:
+        density_param: 密度参数 (N, 1) 或 (N,) - 必须有 grad
+        graph: GaussianGraph 实例（包含邻居信息）
+        lambda_g: PGA 强度系数（论文推荐 1e-4）
+
+    参考：
+        GR-Gaussian 论文 Section 3.3: Pixel-Graph-Aware Gradient Strategy
+    """
+    # 边界情况检查
+    if graph is None or graph.num_edges == 0:
+        return
+
+    if density_param.grad is None:
+        return
+
+    # 确保 density 是 1D
+    density = density_param.data.squeeze()  # (N,)
+    grad = density_param.grad.squeeze()     # (N,)
+
+    if density.dim() != 1:
+        raise ValueError(f"density must be 1D after squeeze, got shape {density.shape}")
+
+    # 获取图结构
+    edge_index = graph.get_edge_index()  # (2, E)
+    if edge_index is None:
+        return
+
+    src = edge_index[0].long()  # (E,) - 源节点索引
+    dst = edge_index[1].long()  # (E,) - 目标节点索引
+
+    # 计算邻居密度差异 Δρ_ij = ρ_j - ρ_i
+    density_src = density[src]  # (E,)
+    density_dst = density[dst]  # (E,)
+    density_diff = density_dst - density_src  # (E,)
+
+    # 聚合每个节点的邻居密度差异（使用 scatter_add）
+    # neighbor_density_sum[i] = Σ(Δρ_ij) for all neighbors j of node i
+    neighbor_density_sum = torch.zeros_like(density)  # (N,)
+    neighbor_count = torch.zeros_like(density)        # (N,)
+
+    neighbor_density_sum.scatter_add_(0, src, density_diff)
+    neighbor_count.scatter_add_(0, src, torch.ones_like(density_diff))
+
+    # 计算平均密度差异 Σ(Δρ_ij) / k
+    # 避免除以零
+    neighbor_count = torch.clamp(neighbor_count, min=1.0)
+    avg_density_diff = neighbor_density_sum / neighbor_count  # (N,)
+
+    # 应用 PGA：g_i += λ_g · avg(Δρ_ij)
+    pga_gradient = lambda_g * avg_density_diff
+
+    # 更新梯度（原地操作）
+    if grad.shape != pga_gradient.shape:
+        raise ValueError(f"Gradient shape mismatch: grad {grad.shape} vs pga {pga_gradient.shape}")
+
+    grad.add_(pga_gradient)

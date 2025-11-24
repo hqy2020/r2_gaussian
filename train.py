@@ -80,7 +80,7 @@ def training(
     # 🌟 [GR-Gaussian] 初始化 Graph 结构
     gr_graph = None
     if dataset.enable_graph_laplacian:
-        from r2_gaussian.utils.graph_utils import GaussianGraph
+        from r2_gaussian.utils.graph_utils import GaussianGraph, apply_pga_gradient
 
         gr_graph = GaussianGraph(
             k=dataset.graph_k,
@@ -175,6 +175,17 @@ def training(
 
         loss["total"].backward()
 
+        # 🌟 [GR-Gaussian] 应用 PGA (Pixel-Graph-Aware Gradient)
+        if dataset.enable_graph_laplacian and gr_graph is not None and hasattr(dataset, 'enable_pga') and dataset.enable_pga:
+            # 获取 density 参数
+            density_param = gaussians._density
+            if density_param.grad is not None:
+                apply_pga_gradient(
+                    density_param,
+                    gr_graph,
+                    lambda_g=getattr(dataset, 'pga_lambda_g', 1e-4)
+                )
+
         iter_end.record()
         torch.cuda.synchronize()
 
@@ -199,15 +210,24 @@ def training(
                         bbox,
                     )
 
-                    # 🌟 [GR-Gaussian] Densification 后更新图结构
+                    # 🌟 [GR-Gaussian] Densification 后立即更新图结构（重要！）
                     if dataset.enable_graph_laplacian and gr_graph is not None:
-                        if iteration % dataset.graph_update_interval == 0:
-                            xyz = gaussians.get_xyz.detach()
-                            gr_graph.build_knn_graph(xyz)
-                            gr_graph.compute_edge_weights(xyz)
-                            if iteration % 1000 == 0:  # 每1000步打印一次
-                                print(f"[GR] Iteration {iteration}: Graph updated - "
-                                      f"{gr_graph.num_nodes} nodes, {gr_graph.num_edges} edges")
+                        xyz = gaussians.get_xyz.detach()
+                        gr_graph.build_knn_graph(xyz)
+                        gr_graph.compute_edge_weights(xyz)
+                        if iteration % 1000 == 0:  # 每1000步打印一次
+                            print(f"[GR] Iteration {iteration}: Graph updated after densification - "
+                                  f"{gr_graph.num_nodes} nodes, {gr_graph.num_edges} edges")
+
+            # 🌟 [GR-Gaussian] 定期更新图（非densification时）
+            elif dataset.enable_graph_laplacian and gr_graph is not None:
+                if iteration % dataset.graph_update_interval == 0 and iteration > 0:
+                    xyz = gaussians.get_xyz.detach()
+                    gr_graph.build_knn_graph(xyz)
+                    gr_graph.compute_edge_weights(xyz)
+                    if iteration % 1000 == 0:
+                        print(f"[GR] Iteration {iteration}: Graph updated (regular) - "
+                              f"{gr_graph.num_nodes} nodes, {gr_graph.num_edges} edges")
 
             if gaussians.get_density.shape[0] == 0:
                 raise ValueError(

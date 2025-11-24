@@ -96,6 +96,8 @@ class ModelParams(ParamGroup):
         self.graph_k = 6  # KNN 邻居数量 (论文推荐 6)
         self.graph_lambda_lap = 8e-4  # Graph Laplacian 损失权重 (论文推荐 8e-4)
         self.graph_update_interval = 100  # 图重建间隔 (iterations)
+        self.enable_pga = False  # 是否启用 PGA (Pixel-Graph-Aware Gradient)
+        self.pga_lambda_g = 1e-4  # PGA 强度系数 (论文推荐 1e-4)
 
         super().__init__(parser, "Loading Parameters", sentinel)
 
