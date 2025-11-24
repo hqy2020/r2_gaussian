@@ -21,3 +21,5 @@ nohup.out
 logs/
 node_modules/
 .claude/mcp.json
+init_files/
+init_files_30k/
