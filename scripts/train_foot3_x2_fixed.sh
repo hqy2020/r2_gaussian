@@ -70,6 +70,7 @@ python3 train.py \
     --source_path data/369/foot_50_3views.pickle \
     --model_path "$OUTPUT_DIR" \
     --eval \
+    --gaussiansN 1 \
     --iterations $ITERATIONS \
     --position_lr_init $POSITION_LR_INIT \
     --density_lr_init $DENSITY_LR_INIT \
