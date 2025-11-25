@@ -29,14 +29,15 @@ from r2_gaussian.dataset import Scene
 from r2_gaussian.utils.loss_utils import l1_loss, ssim, tv_3d_loss
 from r2_gaussian.utils.image_utils import metric_vol, metric_proj
 
-# CoR-GS Stage 3: Pseudo-view Co-regularization
+# CoR-GS Stage 3: Pseudo-view Co-regularization (官方对齐版)
 try:
     from r2_gaussian.utils.pseudo_view_coreg import (
         generate_pseudo_view_medical,
-        compute_pseudo_coreg_loss_medical
+        compute_pseudo_coreg_loss_medical,
+        PseudoViewPool  # 新增：pseudo-view 池支持
     )
     HAS_PSEUDO_COREG = True
-    print("✅ CoR-GS Stage 3 Pseudo-view Co-regularization modules loaded")
+    print("✅ CoR-GS Stage 3 Pseudo-view Co-regularization modules loaded (官方对齐版)")
 except ImportError as e:
     HAS_PSEUDO_COREG = False
     print(f"📦 Pseudo-view Co-regularization modules not available: {e}")
@@ -126,6 +127,29 @@ def training(
         tv_vol_nVoxel = torch.tensor([tv_vol_size, tv_vol_size, tv_vol_size])
         tv_vol_sVoxel = torch.tensor(scanner_cfg["dVoxel"]) * tv_vol_nVoxel
 
+    # ========== CoR-GS: 初始化 Pseudo-view 池（官方对齐版）==========
+    pseudo_view_pool = None
+    if (HAS_PSEUDO_COREG and
+        gaussiansN >= 2 and
+        hasattr(dataset, 'enable_corgs') and dataset.enable_corgs):
+
+        # 获取池参数
+        pool_size = getattr(dataset, 'corgs_pool_size', 1000)  # 默认 1000 个
+        pool_strategy = getattr(dataset, 'corgs_pool_strategy', 'slerp')  # 'slerp' 或 'random'
+        noise_std = getattr(dataset, 'corgs_pseudo_noise_std', 0.02)
+
+        try:
+            pseudo_view_pool = PseudoViewPool(
+                train_cameras=scene.getTrainCameras(),
+                num_pseudo=pool_size,
+                strategy=pool_strategy,
+                noise_std=noise_std,
+                seed=42
+            )
+        except Exception as e:
+            print(f"⚠️ Pseudo-view 池初始化失败，将使用实时生成: {e}")
+            pseudo_view_pool = None
+
     # Train
     iter_start = torch.cuda.Event(enable_timing=True)
     iter_end = torch.cuda.Event(enable_timing=True)
@@ -195,7 +219,7 @@ def training(
             losses[0]["tv"] = loss_tv
             losses[0]["total"] += opt.lambda_tv * loss_tv
 
-        # ========== CoR-GS Stage 3: Pseudo-view Co-regularization ==========
+        # ========== CoR-GS Stage 3: Pseudo-view Co-regularization (官方对齐版) ==========
         if (HAS_PSEUDO_COREG and
             gaussiansN >= 2 and
             hasattr(dataset, 'enable_corgs') and dataset.enable_corgs and
@@ -203,48 +227,74 @@ def training(
             iteration >= dataset.corgs_pseudo_start_iter):
 
             try:
-                # 生成 pseudo-view（基础版本：不启用 ROI 适配）
-                noise_std = dataset.corgs_pseudo_noise_std if hasattr(dataset, 'corgs_pseudo_noise_std') else 0.02
-                pseudo_camera = generate_pseudo_view_medical(
-                    scene.getTrainCameras(),
-                    current_camera_idx=None,  # 随机选择
-                    noise_std=noise_std,
-                    roi_info=None  # 基础版本不启用 ROI
-                )
+                # 【修复 1】动态权重 - 线性 ramp-up（官方 CoR-GS 策略）
+                # loss_scale 从 0 线性增加到 1，持续 500 iterations
+                corgs_ramp_iters = getattr(dataset, 'corgs_ramp_iters', 500)
+                loss_scale = min((iteration - dataset.corgs_pseudo_start_iter) / float(corgs_ramp_iters), 1.0)
+
+                # 【修复 3】使用 Pseudo-view 池采样（官方 CoR-GS 策略）
+                # 如果池存在则从池中采样，否则回退到实时生成
+                if pseudo_view_pool is not None:
+                    pseudo_camera = pseudo_view_pool.sample()
+                else:
+                    # 回退：实时生成 pseudo-view
+                    noise_std = dataset.corgs_pseudo_noise_std if hasattr(dataset, 'corgs_pseudo_noise_std') else 0.02
+                    pseudo_camera = generate_pseudo_view_medical(
+                        scene.getTrainCameras(),
+                        current_camera_idx=None,
+                        noise_std=noise_std,
+                        roi_info=None
+                    )
 
                 # 渲染两个模型的 pseudo-view（仅前 2 个模型）
                 pseudo_renders = []
                 for idx in range(min(2, gaussiansN)):
                     pseudo_pkg = render(pseudo_camera, gaussians_list[idx], pipe)
-                    pseudo_renders.append(pseudo_pkg)
+                    pseudo_renders.append(pseudo_pkg["render"])  # 提取渲染图像
 
-                # 计算 Co-regularization 损失
-                pseudo_coreg_loss_dict = compute_pseudo_coreg_loss_medical(
-                    pseudo_renders[0],
-                    pseudo_renders[1],
+                # 【修复 2】双向独立损失计算（官方 CoR-GS 策略）
+                # 每个模型独立计算损失，目标图像使用 detach 阻止梯度回流
+                # 模型 0: 约束于 detach(模型 1 的输出)
+                # 模型 1: 约束于 detach(模型 0 的输出)
+                pseudo_weight = dataset.corgs_pseudo_weight if hasattr(dataset, 'corgs_pseudo_weight') else 1.0
+
+                # 模型 0 的 co-reg 损失: render_0 vs detach(render_1)
+                loss_coreg_0 = compute_pseudo_coreg_loss_medical(
+                    pseudo_renders[0],  # 当前模型的渲染（需要梯度）
+                    pseudo_renders[1].clone().detach(),  # 目标模型的渲染（阻止梯度）
                     lambda_dssim=opt.lambda_dssim,
-                    roi_weights=None  # 基础版本不启用 ROI 权重
+                    roi_weights=None
                 )
 
-                # 叠加到总损失（仅影响前 2 个模型）
-                pseudo_weight = dataset.corgs_pseudo_weight if hasattr(dataset, 'corgs_pseudo_weight') else 1.0
-                loss_pseudo = pseudo_coreg_loss_dict['loss']
-                losses[0]["pseudo"] = loss_pseudo
-                losses[1]["pseudo"] = loss_pseudo
-                losses[0]["total"] += pseudo_weight * loss_pseudo
-                losses[1]["total"] += pseudo_weight * loss_pseudo
+                # 模型 1 的 co-reg 损失: render_1 vs detach(render_0)
+                loss_coreg_1 = compute_pseudo_coreg_loss_medical(
+                    pseudo_renders[1],  # 当前模型的渲染（需要梯度）
+                    pseudo_renders[0].clone().detach(),  # 目标模型的渲染（阻止梯度）
+                    lambda_dssim=opt.lambda_dssim,
+                    roi_weights=None
+                )
+
+                # 【修复 3】应用动态权重并叠加到各模型的独立损失
+                scaled_weight = pseudo_weight * loss_scale
+                losses[0]["pseudo"] = loss_coreg_0['loss']
+                losses[1]["pseudo"] = loss_coreg_1['loss']
+                losses[0]["total"] += scaled_weight * loss_coreg_0['loss']
+                losses[1]["total"] += scaled_weight * loss_coreg_1['loss']
 
                 # TensorBoard 日志（每 10 iterations 记录）
                 if iteration % 10 == 0 and tb_writer:
-                    tb_writer.add_scalar('corgs/pseudo_total', loss_pseudo.item(), iteration)
-                    tb_writer.add_scalar('corgs/pseudo_l1', pseudo_coreg_loss_dict['l1'].item(), iteration)
-                    tb_writer.add_scalar('corgs/pseudo_ssim', pseudo_coreg_loss_dict['ssim'].item(), iteration)
+                    avg_pseudo_loss = (loss_coreg_0['loss'].item() + loss_coreg_1['loss'].item()) / 2
+                    tb_writer.add_scalar('corgs/pseudo_total', avg_pseudo_loss, iteration)
+                    tb_writer.add_scalar('corgs/pseudo_l1_m0', loss_coreg_0['l1'].item(), iteration)
+                    tb_writer.add_scalar('corgs/pseudo_l1_m1', loss_coreg_1['l1'].item(), iteration)
+                    tb_writer.add_scalar('corgs/loss_scale', loss_scale, iteration)
 
                 # 定期打印日志（每 500 iterations）
                 if iteration % 500 == 0:
                     print(f"[CoR-GS] Iter {iteration}: "
-                          f"pseudo_loss={loss_pseudo.item():.6f}, "
-                          f"SSIM={pseudo_coreg_loss_dict['ssim'].item():.4f}")
+                          f"loss_m0={loss_coreg_0['loss'].item():.6f}, "
+                          f"loss_m1={loss_coreg_1['loss'].item():.6f}, "
+                          f"scale={loss_scale:.3f}")
 
             except Exception as e:
                 # 异常处理：pseudo-view 生成失败不影响主训练

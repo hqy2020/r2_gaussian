@@ -52,6 +52,11 @@ class ModelParams(ParamGroup):
         self.corgs_pseudo_noise_std = 0.02  # Pseudo-view 位置噪声标准差（约 ±0.4mm，CT 尺度）
         self.enable_pseudo_coreg_roi = False  # 是否启用 ROI 自适应权重（基础版本关闭）
         self.enable_pseudo_coreg_confidence = False  # 是否启用置信度筛选（基础版本关闭）
+
+        # 🌟 CoR-GS Stage 3: Pseudo-view Pool 参数（官方对齐版 2025-11-25）
+        self.corgs_pool_size = 1000  # Pseudo-view 池大小（官方默认 10000，CT 任务 1000 足够）
+        self.corgs_pool_strategy = 'slerp'  # 池生成策略: 'slerp'（插值）或 'random'（官方随机）
+        self.corgs_ramp_iters = 500  # 损失权重 ramp-up 迭代数（从 0 线性增加到 1）
         
         # Opacity decay功能
         self.opacity_decay = False  # 是否启用opacity decay

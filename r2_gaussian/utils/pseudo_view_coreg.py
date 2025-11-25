@@ -287,6 +287,87 @@ def generate_random_pseudo_cameras(
     return pseudo_cameras
 
 
+class PseudoViewPool:
+    """
+    Pseudo-view 池管理器（官方 CoR-GS 策略）
+
+    官方 CoR-GS 预生成大量 pseudo-view（默认 10000 个），训练时随机采样。
+    这提供了更好的多样性和训练稳定性。
+
+    使用方法:
+        pool = PseudoViewPool(train_cameras, num_pseudo=1000)
+        pseudo_cam = pool.sample()
+    """
+
+    def __init__(
+        self,
+        train_cameras: List,
+        num_pseudo: int = 1000,
+        strategy: str = 'slerp',  # 'slerp' 或 'random'
+        noise_std: float = 0.02,
+        seed: int = 42
+    ):
+        """
+        初始化 pseudo-view 池
+
+        Args:
+            train_cameras: 训练相机列表
+            num_pseudo: 预生成的 pseudo-view 数量（官方默认 10000，CT 任务可以少一些）
+            strategy: 生成策略
+                - 'slerp': 基于训练相机插值（更适合稀疏视角）
+                - 'random': 完全随机球面采样（官方策略）
+            noise_std: 位置噪声标准差
+            seed: 随机种子
+        """
+        self.train_cameras = train_cameras
+        self.num_pseudo = num_pseudo
+        self.strategy = strategy
+        self.noise_std = noise_std
+        self.seed = seed
+        self.pool = []
+        self._build_pool()
+
+    def _build_pool(self):
+        """构建 pseudo-view 池"""
+        np.random.seed(self.seed)
+        torch.manual_seed(self.seed)
+
+        print(f"🔧 构建 Pseudo-view 池: {self.num_pseudo} 个视角, 策略={self.strategy}")
+
+        if self.strategy == 'random':
+            # 随机球面采样（官方策略）
+            self.pool = generate_random_pseudo_cameras(
+                self.train_cameras,
+                num_pseudo=self.num_pseudo,
+                seed=self.seed
+            )
+        else:
+            # SLERP 插值策略（更适合稀疏视角 CT）
+            for i in range(self.num_pseudo):
+                pseudo_cam = generate_pseudo_view_medical(
+                    self.train_cameras,
+                    current_camera_idx=None,
+                    noise_std=self.noise_std,
+                    roi_info=None
+                )
+                self.pool.append(pseudo_cam)
+
+        print(f"✅ Pseudo-view 池构建完成: {len(self.pool)} 个视角")
+
+    def sample(self) -> object:
+        """随机采样一个 pseudo-view"""
+        idx = np.random.randint(0, len(self.pool))
+        return self.pool[idx]
+
+    def sample_batch(self, batch_size: int) -> List:
+        """随机采样一批 pseudo-view"""
+        indices = np.random.choice(len(self.pool), size=batch_size, replace=False)
+        return [self.pool[i] for i in indices]
+
+    def __len__(self):
+        return len(self.pool)
+
+
 def generate_pseudo_view_medical(
     train_cameras: List,
     current_camera_idx: Optional[int] = None,
@@ -396,53 +477,49 @@ def generate_pseudo_view_medical(
 # ============================================================================
 
 def compute_pseudo_coreg_loss_medical(
-    render1: Dict[str, torch.Tensor],
-    render2: Dict[str, torch.Tensor],
+    render1: torch.Tensor,
+    render2: torch.Tensor,
     lambda_dssim: float = 0.2,
     roi_weights: Optional[torch.Tensor] = None
 ) -> Dict[str, torch.Tensor]:
     """
-    计算医学适��的 Pseudo-view Co-regularization 损失（CoR-GS 论文公式 4）
+    计算 Pseudo-view Co-regularization 损失（官方 CoR-GS 对齐版）
 
-    损失公式:
+    损失公式（CoR-GS 论文公式 4）:
         R_pcolor = (1-λ) * L1(I'¹, I'²) + λ * L_D-SSIM(I'¹, I'²)
 
-    医学适配:
-        - 支持 ROI 自适应权重（骨区 λ_p=0.3, 软组织 λ_p=1.0）
-        - 逐像素权重调制（保护骨折线等关键结构）
+    官方对齐说明:
+        - render1: 当前模型的渲染结果（需要梯度）
+        - render2: 目标模型的渲染结果（应在调用前 detach，阻止梯度回流）
+        - 调用方负责执行 .clone().detach()
 
     Args:
-        render1: 模型 1 在 pseudo-view 的渲染结果 (dict, 包含 'render' key)
-            - 'render': torch.Tensor, shape [C, H, W], 值域 [0, 1]
-        render2: 模型 2 在 pseudo-view 的渲染结果 (dict, 包含 'render' key)
+        render1: 当前模型在 pseudo-view 的渲染图像 (torch.Tensor, shape [C, H, W])
+        render2: 目标模型在 pseudo-view 的渲染图像 (torch.Tensor, shape [C, H, W])
+                 注意：应该是 detach 后的张量
         lambda_dssim: D-SSIM 损失权重（默认 0.2，与 3DGS 一致）
         roi_weights: ROI 权重图（可选，shape [H, W]，值域 [0, 1]）
-            - None: 全图均匀权重 1.0
-            - 提供时: 骨区像素权重 0.3, 软组织像素权重 1.0
 
     Returns:
         loss_dict: 包含总损失和各项损失的字典
-            - 'loss': 总损失（标量）
+            - 'loss': 总损失（标量，有梯度）
             - 'l1': L1 损失（标量）
             - 'd_ssim': D-SSIM 损失（标量）
             - 'ssim': SSIM 值（标量，越接近 1 越好）
     """
-    # 【修复】train.py 已经提取了 ["render"]，所以这里直接接受 Tensor
+    # 输入验证
     image1 = render1  # shape [C, H, W]
     image2 = render2  # shape [C, H, W]
 
     assert image1.shape == image2.shape, f"图像形状不匹配: {image1.shape} vs {image2.shape}"
+    assert len(image1.shape) == 3, f"期望 [C, H, W] 格式，得到 {image1.shape}"
 
     # 计算 L1 损失
     if roi_weights is not None:
         # 逐像素加权 L1 损失
         assert roi_weights.shape == image1.shape[1:], \
             f"ROI 权重形状不匹配: {roi_weights.shape} vs {image1.shape[1:]}"
-
-        # 扩展权重维度以匹配图像 [H, W] → [1, H, W]
         weights_expanded = roi_weights.unsqueeze(0)
-
-        # 加权 L1
         l1_loss = (torch.abs(image1 - image2) * weights_expanded).mean()
     else:
         # 标准 L1 损失
@@ -458,39 +535,14 @@ def compute_pseudo_coreg_loss_medical(
     # 计算 SSIM（R²-Gaussian 的 ssim() 返回 Tensor）
     ssim_value = ssim(image1_batch, image2_batch)
 
-    # 【调试】打印类型信息
-    # print(f"[DEBUG] ssim_value type: {type(ssim_value)}, value: {ssim_value}")
-    # print(f"[DEBUG] isinstance Tensor: {isinstance(ssim_value, torch.Tensor)}")
-    # if isinstance(ssim_value, torch.Tensor):
-    #     print(f"[DEBUG] ssim_value.requires_grad: {ssim_value.requires_grad}")
-
-    # 【Bug 修复 v2】确保 ssim_value 是 Tensor 并且在正确设备上（修复日期: 2025-11-17）
-    # 根本原因：R²-Gaussian 的 ssim() 已经返回 Tensor，但可能没有正确的 requires_grad
+    # 确保 ssim_value 是正确的 Tensor
     if not isinstance(ssim_value, torch.Tensor):
-        # 如果是 numpy 或标量，转换为 Tensor
-        ssim_value = torch.as_tensor(
-            ssim_value,
-            dtype=torch.float32,
-            device=image1.device
-        )
-    else:
-        # 如果已经是 Tensor，确保在正确的设备上并且 detach 后重新 attach
-        if not ssim_value.requires_grad and image1.requires_grad:
-            ssim_value = ssim_value.detach().requires_grad_(True)
+        ssim_value = torch.as_tensor(ssim_value, dtype=torch.float32, device=image1.device)
 
     d_ssim_loss = 1.0 - ssim_value
 
-    # 如果有 ROI 权重，SSIM 也应该考虑权重
-    # 但标准 SSIM 实现不支持逐像素权重，这里保持简单
-
     # 组合损失（CoR-GS 论文公式 4）
     total_loss = (1.0 - lambda_dssim) * l1_loss + lambda_dssim * d_ssim_loss
-
-    # 【类型断言】确保所有返回值都是 Tensor 类型（调试辅助）
-    assert isinstance(total_loss, torch.Tensor), f"total_loss 类型错误: {type(total_loss)}"
-    assert isinstance(l1_loss, torch.Tensor), f"l1_loss 类型错误: {type(l1_loss)}"
-    assert isinstance(d_ssim_loss, torch.Tensor), f"d_ssim_loss 类型错误: {type(d_ssim_loss)}"
-    assert isinstance(ssim_value, torch.Tensor), f"ssim_value 类型错误: {type(ssim_value)}"
 
     return {
         'loss': total_loss,
