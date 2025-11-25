@@ -30,6 +30,24 @@ R²-Gaussian 三视角 (3 views) SOTA 基准值
 器官: Pancreas
   PSNR: 28.7669
   SSIM: 0.9247
+## Memory Tool Usage
+- Store all memory for this project in database: 'neo4j'
+- Begin each session by: (1) Switching to this project's database (2) Searching memory for data relevant to the user's prompt
+
+### 🎯 记忆存储规范（必读！）
+
+**核心理念**：Neo4j Memory 是"知识图谱"，不是"工作日志"
+
+⚠️ **每次 `memory_store` 前检查（5 项）**：
+- [ ] 单个 observation < 150 字
+- [ ] 每个 memory ≤ 3 个 observations
+- [ ] 保持单一类型（不混合 issue/decision/implementation）
+- [ ] 原子化知识点（可独立理解和复用）
+- [ ] 设置 relations 连接相关 memory
+
+❌ **禁止**：会话总结式记忆、混合类型、列表式堆叠
+
+📚 **详细指南**：`cc-agent/MCP工具使用指南.md` → "记忆颗粒度标准" | `cc-agent/记忆模板.md`（4 种模板）
 
 
 ## 角色
@@ -73,7 +91,7 @@ cc-agent/
 
 **必须做的事**：
 - 理解我的意图，如果有歧义请问我
-- **使用 Graphiti MCP**：`search_nodes` 查找偏好和程序，`search_facts` 发现相关事实
+- **使用 Neo4j-Memory MCP**：`memory_find` 查找相关的记忆、决策和知识
 - **使用 serena MCP**：`find_symbol` 定位类和函数，`find_referencing_symbols` 分析使用位置
 - 搜索所有相关代码，识别问题根因
 - 主动发现问题：重复代码、不合理命名、过时设计、复杂调用、类型不一致等
@@ -92,10 +110,10 @@ cc-agent/
 **前置条件**：我明确回答了关键技术决策
 
 **必须做的事**：
-- **使用 Graphiti MCP**：发现新需求时用 `add_episode` 存储，将操作流程记录为程序，记录实体关系为事实
-- 列出变更（新增、修改、删除）的文件，简要描述每个文件的变化
-- 消除重复逻辑：通过复用或抽象消除重复代码
-- 确保符合 DRY 原则和良好的架构设计
+- **使用 Neo4j-Memory MCP**：发现新需求时用 `memory_store` 存储（knowledge/decision/implementation/architecture）
+  - ⚠️ 检查：observation < 150 字，memory ≤ 3 个 observations，保持类型纯度，参考 `cc-agent/记忆模板.md`
+- 列出变更文件，简要描述变化
+- 消除重复逻辑，确保符合 DRY 原则
 
 **阶段转换**：如果新发现需要我决策的问题，继续问我，直到没有不明确的问题后本阶段结束。本阶段不允许自动切换到下一阶段。
 
@@ -104,7 +122,8 @@ cc-agent/
 **声明格式**：`【执行方案】`
 
 **必须做的事**：
-- **使用 Graphiti MCP**：遵循发现的偏好和程序，使用事实信息指导决策
+- **使用 Neo4j-Memory MCP**：遵循发现的记忆（特别是决策和偏好），使用知识类记忆指导决策
+  - ⚠️ 执行后：将实现结果记录为 `implementation` 类型记忆，按文件/模块拆分（禁止创建超大记忆），使用 relations 连接
 - 严格按照选定方案实现
 - 修改后运行类型检查
 
@@ -116,7 +135,7 @@ cc-agent/
 
 **重要提醒**：
 - 收到用户消息时，一般从【分析问题】阶段开始，除非用户明确指定阶段的名字
-- 知识图谱是您的记忆。持续使用它来提供个性化协助
+- Neo4j 记忆库是您的长期记忆。持续使用它来提供个性化协助，尊重用户既定的决策、偏好和知识背景
 
 ---
 
