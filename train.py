@@ -80,7 +80,7 @@ def training(
     # 🌟 [GR-Gaussian] 初始化 Graph 结构
     gr_graph = None
     if dataset.enable_graph_laplacian:
-        from r2_gaussian.utils.graph_utils import GaussianGraph, apply_pga_gradient
+        from r2_gaussian.utils.graph_utils import GaussianGraph
 
         gr_graph = GaussianGraph(
             k=dataset.graph_k,
@@ -175,26 +175,25 @@ def training(
 
         loss["total"].backward()
 
-        # 🌟 [GR-Gaussian] 应用 PGA (Pixel-Graph-Aware Gradient)
-        if dataset.enable_graph_laplacian and gr_graph is not None and hasattr(dataset, 'enable_pga') and dataset.enable_pga:
-            # 获取 density 参数
-            density_param = gaussians._density
-            if density_param.grad is not None:
-                apply_pga_gradient(
-                    density_param,
-                    gr_graph,
-                    lambda_g=getattr(dataset, 'pga_lambda_g', 1e-4)
-                )
-
         iter_end.record()
         torch.cuda.synchronize()
+
+        # 🔧 [方案 C] 标记是否发生了 densification
+        densification_occurred = False
 
         with torch.no_grad():
             # Adaptive control
             gaussians.max_radii2D[visibility_filter] = torch.max(
                 gaussians.max_radii2D[visibility_filter], radii[visibility_filter]
             )
-            gaussians.add_densification_stats(viewspace_point_tensor, visibility_filter)
+            # 🌟 [GR-Gaussian PGA] 传递 graph 用于正确的 PGA 实现
+            # PGA 公式: g_i += λ_g · Σ(|Δρ_ij|) / k （作用于 NDC 梯度累积）
+            pga_graph = gr_graph if (dataset.enable_graph_laplacian and
+                                      hasattr(dataset, 'enable_pga') and
+                                      dataset.enable_pga) else None
+            pga_lambda = getattr(dataset, 'pga_lambda_g', 1e-4)
+            gaussians.add_densification_stats(viewspace_point_tensor, visibility_filter,
+                                               gr_graph=pga_graph, pga_lambda_g=pga_lambda)
             if iteration < opt.densify_until_iter:
                 if (
                     iteration > opt.densify_from_iter
@@ -209,6 +208,7 @@ def training(
                         densify_scale_threshold,
                         bbox,
                     )
+                    densification_occurred = True  # 🔧 标记发生了 densification
 
                     # 🌟 [GR-Gaussian] Densification 后立即更新图结构（重要！）
                     if dataset.enable_graph_laplacian and gr_graph is not None:
@@ -234,7 +234,11 @@ def training(
                     "No Gaussian left. Change adaptive control hyperparameters!"
                 )
 
-            # Optimization
+        # 🔧 [GR-Gaussian] 注意：PGA 现在在 add_densification_stats 中正确实现
+        # 旧的错误实现（修改密度梯度）已被移除
+
+        # Optimization
+        with torch.no_grad():
             if iteration < opt.iterations:
                 gaussians.optimizer.step()
                 gaussians.optimizer.zero_grad(set_to_none=True)

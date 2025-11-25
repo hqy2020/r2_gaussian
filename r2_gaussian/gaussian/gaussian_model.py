@@ -333,25 +333,45 @@ class GaussianModel:
         return optimizable_tensors
 
     def _prune_optimizer(self, mask):
+        """
+        修剪优化器参数（方案 B 修复版本）
+
+        修复内容：
+            - 保留被修剪参数的梯度，避免 densification 后梯度丢失
+            - 这对于 PGA（Pixel-Graph-Aware Gradient）等在 backward() 后修改梯度的机制至关重要
+
+        Bug 说明：
+            原实现在创建新 Parameter 时没有保留梯度，导致：
+            1. backward() 计算梯度 (N 个点)
+            2. PGA 修改梯度 (N 个点)
+            3. densify_and_prune() 删除点 (N → M 个点)
+            4. _prune_optimizer() 创建新 Parameter (M 个点，grad=None) ← Bug
+            5. optimizer.step() 跳过更新（因为 grad=None）
+            结果：该次迭代的参数更新完全丢失，训练偏离轨道
+        """
         optimizable_tensors = {}
         for group in self.optimizer.param_groups:
-            stored_state = self.optimizer.state.get(group["params"][0], None)
+            old_param = group["params"][0]
+            old_grad = old_param.grad  # 🔧 保存旧梯度
+
+            # 创建新参数（应用 mask）
+            new_param = nn.Parameter(old_param[mask].requires_grad_(True))
+
+            # ✅ 关键修复：保留过滤后的梯度
+            if old_grad is not None:
+                new_param.grad = old_grad[mask].clone()
+
+            # 更新优化器状态（Adam 的 momentum）
+            stored_state = self.optimizer.state.get(old_param, None)
             if stored_state is not None:
                 stored_state["exp_avg"] = stored_state["exp_avg"][mask]
                 stored_state["exp_avg_sq"] = stored_state["exp_avg_sq"][mask]
+                del self.optimizer.state[old_param]
+                self.optimizer.state[new_param] = stored_state
 
-                del self.optimizer.state[group["params"][0]]
-                group["params"][0] = nn.Parameter(
-                    (group["params"][0][mask].requires_grad_(True))
-                )
-                self.optimizer.state[group["params"][0]] = stored_state
+            group["params"][0] = new_param
+            optimizable_tensors[group["name"]] = new_param
 
-                optimizable_tensors[group["name"]] = group["params"][0]
-            else:
-                group["params"][0] = nn.Parameter(
-                    group["params"][0][mask].requires_grad_(True)
-                )
-                optimizable_tensors[group["name"]] = group["params"][0]
         return optimizable_tensors
 
     def prune_points(self, mask):
@@ -549,8 +569,72 @@ class GaussianModel:
 
         return grads
 
-    def add_densification_stats(self, viewspace_point_tensor, update_filter):
-        self.xyz_gradient_accum[update_filter] += torch.norm(
+    def add_densification_stats(self, viewspace_point_tensor, update_filter,
+                                  gr_graph=None, pga_lambda_g=1e-4):
+        """
+        累积 NDC 梯度用于 ADC (Adaptive Density Control) 分割决策
+
+        GR-Gaussian PGA 公式 (论文 Eq. 16):
+            (g_i^c)^v = ∂L_v/∂μ_ndc^{i,v} + λ_g · Σ(|Δρ_ij|) / k
+
+        Args:
+            viewspace_point_tensor: 屏幕空间点张量，包含 NDC 梯度
+            update_filter: 可见性过滤器
+            gr_graph: GaussianGraph 实例（可选，用于 PGA）
+            pga_lambda_g: PGA 强度系数（论文推荐 1e-4）
+        """
+        # 原始 NDC 梯度范数
+        ndc_grad = torch.norm(
             viewspace_point_tensor.grad[update_filter, :2], dim=-1, keepdim=True
         )
+
+        # 🌟 [GR-Gaussian PGA] 添加邻居密度差异项
+        if gr_graph is not None and gr_graph.num_edges > 0:
+            pga_term = self._compute_pga_term(gr_graph, pga_lambda_g)
+            # 只对可见点添加 PGA 项
+            ndc_grad = ndc_grad + pga_term[update_filter].unsqueeze(-1)
+
+        self.xyz_gradient_accum[update_filter] += ndc_grad
         self.denom[update_filter] += 1
+
+    def _compute_pga_term(self, graph, lambda_g: float) -> torch.Tensor:
+        """
+        计算 PGA 项: λ_g · Σ(|Δρ_ij|) / k
+
+        论文公式: 增强梯度幅度，使大的高斯核即使梯度小也能被分割
+
+        Args:
+            graph: GaussianGraph 实例
+            lambda_g: PGA 强度系数
+
+        Returns:
+            pga_term: (N,) 每个高斯点的 PGA 项
+        """
+        density = self.get_density.squeeze()  # (N,)
+        N = density.shape[0]
+
+        edge_index = graph.get_edge_index()  # (2, E)
+        if edge_index is None or edge_index.shape[1] == 0:
+            return torch.zeros(N, device=density.device)
+
+        src = edge_index[0].long()  # (E,)
+        dst = edge_index[1].long()  # (E,)
+
+        # 计算邻居密度差的绝对值: |Δρ_ij| = |ρ_i - ρ_j|
+        density_diff_abs = torch.abs(density[src] - density[dst])  # (E,)
+
+        # 聚合每个节点的邻居密度差
+        density_diff_sum = torch.zeros(N, device=density.device)
+        neighbor_count = torch.zeros(N, device=density.device)
+
+        density_diff_sum.scatter_add_(0, src, density_diff_abs)
+        neighbor_count.scatter_add_(0, src, torch.ones_like(density_diff_abs))
+
+        # 计算平均: Σ(|Δρ_ij|) / k
+        neighbor_count = torch.clamp(neighbor_count, min=1.0)
+        avg_density_diff = density_diff_sum / neighbor_count  # (N,)
+
+        # 应用 λ_g
+        pga_term = lambda_g * avg_density_diff
+
+        return pga_term

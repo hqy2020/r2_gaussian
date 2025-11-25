@@ -153,7 +153,10 @@ class GaussianGraph:
         """
         计算边权重（基于高斯核）
 
-        权重公式: w_ij = exp(-||x_i - x_j||^2 / sigma)
+        论文公式 (GR-Gaussian Eq. 12):
+            w_ij = exp(-||p_i - p_j||² / k)
+
+        其中 k 是 KNN 邻居数量，用作缩放因子
 
         Args:
             xyz: (N, 3) 高斯点位置（用于计算最新的距离）
@@ -164,17 +167,16 @@ class GaussianGraph:
 
         src, dst = self.edge_index[0], self.edge_index[1]
 
-        # 计算边的欧氏距离
-        distances = torch.norm(xyz[src] - xyz[dst], dim=1)  # (E,)
+        # 计算边的欧氏距离平方: ||p_i - p_j||²
+        diff = xyz[src] - xyz[dst]  # (E, 3)
+        distances_squared = (diff * diff).sum(dim=1)  # (E,)
 
-        # 自动计算 sigma（使用局部平均距离作为带宽）
-        if self.sigma is None:
-            sigma = distances.mean().item() + 1e-7
-        else:
-            sigma = self.sigma + 1e-7
+        # 论文公式: w_ij = exp(-d² / k)，其中 k 是邻居数量
+        # k 作为缩放因子，控制权重对距离的敏感度
+        k = float(self.k)
 
-        # 高斯核权重（确保形状为 (E,)）
-        self.edge_weights = torch.exp(-distances / sigma)
+        # 高斯核权重
+        self.edge_weights = torch.exp(-distances_squared / k)
 
     def get_edge_index(self) -> torch.Tensor:
         """返回边索引 (2, E)"""

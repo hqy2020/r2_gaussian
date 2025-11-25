@@ -1,0 +1,17 @@
+==========================================
+GR-Gaussian 完整实现（包含 De-Init）
+==========================================
+
+步骤 1：使用 De-Init 生成降噪初始化点云
+------------------------------------------
+🔄 生成 De-Init 降噪点云...
+Reading camera 1/3 for trainReading camera 2/3 for trainReading camera 3/3 for train
+Reading camera 1/50 for testReading camera 2/50 for testReading camera 3/50 for testReading camera 4/50 for testReading camera 5/50 for testReading camera 6/50 for testReading camera 7/50 for testReading camera 8/50 for testReading camera 9/50 for testReading camera 10/50 for testReading camera 11/50 for testReading camera 12/50 for testReading camera 13/50 for testReading camera 14/50 for testReading camera 15/50 for testReading camera 16/50 for testReading camera 17/50 for testReading camera 18/50 for testReading camera 19/50 for testReading camera 20/50 for testReading camera 21/50 for testReading camera 22/50 for testReading camera 23/50 for testReading camera 24/50 for testReading camera 25/50 for testReading camera 26/50 for testReading camera 27/50 for testReading camera 28/50 for testReading camera 29/50 for testReading camera 30/50 for testReading camera 31/50 for testReading camera 32/50 for testReading camera 33/50 for testReading camera 34/50 for testReading camera 35/50 for testReading camera 36/50 for testReading camera 37/50 for testReading camera 38/50 for testReading camera 39/50 for testReading camera 40/50 for testReading camera 41/50 for testReading camera 42/50 for testReading camera 43/50 for testReading camera 44/50 for testReading camera 45/50 for testReading camera 46/50 for testReading camera 47/50 for testReading camera 48/50 for testReading camera 49/50 for testReading camera 50/50 for test
+Loading Training Cameras
+Loading Test Cameras
+Traceback (most recent call last):
+  File "/home/qyhu/Documents/r2_ours/r2_gaussian/initialize_pcd.py", line 186, in <module>
+    main(args, init_parser.extract(args), lp.extract(args), pp.extract(args))
+  File "/home/qyhu/Documents/r2_ours/r2_gaussian/initialize_pcd.py", line 134, in main
+    assert not osp.exists(
+AssertionError: Initialization file data/369/init_foot_50_3views.npy exists! Delete it first.
