@@ -29,6 +29,13 @@ from r2_gaussian.dataset import Scene
 from r2_gaussian.utils.loss_utils import l1_loss, ssim, tv_3d_loss
 from r2_gaussian.utils.image_utils import metric_vol, metric_proj
 from r2_gaussian.utils.plot_utils import show_two_slice
+from r2_gaussian.utils.binocular_utils import (
+    BinocularConsistencyLoss,
+    estimate_depth_for_ct,
+    get_random_angle_offset
+)
+from r2_gaussian.dataset.cameras import Camera
+import copy
 
 
 def training(
@@ -85,6 +92,59 @@ def training(
         tv_vol_nVoxel = torch.tensor([tv_vol_size, tv_vol_size, tv_vol_size])
         tv_vol_sVoxel = torch.tensor(scanner_cfg["dVoxel"]) * tv_vol_nVoxel
 
+    # 🆕 Set up Binocular Consistency Loss (双目立体一致性损失)
+    use_binocular = getattr(opt, 'enable_binocular_consistency', False)
+    binocular_loss_module = None
+    if use_binocular:
+        print("Use binocular stereo consistency loss")
+        binocular_loss_module = BinocularConsistencyLoss(
+            smooth_weight=opt.binocular_smooth_weight,
+            max_angle_offset=opt.binocular_max_angle_offset,
+            start_iteration=opt.binocular_start_iter,
+            warmup_iterations=opt.binocular_warmup_iters
+        )
+
+    def create_shifted_camera(viewpoint_cam, angle_offset):
+        """为 CT 数据创建角度偏移的虚拟相机"""
+        import math
+        new_angle = viewpoint_cam.angle + angle_offset
+        cos_a = math.cos(new_angle)
+        sin_a = math.sin(new_angle)
+
+        # 新的旋转矩阵 (绕 Y 轴旋转)
+        R_new = np.array([
+            [cos_a, 0, sin_a],
+            [0, 1, 0],
+            [-sin_a, 0, cos_a]
+        ], dtype=np.float32)
+
+        # 计算新的平移向量
+        camera_distance = np.linalg.norm(viewpoint_cam.T)
+        T_new = np.array([
+            camera_distance * sin_a,
+            viewpoint_cam.T[1],
+            -camera_distance * cos_a
+        ], dtype=np.float32)
+
+        # 创建虚拟相机 (复用原相机的图像作为占位符)
+        shifted_cam = Camera(
+            colmap_id=viewpoint_cam.colmap_id,
+            scanner_cfg=scanner_cfg,
+            R=R_new,
+            T=T_new,
+            angle=new_angle,
+            mode=viewpoint_cam.mode,
+            FoVx=viewpoint_cam.FoVx,
+            FoVy=viewpoint_cam.FoVy,
+            image=viewpoint_cam.original_image.cpu(),  # 占位符
+            image_name=f"shifted_{viewpoint_cam.image_name}",
+            uid=viewpoint_cam.uid + 10000,
+            trans=viewpoint_cam.trans,
+            scale=viewpoint_cam.scale,
+            data_device=viewpoint_cam.data_device.type
+        )
+        return shifted_cam, angle_offset
+
     # Train
     iter_start = torch.cuda.Event(enable_timing=True)
     iter_end = torch.cuda.Event(enable_timing=True)
@@ -140,6 +200,42 @@ def training(
             loss_tv = tv_3d_loss(vol_pred, reduction="mean")
             loss["tv"] = loss_tv
             loss["total"] = loss["total"] + opt.lambda_tv * loss_tv
+
+        # 🆕 Binocular Stereo Consistency Loss (双目立体一致性损失)
+        if use_binocular and iteration >= opt.binocular_start_iter:
+            # 生成随机角度偏移
+            angle_offset = get_random_angle_offset(opt.binocular_max_angle_offset)
+
+            # 创建虚拟双目相机
+            shifted_cam, baseline = create_shifted_camera(viewpoint_cam, angle_offset)
+
+            # 渲染虚拟视角
+            shifted_render_pkg = render(shifted_cam, gaussians, pipe)
+            shifted_image = shifted_render_pkg["render"]
+
+            # 估计深度图
+            depth_map = estimate_depth_for_ct(
+                gaussians,
+                viewpoint_cam,
+                method=opt.binocular_depth_method
+            )
+
+            # 计算双目一致性损失
+            # 对于 CT，使用角度偏移作为等效基线
+            focal_length = viewpoint_cam.image_width / 2.0  # 近似焦距
+            bino_losses = binocular_loss_module(
+                rendered_image=image,
+                gt_image=gt_image,
+                shifted_rendered_image=shifted_image,
+                depth_map=depth_map,
+                focal_length=focal_length,
+                baseline=abs(angle_offset) * 100,  # 缩放因子
+                iteration=iteration
+            )
+
+            loss["bino_consistency"] = bino_losses["consistency"]
+            loss["bino_smooth"] = bino_losses["smooth"]
+            loss["total"] = loss["total"] + opt.binocular_loss_weight * bino_losses["total"]
 
         loss["total"].backward()
 

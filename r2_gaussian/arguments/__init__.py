@@ -155,6 +155,16 @@ class OptimizationParams(ParamGroup):
         self.enable_opacity_decay = False  # 默认关闭，保持向下兼容
         self.opacity_decay_factor = 0.995  # 衰减系数，论文推荐值
 
+        # 🆕 Bino: Binocular Stereo Consistency Loss (双目立体一致性损失)
+        # 论文核心创新：通过构建虚拟双目视角对，利用视差约束深度
+        self.enable_binocular_consistency = False  # 是否启用双目一致性损失
+        self.binocular_max_angle_offset = 0.1  # 最大角度偏移(弧度)，CT建议0.05-0.15
+        self.binocular_start_iter = 10000  # 开始应用双目损失的迭代数 (CT可提前)
+        self.binocular_warmup_iters = 2000  # 损失权重warmup迭代数
+        self.binocular_smooth_weight = 0.05  # 视差平滑损失权重，论文推荐0.05
+        self.binocular_loss_weight = 0.1  # 双目一致性损失总权重
+        self.binocular_depth_method = "weighted_average"  # 深度估计方法: weighted_average/max_density/first_surface
+
         super().__init__(parser, "Optimization Parameters")
 
 
