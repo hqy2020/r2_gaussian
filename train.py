@@ -27,7 +27,7 @@ from r2_gaussian.utils.cfg_utils import load_config
 from r2_gaussian.utils.log_utils import prepare_output_and_logger
 from r2_gaussian.dataset import Scene
 from r2_gaussian.utils.loss_utils import l1_loss, ssim, tv_3d_loss
-from r2_gaussian.utils.image_utils import metric_vol, metric_proj
+from r2_gaussian.utils.image_utils import metric_vol, metric_proj, psnr
 from r2_gaussian.utils.plot_utils import show_two_slice
 
 
@@ -37,6 +37,7 @@ def training(
     pipe: PipelineParams,
     ipsm: "IPSMParams",  # IPSM参数
     tb_writer,
+    logger,
     testing_iterations,
     saving_iterations,
     checkpoint_iterations,
@@ -106,8 +107,8 @@ def training(
         diffusion_guide = DiffusionGuidance(ipsm.sd_model_path)
         depth_estimator = get_depth_estimator()
 
-        print(f"✓ IPSM enabled: iter {ipsm.ipsm_start_iter}-{ipsm.ipsm_end_iter}")
-        print(f"  λ_IPSM={ipsm.lambda_ipsm}, λ_depth={ipsm.lambda_ipsm_depth}, λ_geo={ipsm.lambda_ipsm_geo}")
+        logger.info(f"✓ IPSM enabled: iter {ipsm.ipsm_start_iter}-{ipsm.ipsm_end_iter}")
+        logger.info(f"  λ_IPSM={ipsm.lambda_ipsm}, λ_depth={ipsm.lambda_ipsm_depth}, λ_geo={ipsm.lambda_ipsm_geo}")
 
     # Train
     iter_start = torch.cuda.Event(enable_timing=True)
@@ -123,7 +124,7 @@ def training(
 
         # === 动态加载扩散模型 ===
         if ipsm.enable_ipsm and iteration == ipsm.ipsm_start_iter:
-            print(f"[ITER {iteration}] Loading diffusion model...")
+            logger.info(f"[ITER {iteration}] Loading diffusion model...")
             diffusion_guide.load_model()
 
         # Update learning rate
@@ -225,9 +226,21 @@ def training(
             loss["ipsm_sd"] = loss_ipsm_sd
             loss["total"] = loss["total"] + ipsm.lambda_ipsm * loss_ipsm_sd
 
+            # 7. IPSM 质量统计（伪视角渲染 vs warped 图像）
+            with torch.no_grad():
+                # 扩展 mask 维度以匹配图像 (C, H, W) -> (1, C, H, W)
+                mask_expanded = mask_warp.unsqueeze(0).unsqueeze(0).expand_as(x_0_j.unsqueeze(0))
+                x_0_j_batch = x_0_j.unsqueeze(0)  # (1, C, H, W)
+                I_warped_batch = I_warped.unsqueeze(0)  # (1, C, H, W)
+                # 计算有效区域的 PSNR 和 SSIM
+                ipsm_psnr = psnr(x_0_j_batch, I_warped_batch, mask=mask_expanded)
+                ipsm_ssim = ssim(x_0_j * mask_warp, I_warped * mask_warp)
+                loss["ipsm_psnr"] = ipsm_psnr.mean() if ipsm_psnr.numel() > 0 else torch.tensor(0.0)
+                loss["ipsm_ssim"] = ipsm_ssim
+
         # === 卸载扩散模型 ===
         if ipsm.enable_ipsm and iteration == ipsm.ipsm_end_iter:
-            print(f"[ITER {iteration}] Unloading diffusion model...")
+            logger.info(f"[ITER {iteration}] Unloading diffusion model...")
             diffusion_guide.unload_model()
 
         loss["total"].backward()
@@ -280,13 +293,28 @@ def training(
 
             # Progress bar
             if iteration % 10 == 0:
-                progress_bar.set_postfix(
-                    {
-                        "loss": f"{loss['total'].item():.1e}",
-                        "pts": f"{gaussians.get_density.shape[0]:2.1e}",
-                    }
-                )
+                postfix = {
+                    "loss": f"{loss['total'].item():.1e}",
+                    "pts": f"{gaussians.get_density.shape[0]:2.1e}",
+                }
+                # 添加 IPSM 统计到进度条
+                if "ipsm_psnr" in loss:
+                    postfix["ipsm_psnr"] = f"{loss['ipsm_psnr'].item():.2f}"
+                    postfix["ipsm_ssim"] = f"{loss['ipsm_ssim'].item():.4f}"
+                progress_bar.set_postfix(postfix)
                 progress_bar.update(10)
+
+            # IPSM 周期性日志（每500次迭代）
+            if ipsm.enable_ipsm and iteration % 500 == 0 and "ipsm_psnr" in loss:
+                logger.info(
+                    f"[ITER {iteration}] IPSM stats: "
+                    f"PSNR={loss['ipsm_psnr'].item():.2f}, "
+                    f"SSIM={loss['ipsm_ssim'].item():.4f}, "
+                    f"SD={loss['ipsm_sd'].item():.4f}, "
+                    f"Geo={loss['ipsm_geo'].item():.4f}, "
+                    f"Depth={loss['ipsm_depth'].item():.4f}"
+                )
+
             if iteration == opt.iterations:
                 progress_bar.close()
 
@@ -485,9 +513,9 @@ if __name__ == "__main__":
             args_dict[key] = cfg[key]
 
     # Set up logging writer
-    tb_writer = prepare_output_and_logger(args)
+    tb_writer, logger = prepare_output_and_logger(args)
 
-    print("Optimizing " + args.model_path)
+    logger.info("Optimizing " + args.model_path)
 
     torch.autograd.set_detect_anomaly(args.detect_anomaly)
     training(
@@ -496,6 +524,7 @@ if __name__ == "__main__":
         pp.extract(args),
         ipsm_p.extract(args),  # IPSM参数
         tb_writer,
+        logger,
         args.test_iterations,
         args.save_iterations,
         args.checkpoint_iterations,

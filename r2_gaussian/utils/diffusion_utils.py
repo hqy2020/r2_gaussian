@@ -14,7 +14,7 @@ class DiffusionGuidance:
 
     def __init__(
         self,
-        model_path: str = "stabilityai/stable-diffusion-2-inpainting",
+        model_path: str = "runwayml/stable-diffusion-inpainting",
         device: str = "cuda",
         dtype: torch.dtype = torch.float16  # 使用fp16节省显存
     ):
@@ -202,6 +202,10 @@ class DiffusionGuidance:
         # 3. 添加噪声
         noise = torch.randn_like(latent_x0)
         latent_noisy = self.scheduler.add_noise(latent_x0, noise, t)
+        
+        # 确保 dtype 一致（scheduler.add_noise 可能返回 float32）
+        latent_noisy = latent_noisy.to(self.dtype)
+        noise = noise.to(self.dtype)
 
         # 4. 准备inpainting的条件输入
         # 将warped image和mask concatenate作为条件
@@ -209,12 +213,14 @@ class DiffusionGuidance:
         inpaint_condition = torch.cat([
             masked_latent,  # 已知区域
             mask_latent     # mask指示
-        ], dim=1)  # (1, 8, H//8, W//8)
+        ], dim=1)  # (1, 5, H//8, W//8)
 
         # 5. L_R1: 渲染图像 → 修正分布
         # ε_φ(x_t, t, I_warped, mask)
         with torch.no_grad():
             latent_model_input = torch.cat([latent_noisy, inpaint_condition], dim=1)
+            # 确保输入 dtype 与 UNet 一致
+            latent_model_input = latent_model_input.to(self.dtype)
             noise_pred_inpaint = self.unet_inpainting(
                 latent_model_input,
                 t,
@@ -237,6 +243,8 @@ class DiffusionGuidance:
                 zero_mask       # 全零 mask (1通道)
             ], dim=1)  # (1, 5, H//8, W//8)
             latent_base_input = torch.cat([latent_noisy, uncond_condition], dim=1)  # (1, 9, H//8, W//8)
+            # 确保输入 dtype 与 UNet 一致
+            latent_base_input = latent_base_input.to(self.dtype)
 
             noise_pred_base = self.unet_base(
                 latent_base_input,

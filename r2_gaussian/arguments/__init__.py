@@ -178,7 +178,7 @@ class IPSMParams(ParamGroup):
 
         # === 扩散模型参数 ===
         self.ipsm_cfg_scale = 7.5      # Classifier-Free Guidance强度
-        self.sd_model_path = "stabilityai/stable-diffusion-2-inpainting"  # SD模型路径
+        self.sd_model_path = "runwayml/stable-diffusion-inpainting"  # SD模型路径
 
         # === 伪视角采样 ===
         self.ipsm_pseudo_angle_range = 15.0  # 伪视角角度扰动范围（度）
