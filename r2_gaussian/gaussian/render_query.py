@@ -150,71 +150,58 @@ def render(
         rotations = pc.get_rotation
 
     # 🎯 DropGaussian: 稀疏视角正则化 (CVPR 2025)
+    # 改进版：视角感知 + 分阶段策略
     # 仅在训练时应用，测试时使用全部 Gaussian
     if is_train and model_params is not None and model_params.use_drop_gaussian:
-        # 🎯 DropGaussian 动态 drop rate 策略（严格遵循论文）
-        # 阶段 1：前期稳定训练（iteration < drop_start_iter）：drop_rate = 0
-        # 阶段 2：渐进式增长（drop_start_iter ≤ iteration ≤ drop_end_iter）：线性增长到 gamma
-        # 阶段 3：稳定 drop（iteration > drop_end_iter）：drop_rate = gamma
-
-        if iteration < model_params.drop_start_iter:
-            # 前期不 drop，确保充分训练
+        # === 分阶段策略 ===
+        # warmup 阶段不 drop，让网络充分利用稀疏信息建立结构
+        if model_params.drop_view_aware and iteration < model_params.drop_warmup_iter:
             drop_rate = 0.0
-        elif iteration <= model_params.drop_end_iter:
-            # 渐进式增长：从 0 线性增长到 gamma
-            progress = (iteration - model_params.drop_start_iter) / (model_params.drop_end_iter - model_params.drop_start_iter)
-            drop_rate = model_params.drop_gamma * progress
         else:
-            # 后期维持最大 drop rate
-            drop_rate = model_params.drop_gamma
-
-        # 🔥 Importance-Aware Drop: 保护高 opacity Gaussians
-        if model_params.use_importance_aware_drop:
-            # 计算激活后的 opacity (sigmoid(density))
-            opacity_activated = torch.sigmoid(density.squeeze())
-
-            # 确定 top X% 的 opacity 阈值
-            k = int(len(opacity_activated) * model_params.importance_protect_ratio)
-            if k > 0:
-                # 获取 top k 的 opacity 阈值
-                top_k_values, _ = torch.topk(opacity_activated, k)
-                threshold = top_k_values[-1]  # top X% 的最小值作为阈值
-
-                # 创建重要性 mask（高 opacity = 重要）
-                is_important = opacity_activated >= threshold
-
-                # 对于重要的 Gaussians：使用 20% 的 drop rate（大幅保护）
-                # 对于不重要的 Gaussians：使用正常 drop rate
-                adaptive_drop_rate = torch.where(
-                    is_important,
-                    torch.tensor(drop_rate * 0.2, device="cuda"),  # 保护：drop rate 降低 80%
-                    torch.tensor(drop_rate, device="cuda")  # 正常 drop rate
-                )
-
-                # 应用自适应 dropout（逐元素）
-                # 生成随机 mask：rand() > drop_rate 时保留
-                random_mask = torch.rand(len(adaptive_drop_rate), device="cuda")
-                keep_mask = random_mask > adaptive_drop_rate
-
-                # 计算补偿因子（保留的需要放大以补偿被丢弃的）
-                compensation = torch.where(
-                    keep_mask,
-                    1.0 / (1.0 - adaptive_drop_rate).clamp(min=1e-6),  # 补偿因子
-                    torch.tensor(0.0, device="cuda")  # 被丢弃的设为 0
-                )
+            # 基础 drop rate（官方公式）
+            if model_params.drop_view_aware:
+                # 从 warmup 结束后开始计算进度
+                effective_iter = iteration - model_params.drop_warmup_iter
+                progress = min(effective_iter / model_params.drop_full_iter, 1.0)
             else:
-                # 如果 k=0（数量太少），退回到标准 dropout
-                compensation = torch.ones(density.shape[0], dtype=torch.float32, device="cuda")
-                d = torch.nn.Dropout(p=drop_rate)
-                compensation = d(compensation)
-        else:
-            # 标准 DropGaussian（均匀随机 drop）
+                progress = min(iteration / model_params.drop_full_iter, 1.0)
+            base_drop_rate = model_params.drop_gamma * progress
+
+            # === 视角感知调整 ===
+            if model_params.drop_view_aware:
+                # 计算当前视角到最近训练视角的距离
+                current_idx = viewpoint_camera.uid
+                n_total = 50  # 总视角数（CT 扫描固定为 50）
+                n_train = model_params.num_train_views  # 训练视角数量
+
+                # 训练视角均匀分布：[0, n_total/n_train, 2*n_total/n_train, ...]
+                train_indices = [int(i * n_total / n_train) for i in range(n_train)]
+
+                # 计算到最近训练视角的距离（考虑环形拓扑）
+                min_dist = min(
+                    min(abs(current_idx - t), n_total - abs(current_idx - t))
+                    for t in train_indices
+                )
+
+                # 最大可能距离（两个训练视角之间的一半）
+                max_dist = n_total / (2 * n_train)
+
+                # 距离衰减因子：距离越远，drop rate 越低
+                # dist_factor ∈ [drop_min_factor, 1.0]
+                dist_ratio = min(min_dist / max_dist, 1.0)
+                dist_factor = 1.0 - model_params.drop_dist_scale * dist_ratio
+                dist_factor = max(dist_factor, model_params.drop_min_factor)
+
+                drop_rate = base_drop_rate * dist_factor
+            else:
+                drop_rate = base_drop_rate
+
+        # 应用 dropout（仅当 drop_rate > 0）
+        if drop_rate > 0:
             compensation = torch.ones(density.shape[0], dtype=torch.float32, device="cuda")
             d = torch.nn.Dropout(p=drop_rate)
             compensation = d(compensation)
-
-        # 应用补偿因子到 density (opacity)
-        density = density * compensation[:, None]
+            density = density * compensation[:, None]
 
     # Rasterize visible Gaussians to image, obtain their radii (on screen).
     rendered_image, radii = rasterizer(

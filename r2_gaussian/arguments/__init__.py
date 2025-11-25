@@ -87,13 +87,18 @@ class ModelParams(ParamGroup):
         self.graph_lambda_lap = 0.0008  # 拉普拉斯正则化权重
         self.graph_update_interval = 100  # 图重建间隔 (iterations)
 
-        # 🎯 DropGaussian 参数 (2025-11-19 CVPR 2025)
+        # 🎯 DropGaussian 参数 (CVPR 2025)
+        # 严格对齐官方实现: https://github.com/DCVL-3D/DropGaussian_release
         self.use_drop_gaussian = False  # 是否启用 DropGaussian 稀疏视角正则化
-        self.drop_gamma = 0.1  # DropGaussian 最大 drop rate（论文推荐 0.2，稀疏场景建议 0.1）
-        self.drop_start_iter = 5000  # 开始 drop 的迭代次数（前期稳定训练）
-        self.drop_end_iter = 30000  # 达到最大 drop rate 的迭代次数
-        self.use_importance_aware_drop = False  # 是否启用 Importance-Aware Drop（保护高 opacity Gaussians）
-        self.importance_protect_ratio = 0.2  # 保护 top X% 高 opacity Gaussians（默认 20%）
+        self.drop_gamma = 0.2  # 最大 drop rate（官方默认 0.2）
+        self.drop_full_iter = 10000  # 达到最大 drop rate 的迭代次数（官方默认 10000）
+
+        # 🎯 DropGaussian 改进版参数（视角感知 + 分阶段）
+        self.drop_view_aware = False  # 是否启用视角感知自适应 drop rate
+        self.drop_warmup_iter = 5000  # warmup 阶段不 drop（分阶段策略）
+        self.drop_dist_scale = 0.6  # 距离衰减强度，越大远视角 drop 越少
+        self.drop_min_factor = 0.2  # 最小 drop rate 因子（远离训练视角时）
+        self.num_train_views = 3  # 训练视角数量（用于计算距离）
 
         super().__init__(parser, "Loading Parameters", sentinel)
 
