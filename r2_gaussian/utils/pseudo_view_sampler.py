@@ -156,8 +156,12 @@ class PseudoViewSampler:
             # 手动更新变换矩阵
             pseudo_camera.world_view_transform = self._compute_world_view_transform(R, T)
             if hasattr(pseudo_camera, 'projection_matrix'):
+                # 确保设备一致
+                device = pseudo_camera.projection_matrix.device
+                world_view = pseudo_camera.world_view_transform.to(device)
+                pseudo_camera.world_view_transform = world_view
                 pseudo_camera.full_proj_transform = (
-                    pseudo_camera.world_view_transform.unsqueeze(0).bmm(
+                    world_view.unsqueeze(0).bmm(
                         pseudo_camera.projection_matrix.unsqueeze(0)
                     )
                 ).squeeze(0)

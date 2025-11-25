@@ -106,7 +106,7 @@ def training(
         print(f"📊 尝试启用伪视角深度监督: weight={opt.depth_pseudo_weight}, "
               f"iter=[{opt.start_sample_pseudo}, {opt.end_sample_pseudo}]")
         try:
-            depth_estimator = get_depth_estimator(model_type="dpt_large", device="cuda")
+            depth_estimator = get_depth_estimator(model_type="dpt_hybrid", device="cuda")
             pseudo_view_sampler = get_pseudo_view_sampler(sampler_type="ct_circular")
             print("✅ 深度监督模块加载成功")
         except Exception as e:
@@ -182,8 +182,8 @@ def training(
             with torch.no_grad():
                 pseudo_render_pkg = render(pseudo_cam, gaussians, pipe)
                 pseudo_image = pseudo_render_pkg["render"]
-                # 获取 MiDaS 深度估计
-                midas_depth = depth_estimator(pseudo_image)
+                # 获取 MiDaS 深度估计（需要 batch 维度）
+                midas_depth = depth_estimator(pseudo_image.unsqueeze(0)).squeeze(0)
             # 渲染深度（需要梯度）
             # 注意：X-ray 投影没有真正的深度图，这里用渲染的累积密度近似
             # 计算深度损失

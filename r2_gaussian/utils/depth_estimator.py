@@ -62,11 +62,19 @@ class MiDaSDepthEstimator(nn.Module):
         # 加载预训练模型
         print(f"📦 加载 MiDaS 模型: {model_type}")
 
+        # torch.hub 模型名称映射
+        HUB_MODEL_NAMES = {
+            "dpt_large": "DPT_Large",
+            "dpt_hybrid": "DPT_Hybrid",
+            "midas_small": "MiDaS_small",
+        }
+
         try:
             # 使用 torch.hub 加载 MiDaS
+            hub_name = HUB_MODEL_NAMES.get(model_type, "DPT_Large")
             self.model = torch.hub.load(
                 "intel-isl/MiDaS",
-                model_type.replace("_", "-") if model_type != "midas_small" else "MiDaS_small",
+                hub_name,
                 pretrained=True,
                 trust_repo=True
             )
@@ -257,7 +265,7 @@ _global_depth_estimator: Optional[MiDaSDepthEstimator] = None
 
 
 def get_depth_estimator(
-    model_type: str = "dpt_large",
+    model_type: str = "dpt_hybrid",
     device: str = "cuda"
 ) -> MiDaSDepthEstimator:
     """
@@ -280,7 +288,7 @@ def get_depth_estimator(
 
 def estimate_depth(
     image: torch.Tensor,
-    model_type: str = "dpt_large",
+    model_type: str = "dpt_hybrid",
     device: str = "cuda"
 ) -> torch.Tensor:
     """
