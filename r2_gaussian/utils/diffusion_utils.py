@@ -142,13 +142,14 @@ class DiffusionGuidance:
         Returns:
             mask_latent: (1, 1, H_latent, W_latent)
         """
-        mask = mask.unsqueeze(0).unsqueeze(0).float()  # (1, 1, H, W)
+        mask = mask.unsqueeze(0).unsqueeze(0)  # (1, 1, H, W)
         mask_latent = F.interpolate(
-            mask,
+            mask.float(),
             size=latent_size,
             mode='nearest'
         )
-        return mask_latent
+        # 确保 mask_latent 与模型 dtype 一致
+        return mask_latent.to(self.dtype)
 
     def compute_ipsm_loss(
         self,
@@ -226,9 +227,19 @@ class DiffusionGuidance:
 
         # 6. L_R2: 修正分布 → 扩散prior
         # ε_*(x_t, t) - ε_φ(x_t, t, I_warped, mask)
+        # 注意：SD Inpainting UNet 需要 9 通道输入 [noisy(4) + masked_img(4) + mask(1)]
+        # 对于 base prior，使用"无条件" inpainting：mask=0 表示不 inpaint 任何区域
         with torch.no_grad():
+            # 创建无条件 inpainting 输入：mask 全零，保留原始图像
+            zero_mask = torch.zeros_like(mask_latent)
+            uncond_condition = torch.cat([
+                latent_warped,  # 原始图像 latent (4通道)
+                zero_mask       # 全零 mask (1通道)
+            ], dim=1)  # (1, 5, H//8, W//8)
+            latent_base_input = torch.cat([latent_noisy, uncond_condition], dim=1)  # (1, 9, H//8, W//8)
+
             noise_pred_base = self.unet_base(
-                latent_noisy,
+                latent_base_input,
                 t,
                 encoder_hidden_states=self._get_text_embeddings(text_prompt),
             ).sample
