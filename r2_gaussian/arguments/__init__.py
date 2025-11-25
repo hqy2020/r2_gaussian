@@ -146,7 +146,7 @@ class OptimizationParams(ParamGroup):
         self.end_sample_pseudo = 10000
         self.start_perturbation = 2000
         self.depth_weight = 0.05
-        self.depth_pseudo_weight = 0
+        self.depth_pseudo_weight = 0.0  # float 类型，默认关闭
         self.feature_lr = 0.0025
         self.opacity_lr = 0.05
         

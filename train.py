@@ -30,6 +30,15 @@ from r2_gaussian.utils.loss_utils import l1_loss, ssim, tv_3d_loss
 from r2_gaussian.utils.image_utils import metric_vol, metric_proj
 from r2_gaussian.utils.plot_utils import show_two_slice
 
+# FSGS 伪视角深度监督
+try:
+    from r2_gaussian.utils.depth_estimator import get_depth_estimator, compute_depth_loss
+    from r2_gaussian.utils.pseudo_view_sampler import get_pseudo_view_sampler
+    HAS_DEPTH_SUPERVISION = True
+except ImportError as e:
+    HAS_DEPTH_SUPERVISION = False
+    print(f"⚠️ 深度监督模块未加载: {e}")
+
 
 def training(
     dataset: ModelParams,
@@ -84,6 +93,27 @@ def training(
         tv_vol_size = opt.tv_vol_size
         tv_vol_nVoxel = torch.tensor([tv_vol_size, tv_vol_size, tv_vol_size])
         tv_vol_sVoxel = torch.tensor(scanner_cfg["dVoxel"]) * tv_vol_nVoxel
+
+    # Set up depth supervision (FSGS)
+    use_depth_supervision = (
+        HAS_DEPTH_SUPERVISION and
+        opt.depth_pseudo_weight > 0 and
+        opt.start_sample_pseudo < opt.iterations
+    )
+    depth_estimator = None
+    pseudo_view_sampler = None
+    if use_depth_supervision:
+        print(f"📊 尝试启用伪视角深度监督: weight={opt.depth_pseudo_weight}, "
+              f"iter=[{opt.start_sample_pseudo}, {opt.end_sample_pseudo}]")
+        try:
+            depth_estimator = get_depth_estimator(model_type="dpt_large", device="cuda")
+            pseudo_view_sampler = get_pseudo_view_sampler(sampler_type="ct_circular")
+            print("✅ 深度监督模块加载成功")
+        except Exception as e:
+            print(f"⚠️ 深度监督模块加载失败，将禁用深度监督: {e}")
+            use_depth_supervision = False
+            depth_estimator = None
+            pseudo_view_sampler = None
 
     # Train
     iter_start = torch.cuda.Event(enable_timing=True)
@@ -140,6 +170,39 @@ def training(
             loss_tv = tv_3d_loss(vol_pred, reduction="mean")
             loss["tv"] = loss_tv
             loss["total"] = loss["total"] + opt.lambda_tv * loss_tv
+
+        # FSGS 伪视角深度监督
+        if (use_depth_supervision and
+            iteration >= opt.start_sample_pseudo and
+            iteration <= opt.end_sample_pseudo and
+            iteration % opt.sample_pseudo_interval == 0):
+            # 生成伪视角
+            pseudo_cam = pseudo_view_sampler.sample_pseudo_view(viewpoint_cam)
+            # 渲染伪视角
+            with torch.no_grad():
+                pseudo_render_pkg = render(pseudo_cam, gaussians, pipe)
+                pseudo_image = pseudo_render_pkg["render"]
+                # 获取 MiDaS 深度估计
+                midas_depth = depth_estimator(pseudo_image)
+            # 渲染深度（需要梯度）
+            # 注意：X-ray 投影没有真正的深度图，这里用渲染的累积密度近似
+            # 计算深度损失
+            rendered_depth = pseudo_render_pkg.get("depth", pseudo_image)  # 如果有深度输出则使用
+            if rendered_depth.shape != midas_depth.shape:
+                import torch.nn.functional as F
+                rendered_depth = F.interpolate(
+                    rendered_depth.unsqueeze(0) if rendered_depth.dim() == 3 else rendered_depth,
+                    size=midas_depth.shape[-2:],
+                    mode="bilinear",
+                    align_corners=False
+                ).squeeze(0)
+            loss_depth = compute_depth_loss(
+                rendered_depth.unsqueeze(0) if rendered_depth.dim() == 3 else rendered_depth,
+                midas_depth,
+                loss_type="pearson"
+            )
+            loss["depth_pseudo"] = loss_depth
+            loss["total"] = loss["total"] + opt.depth_pseudo_weight * loss_depth
 
         loss["total"].backward()
 
