@@ -102,7 +102,7 @@ def training(
             max_angle_offset=opt.binocular_max_angle_offset,
             start_iteration=opt.binocular_start_iter,
             warmup_iterations=opt.binocular_warmup_iters
-        )
+        ).cuda()  # 🔧 Fix P0: 将模块移至 GPU，避免 CUDA 设备不匹配
 
     def create_shifted_camera(viewpoint_cam, angle_offset):
         """为 CT 数据创建角度偏移的虚拟相机"""
