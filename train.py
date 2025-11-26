@@ -87,28 +87,18 @@ def training(
         tv_vol_nVoxel = torch.tensor([tv_vol_size, tv_vol_size, tv_vol_size])
         tv_vol_sVoxel = torch.tensor(scanner_cfg["dVoxel"]) * tv_vol_nVoxel
 
-    # === IPSM初始化 ===
-    ipsm_warp = None
-    diffusion_guide = None
-    depth_estimator = None
-
+    # === IPSM 简化版初始化 ===
     if ipsm.enable_ipsm:
-        from r2_gaussian.utils.ipsm_utils import XRayIPSMWarping
-        from r2_gaussian.utils.diffusion_utils import DiffusionGuidance
-        from r2_gaussian.utils.depth_estimator import get_depth_estimator
-        from r2_gaussian.utils.loss_utils import (
-            ipsm_depth_regularization,
-            geometry_consistency_loss
+        from r2_gaussian.utils.ipsm_utils import (
+            simple_angle_warp,
+            compute_warp_mask,
+            depth_tv_loss,
+            edge_aware_smooth_loss
         )
-        from r2_gaussian.utils.ipsm_utils import sample_nearby_viewpoint
-        from r2_gaussian.utils.diffusion_utils import ct_to_rgb
+        from r2_gaussian.utils.loss_utils import geometry_consistency_loss
 
-        ipsm_warp = XRayIPSMWarping(scanner_cfg, pipe)
-        diffusion_guide = DiffusionGuidance(ipsm.sd_model_path)
-        depth_estimator = get_depth_estimator()
-
-        logger.info(f"✓ IPSM enabled: iter {ipsm.ipsm_start_iter}-{ipsm.ipsm_end_iter}")
-        logger.info(f"  λ_IPSM={ipsm.lambda_ipsm}, λ_depth={ipsm.lambda_ipsm_depth}, λ_geo={ipsm.lambda_ipsm_geo}")
+        logger.info(f"✓ IPSM (简化版) enabled: iter {ipsm.ipsm_start_iter}-{ipsm.ipsm_end_iter}")
+        logger.info(f"  λ_geo={ipsm.lambda_ipsm_geo}, λ_tv={ipsm.lambda_ipsm_tv}")
 
     # Train
     iter_start = torch.cuda.Event(enable_timing=True)
@@ -122,10 +112,9 @@ def training(
     for iteration in range(first_iter, opt.iterations + 1):
         iter_start.record()
 
-        # === 动态加载扩散模型 ===
+        # === IPSM 开始日志 ===
         if ipsm.enable_ipsm and iteration == ipsm.ipsm_start_iter:
-            logger.info(f"[ITER {iteration}] Loading diffusion model...")
-            diffusion_guide.load_model()
+            logger.info(f"[ITER {iteration}] IPSM guidance started")
 
         # Update learning rate
         gaussians.update_learning_rate(iteration)
@@ -171,77 +160,64 @@ def training(
             loss["tv"] = loss_tv
             loss["total"] = loss["total"] + opt.lambda_tv * loss_tv
 
-        # === IPSM guidance ===
+        # === IPSM 简化版指导 ===
         if ipsm.enable_ipsm and ipsm.ipsm_start_iter <= iteration < ipsm.ipsm_end_iter:
-            # 1. 采样伪视角
-            pseudo_cam = sample_nearby_viewpoint(
-                viewpoint_cam,
-                angle_range=ipsm.ipsm_pseudo_angle_range
-            )
+            from r2_gaussian.utils.ipsm_utils import sample_nearby_viewpoint
 
-            # 2. 渲染伪视角
+            # 计算 warmup 权重
+            warmup_progress = min(1.0, (iteration - ipsm.ipsm_start_iter) / max(1, ipsm.ipsm_warmup_iters))
+            ipsm_weight = warmup_progress
+
+            # 1. 随机采样角度偏移（度）
+            min_angle = ipsm.ipsm_min_angle_diff
+            max_angle = ipsm.ipsm_pseudo_angle_range
+
+            # 确保角度差 >= min_angle
+            angle_sign = 1 if np.random.rand() > 0.5 else -1
+            angle_deg = angle_sign * (min_angle + np.random.rand() * (max_angle - min_angle))
+
+            # 2. 采样伪视角并渲染（使用相同的角度）
+            pseudo_cam, angle_rad = sample_nearby_viewpoint(
+                viewpoint_cam,
+                angle_deg=angle_deg  # 传入指定角度
+            )
             pseudo_pkg = render(pseudo_cam, gaussians, pipe)
-            x_0_j = pseudo_pkg["render"]
-            depth_unseen = pseudo_pkg["depth"]
+            pseudo_render = pseudo_pkg["render"]
 
-            # 3. Inverse warping
-            I_warped, mask_warp = ipsm_warp.warp_via_voxel_projection(
-                gt_image,
-                viewpoint_cam,
-                pseudo_cam,
-                depth_unseen,
-                tau=ipsm.ipsm_mask_tau
-            )
+            # 3. 简单角度 warp：gt_image 平移得到伪视角的合成 GT
+            # 对于 X-ray CT 360° 扫描：小角度旋转 ≈ 水平平移
+            I_warped = simple_angle_warp(gt_image, angle_rad, direction="horizontal")
 
-            # 4. 深度正则化
-            depth_seen = render_pkg["depth"]
-            depth_mono_seen = depth_estimator.estimate(gt_image)
-            depth_mono_unseen = depth_estimator.estimate(x_0_j)
+            # 4. 计算有效区域 mask
+            H, W = gt_image.shape[-2:]
+            mask_warp = compute_warp_mask((H, W), angle_rad, device=gt_image.device)
 
-            loss_ipsm_depth = ipsm_depth_regularization(
-                depth_seen, depth_mono_seen,
-                depth_unseen, depth_mono_unseen,
-                eta_d=ipsm.ipsm_eta_d
-            )
-            loss["ipsm_depth"] = loss_ipsm_depth
-            loss["total"] = loss["total"] + ipsm.lambda_ipsm_depth * loss_ipsm_depth
-
-            # 5. 几何一致性（更严格mask）
-            _, mask_geo = ipsm_warp.warp_via_voxel_projection(
-                gt_image, viewpoint_cam, pseudo_cam, depth_unseen,
-                tau=ipsm.ipsm_mask_tau_geo
-            )
-            loss_geo = geometry_consistency_loss(x_0_j, I_warped, mask_geo)
+            # 5. 几何一致性损失：伪视角渲染 vs 合成 GT
+            loss_geo = geometry_consistency_loss(pseudo_render, I_warped, mask_warp)
             loss["ipsm_geo"] = loss_geo
-            loss["total"] = loss["total"] + ipsm.lambda_ipsm_geo * loss_geo
+            loss["total"] = loss["total"] + ipsm.lambda_ipsm_geo * ipsm_weight * loss_geo
 
-            # 6. Score distillation
-            loss_ipsm_sd = diffusion_guide.compute_ipsm_loss(
-                ct_to_rgb(x_0_j),
-                ct_to_rgb(I_warped),
-                mask_warp,
-                eta_r=ipsm.ipsm_eta_r,
-                cfg_scale=ipsm.ipsm_cfg_scale
-            )
-            loss["ipsm_sd"] = loss_ipsm_sd
-            loss["total"] = loss["total"] + ipsm.lambda_ipsm * loss_ipsm_sd
+            # 6. 深度 TV 正则化（替代 MiDaS）
+            if "depth" in render_pkg and ipsm.lambda_ipsm_tv > 0:
+                depth_rendered = render_pkg["depth"]
+                loss_tv_depth = depth_tv_loss(depth_rendered)
+                loss["ipsm_tv"] = loss_tv_depth
+                loss["total"] = loss["total"] + ipsm.lambda_ipsm_tv * ipsm_weight * loss_tv_depth
 
-            # 7. IPSM 质量统计（伪视角渲染 vs warped 图像）
+            # 7. 质量统计：伪视角渲染 vs 合成 GT
             with torch.no_grad():
-                # 扩展 mask 维度以匹配图像 (C, H, W) -> (1, C, H, W)
-                mask_expanded = mask_warp.unsqueeze(0).unsqueeze(0).expand_as(x_0_j.unsqueeze(0))
-                x_0_j_batch = x_0_j.unsqueeze(0)  # (1, C, H, W)
-                I_warped_batch = I_warped.unsqueeze(0)  # (1, C, H, W)
-                # 计算有效区域的 PSNR 和 SSIM
-                ipsm_psnr = psnr(x_0_j_batch, I_warped_batch, mask=mask_expanded)
-                ipsm_ssim = ssim(x_0_j * mask_warp, I_warped * mask_warp)
-                loss["ipsm_psnr"] = ipsm_psnr.mean() if ipsm_psnr.numel() > 0 else torch.tensor(0.0)
-                loss["ipsm_ssim"] = ipsm_ssim
+                if mask_warp.sum() > 100:  # 确保有足够像素
+                    ipsm_psnr_val = psnr(pseudo_render.unsqueeze(0), I_warped.unsqueeze(0))
+                    ipsm_ssim_val = ssim(pseudo_render * mask_warp, I_warped * mask_warp)
+                    loss["ipsm_psnr"] = ipsm_psnr_val.mean()
+                    loss["ipsm_ssim"] = ipsm_ssim_val
+                else:
+                    loss["ipsm_psnr"] = torch.tensor(0.0)
+                    loss["ipsm_ssim"] = torch.tensor(0.0)
 
-        # === 卸载扩散模型 ===
+        # === IPSM 结束日志 ===
         if ipsm.enable_ipsm and iteration == ipsm.ipsm_end_iter:
-            logger.info(f"[ITER {iteration}] Unloading diffusion model...")
-            diffusion_guide.unload_model()
+            logger.info(f"[ITER {iteration}] IPSM guidance ended")
 
         loss["total"].backward()
 
@@ -305,14 +281,13 @@ def training(
                 progress_bar.update(10)
 
             # IPSM 周期性日志（每500次迭代）
-            if ipsm.enable_ipsm and iteration % 500 == 0 and "ipsm_psnr" in loss:
+            if ipsm.enable_ipsm and iteration % 500 == 0 and "ipsm_geo" in loss:
+                tv_str = f", TV={loss['ipsm_tv'].item():.4f}" if "ipsm_tv" in loss else ""
                 logger.info(
                     f"[ITER {iteration}] IPSM stats: "
-                    f"PSNR={loss['ipsm_psnr'].item():.2f}, "
-                    f"SSIM={loss['ipsm_ssim'].item():.4f}, "
-                    f"SD={loss['ipsm_sd'].item():.4f}, "
-                    f"Geo={loss['ipsm_geo'].item():.4f}, "
-                    f"Depth={loss['ipsm_depth'].item():.4f}"
+                    f"PSNR={loss.get('ipsm_psnr', torch.tensor(0.0)).item():.2f}, "
+                    f"SSIM={loss.get('ipsm_ssim', torch.tensor(0.0)).item():.4f}, "
+                    f"Geo={loss['ipsm_geo'].item():.4f}{tv_str}"
                 )
 
             if iteration == opt.iterations:

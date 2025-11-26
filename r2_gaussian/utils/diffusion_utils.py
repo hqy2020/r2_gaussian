@@ -221,11 +221,13 @@ class DiffusionGuidance:
             latent_model_input = torch.cat([latent_noisy, inpaint_condition], dim=1)
             # 确保输入 dtype 与 UNet 一致
             latent_model_input = latent_model_input.to(self.dtype)
-            noise_pred_inpaint = self.unet_inpainting(
-                latent_model_input,
-                t,
-                encoder_hidden_states=self._get_text_embeddings(text_prompt),
-            ).sample
+            # 使用 autocast 确保 timestep embedding 的 dtype 一致
+            with torch.cuda.amp.autocast(dtype=self.dtype):
+                noise_pred_inpaint = self.unet_inpainting(
+                    latent_model_input,
+                    t,
+                    encoder_hidden_states=self._get_text_embeddings(text_prompt),
+                ).sample
 
         # 计算L_R1
         w_t = self._get_weight(t)
@@ -246,11 +248,13 @@ class DiffusionGuidance:
             # 确保输入 dtype 与 UNet 一致
             latent_base_input = latent_base_input.to(self.dtype)
 
-            noise_pred_base = self.unet_base(
-                latent_base_input,
-                t,
-                encoder_hidden_states=self._get_text_embeddings(text_prompt),
-            ).sample
+            # 使用 autocast 确保 timestep embedding 的 dtype 一致
+            with torch.cuda.amp.autocast(dtype=self.dtype):
+                noise_pred_base = self.unet_base(
+                    latent_base_input,
+                    t,
+                    encoder_hidden_states=self._get_text_embeddings(text_prompt),
+                ).sample
 
         loss_R2 = w_t * F.mse_loss(noise_pred_base, noise_pred_inpaint, reduction='mean')
 
@@ -269,7 +273,9 @@ class DiffusionGuidance:
         - sqrt(1 - α_t) / sqrt(α_t) (本实现)
         """
         alpha_t = self.scheduler.alphas_cumprod[t]
-        return torch.sqrt((1 - alpha_t) / alpha_t)
+        weight = torch.sqrt((1 - alpha_t) / alpha_t)
+        # 确保权重 dtype 与模型一致，避免 fp16/fp32 混合计算
+        return weight.to(self.dtype)
 
     def _get_text_embeddings(self, prompt: str) -> torch.Tensor:
         """
