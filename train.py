@@ -41,6 +41,18 @@ try:
 except ImportError as e:
     HAS_PSEUDO_COREG = False
     print(f"📦 Pseudo-view Co-regularization modules not available: {e}")
+
+# CoR-GS Stage 2: Co-pruning (2025-11-26)
+try:
+    from r2_gaussian.utils.coprune_utils import (
+        co_pruning,
+        compute_point_disagreement
+    )
+    HAS_COPRUNE = True
+    print("✅ CoR-GS Stage 2 Co-pruning modules loaded")
+except ImportError as e:
+    HAS_COPRUNE = False
+    print(f"📦 Co-pruning modules not available: {e}")
 from r2_gaussian.utils.plot_utils import show_two_slice
 
 
@@ -84,13 +96,36 @@ def training(
     gaussiansN = dataset.gaussiansN  # 获取模型数量（默认 2）
     gaussians_list = []
 
+    # 🔥 CoR-GS v2: 获取差异化参数
+    corgs_init_noise_std = getattr(dataset, 'corgs_init_noise_std', 0.0)
+    corgs_model_seeds = getattr(dataset, 'corgs_model_seeds', None)
+
     print(f"🔧 初始化 {gaussiansN} 个 Gaussian 模型...")
+    if corgs_init_noise_std > 0 and gaussiansN >= 2:
+        print(f"   [CoR-GS v2] 差异化初始化: noise_std={corgs_init_noise_std}")
+
     for idx in range(gaussiansN):
+        # 🔥 CoR-GS v2: 为不同模型设置不同随机种子
+        if corgs_model_seeds is not None and idx < len(corgs_model_seeds):
+            model_seed = corgs_model_seeds[idx]
+            torch.manual_seed(model_seed)
+            np.random.seed(model_seed)
+            print(f"   [CoR-GS v2] 模型 {idx} 使用随机种子: {model_seed}")
+
         gs = GaussianModel(scale_bound)
         initialize_gaussian(gs, dataset, None)
+
+        # 🔥 CoR-GS v2: 对非首个模型添加初始化位置扰动（让双模型分化）
+        if idx > 0 and corgs_init_noise_std > 0:
+            with torch.no_grad():
+                xyz = gs.get_xyz  # (N, 3)
+                noise = torch.randn_like(xyz) * corgs_init_noise_std
+                gs._xyz.data = xyz + noise
+            print(f"   [CoR-GS v2] 模型 {idx} 添加位置扰动: std={corgs_init_noise_std}")
+
         gs.training_setup(opt)
         gaussians_list.append(gs)
-        print(f"  ✓ 模型 {idx+1}/{gaussiansN} 初始化完成")
+        print(f"  ✓ 模型 {idx+1}/{gaussiansN} 初始化完成 (点数: {gs.get_xyz.shape[0]})")
 
     # 向下兼容：单模型时使用原有变量名
     if gaussiansN == 1:
@@ -340,6 +375,47 @@ def training(
                     raise ValueError(
                         f"Model {idx+1}: No Gaussian left. Change adaptive control hyperparameters!"
                     )
+
+            # ========== CoR-GS Stage 2: Co-pruning (2025-11-26) ==========
+            if (HAS_COPRUNE and
+                gaussiansN >= 2 and
+                hasattr(dataset, 'enable_coprune') and dataset.enable_coprune and
+                iteration >= dataset.coprune_start_iter and
+                iteration < dataset.coprune_end_iter and
+                iteration % opt.densification_interval == 0):
+
+                # 每 coprune_interval 个 densification 循环执行一次
+                densification_count = (iteration - opt.densify_from_iter) // opt.densification_interval
+                coprune_interval = getattr(dataset, 'coprune_interval', 5)
+
+                if densification_count > 0 and densification_count % coprune_interval == 0:
+                    try:
+                        coprune_threshold = getattr(dataset, 'coprune_threshold', 0.1)
+                        coprune_min_points = getattr(dataset, 'coprune_min_points', 5000)
+
+                        # 执行 Co-pruning
+                        n_pruned_0, n_pruned_1 = co_pruning(
+                            gaussians_list,
+                            threshold=coprune_threshold,
+                            min_points=coprune_min_points,
+                            verbose=(iteration % 1000 == 0)  # 每 1000 iter 打印详细日志
+                        )
+
+                        # TensorBoard 日志
+                        if tb_writer and iteration % 100 == 0:
+                            tb_writer.add_scalar('coprune/n_pruned_m0', n_pruned_0, iteration)
+                            tb_writer.add_scalar('coprune/n_pruned_m1', n_pruned_1, iteration)
+                            tb_writer.add_scalar('coprune/n_points_m0', gaussians_list[0].get_xyz.shape[0], iteration)
+                            tb_writer.add_scalar('coprune/n_points_m1', gaussians_list[1].get_xyz.shape[0], iteration)
+
+                            # 计算 Point Disagreement 指标
+                            disagreement = compute_point_disagreement(gaussians_list, max_distance=coprune_threshold)
+                            tb_writer.add_scalar('coprune/fitness', disagreement['fitness'], iteration)
+                            tb_writer.add_scalar('coprune/rmse', disagreement['rmse'], iteration)
+
+                    except Exception as e:
+                        if iteration % 1000 == 0:
+                            print(f"⚠️ [Co-pruning] Failed at iter {iteration}: {e}")
 
             # Optimization (所有模型)
             if iteration < opt.iterations:

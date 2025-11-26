@@ -47,6 +47,14 @@ class ModelParams(ParamGroup):
         self.corgs_pseudo_weight = 1.0  # 伪视图协同正则化损失权重 λ_p
         self.corgs_log_freq = 500  # Disagreement 日志记录频率
 
+        # 🌟 CoR-GS Stage 2: Co-pruning 参数 (2025-11-26)
+        self.enable_coprune = False  # 是否启用 Co-pruning（独立于 enable_corgs）
+        self.coprune_threshold = 0.1  # Co-pruning 距离阈值 τ（归一化场景，CT 尺度约 0.1）
+        self.coprune_interval = 5  # 每 N 个 densification 循环执行一次 Co-pruning
+        self.coprune_start_iter = 500  # Co-pruning 开始迭代数
+        self.coprune_end_iter = 15000  # Co-pruning 结束迭代数（与 densify_until_iter 同步）
+        self.coprune_min_points = 5000  # 保留的最小点数，防止过度修剪
+
         # 🌟 CoR-GS Stage 3: Pseudo-view Co-regularization 参数 (2025-11-22)
         self.corgs_pseudo_start_iter = 2000  # Pseudo-view co-reg 启动迭代数（论文推荐 2000）
         self.corgs_pseudo_noise_std = 0.02  # Pseudo-view 位置噪声标准差（约 ±0.4mm，CT 尺度）
@@ -57,6 +65,11 @@ class ModelParams(ParamGroup):
         self.corgs_pool_size = 1000  # Pseudo-view 池大小（官方默认 10000，CT 任务 1000 足够）
         self.corgs_pool_strategy = 'slerp'  # 池生成策略: 'slerp'（插值）或 'random'（官方随机）
         self.corgs_ramp_iters = 500  # 损失权重 ramp-up 迭代数（从 0 线性增加到 1）
+
+        # 🔥 CoR-GS v2: 双模型差异化参数（医学适配版 2025-11-26）
+        self.corgs_init_noise_std = 0.0  # 第二个模型的初始化位置扰动标准差（0=相同初始化）
+        self.corgs_shuffle_views = False  # 是否为不同模型使用不同的视角采样顺序
+        self.corgs_model_seeds = None  # 各模型的随机种子列表（None=使用默认）
         
         # Opacity decay功能
         self.opacity_decay = False  # 是否启用opacity decay
