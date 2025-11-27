@@ -10,6 +10,7 @@ import pickle
 from tqdm import trange
 import copy
 import torch
+from scipy.ndimage import gaussian_filter
 
 sys.path.append("./")
 from r2_gaussian.utils.ct_utils import get_geometry_tigre, recon_volume
@@ -30,6 +31,11 @@ class InitParams(ParamGroup):
         self.density_thresh = 0.05
         self.density_rescale = 0.15
         self.random_density_max = 1.0  # Parameters for random mode
+        # 新增：降噪参数
+        self.enable_denoise = False
+        self.denoise_sigma = 3.0
+        # 新增：采样策略参数
+        self.sampling_strategy = "random"  # random, density_weighted, stratified
         super().__init__(parser, "Initialization Parameters")
 
 
@@ -62,6 +68,12 @@ def init_pcd(
             f"Initialize point clouds with the volume reconstructed from {recon_method}."
         )
         vol = recon_volume(projs, angles, copy.deepcopy(geo), recon_method)
+
+        # 新增：De-Init 降噪预处理（GR-Gaussian）
+        if args.enable_denoise:
+            print(f"Applying Gaussian filter for denoising (sigma={args.denoise_sigma})...")
+            vol = gaussian_filter(vol, sigma=args.denoise_sigma)
+            print(f"Denoising complete.")
         # show_one_volume(vol)
 
         density_mask = vol > args.density_thresh
@@ -74,9 +86,60 @@ def init_pcd(
             valid_indices.shape[0] >= n_points
         ), "Valid voxels less than target number of sampling. Check threshold"
 
-        sampled_indices = valid_indices[
-            np.random.choice(len(valid_indices), n_points, replace=False)
-        ]
+        # 新增：支持多种采样策略
+        if args.sampling_strategy == "random":
+            # 原有的随机采样
+            print(f"Using random sampling strategy.")
+            sampled_idx = np.random.choice(len(valid_indices), n_points, replace=False)
+        elif args.sampling_strategy == "density_weighted":
+            # 密度加权采样：高密度区域更可能被采样
+            print(f"Using density-weighted sampling strategy.")
+            densities_flat = vol[
+                valid_indices[:, 0],
+                valid_indices[:, 1],
+                valid_indices[:, 2],
+            ]
+            # 归一化密度作为采样概率
+            probs = densities_flat / densities_flat.sum()
+            sampled_idx = np.random.choice(
+                len(valid_indices), n_points, replace=False, p=probs
+            )
+        elif args.sampling_strategy == "stratified":
+            # 分层采样：确保不同密度区间都有代表
+            print(f"Using stratified sampling strategy.")
+            densities_flat = vol[
+                valid_indices[:, 0],
+                valid_indices[:, 1],
+                valid_indices[:, 2],
+            ]
+            # 将密度分为 5 个层级
+            num_strata = 5
+            points_per_stratum = n_points // num_strata
+            sampled_idx = []
+            for i in range(num_strata):
+                lower = np.percentile(densities_flat, i * 20)
+                upper = np.percentile(densities_flat, (i + 1) * 20)
+                stratum_mask = (densities_flat >= lower) & (densities_flat < upper)
+                stratum_indices = np.where(stratum_mask)[0]
+                if len(stratum_indices) > 0:
+                    n_sample = min(points_per_stratum, len(stratum_indices))
+                    sampled_idx.extend(
+                        np.random.choice(stratum_indices, n_sample, replace=False)
+                    )
+            # 如果不足 n_points，从所有点中随机补充
+            if len(sampled_idx) < n_points:
+                remaining = n_points - len(sampled_idx)
+                remaining_idx = np.setdiff1d(
+                    np.arange(len(valid_indices)), sampled_idx
+                )
+                sampled_idx.extend(
+                    np.random.choice(remaining_idx, remaining, replace=False)
+                )
+            sampled_idx = np.array(sampled_idx[:n_points])
+        else:
+            raise ValueError(f"Unknown sampling strategy: {args.sampling_strategy}")
+
+        sampled_indices = valid_indices[sampled_idx]
         sampled_positions = sampled_indices * dVoxel - sVoxel / 2 + offOrigin
         sampled_densities = vol[
             sampled_indices[:, 0],
