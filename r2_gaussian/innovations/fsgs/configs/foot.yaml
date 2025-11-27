@@ -1,0 +1,44 @@
+# Medical Constraints Configuration for Foot CT
+#
+# Based on v2 successful configuration (PSNR=28.50 dB, SSIM=0.9015)
+#
+# Tissue classification based on CT density (HU values mapped to opacity):
+#   - Background Air: HU ~ -1000 → opacity ~ 0.02
+#   - Soft Tissue: HU ~ 40-80 → opacity ~ 0.25
+#   - Bone: HU ~ 300-1000 → opacity ~ 0.60
+#
+
+enable: true
+
+tissue_types:
+  background_air:
+    opacity_min: 0.0
+    opacity_max: 0.05
+    proximity_threshold: 2.0  # Strictest - avoid air artifact
+    max_gradient: 0.05
+    k_neighbors: 6
+    description: "Background air and low-density regions (HU ~ -1000 to -500)"
+
+  tissue_transition:
+    opacity_min: 0.05
+    opacity_max: 0.15
+    proximity_threshold: 1.5  # Most strict - preserve boundary sharpness
+    max_gradient: 0.10
+    k_neighbors: 8  # More neighbors for stability
+    description: "Tissue boundary transition zone (critical for diagnosis)"
+
+  soft_tissue:
+    opacity_min: 0.15
+    opacity_max: 0.40
+    proximity_threshold: 1.0
+    max_gradient: 0.25
+    k_neighbors: 6
+    description: "Soft tissue: muscle, fat, tendons, ligaments"
+
+  dense_structures:
+    opacity_min: 0.40
+    opacity_max: 1.0
+    proximity_threshold: 0.8  # Most relaxed - preserve bone details
+    max_gradient: 0.60
+    k_neighbors: 4  # Fewer neighbors for flexibility
+    description: "Dense structures: bone, calcifications (HU > 300)"
