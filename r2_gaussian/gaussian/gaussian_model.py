@@ -63,7 +63,7 @@ class GaussianModel:
 
         self.rotation_activation = torch.nn.functional.normalize
 
-    def __init__(self, scale_bound=None):
+    def __init__(self, scale_bound=None, args=None):
         self._xyz = torch.empty(0)  # world coordinate
         self._scaling = torch.empty(0)  # 3d scale
         self._rotation = torch.empty(0)  # rotation expressed in quaternions
@@ -75,6 +75,31 @@ class GaussianModel:
         self.spatial_lr_scale = 0
         self.scale_bound = scale_bound
         self.setup_functions()
+
+        # K-Planes 支持（可选）
+        self.enable_kplanes = getattr(args, 'enable_kplanes', False) if args is not None else False
+        if self.enable_kplanes:
+            from r2_gaussian.gaussian.kplanes import KPlanesEncoder, DensityMLPDecoder
+            kplanes_resolution = getattr(args, 'kplanes_resolution', 64)
+            kplanes_dim = getattr(args, 'kplanes_dim', 32)
+            self.kplanes_encoder = KPlanesEncoder(
+                grid_resolution=kplanes_resolution,
+                feature_dim=kplanes_dim,
+                num_levels=1,
+                bounds=(-1.0, 1.0),
+            ).cuda()
+
+            # 🎯 MLP Decoder: 将 K-Planes 特征映射到 density 调制因子
+            kplanes_decoder_hidden = getattr(args, 'kplanes_decoder_hidden', 128)
+            kplanes_decoder_layers = getattr(args, 'kplanes_decoder_layers', 3)
+            self.density_decoder = DensityMLPDecoder(
+                input_dim=self.kplanes_encoder.get_output_dim(),  # 96
+                hidden_dim=kplanes_decoder_hidden,
+                num_layers=kplanes_decoder_layers
+            ).cuda()
+        else:
+            self.kplanes_encoder = None
+            self.density_decoder = None
 
     def capture(self):
         return (
@@ -123,12 +148,52 @@ class GaussianModel:
 
     @property
     def get_density(self):
-        return self.density_activation(self._density)
+        base_density = self.density_activation(self._density)
+
+        # 🎯 K-Planes 特征调制（X²-Gaussian 多头解码器架构）
+        if self.enable_kplanes and self.kplanes_encoder is not None and self.density_decoder is not None:
+            kplanes_feat = self.get_kplanes_features()  # [N, 96]
+
+            # 使用 MLP Decoder 将 96 维特征映射到 density offset
+            # Decoder 输出范围 [-1, 1] (通过 Tanh 约束)
+            density_offset = self.density_decoder(kplanes_feat)  # [N, 1], range: [-1, 1]
+            # Decoder 输出范围 [-1, 1] (通过 Tanh 约束)
+            density_offset = self.density_decoder(kplanes_feat)  # [N, 1], range: [-1, 1]
+
+            # 🎯 v3 超保守调制：使用 sigmoid 平滑映射到 [0.7, 1.3]（±30% 调制范围）
+            # 公式：modulation = 0.7 + 0.6 * sigmoid(density_offset)
+            # sigmoid 提供平滑过渡，避免极端值，减少过拟合
+            modulation = 0.7 + 0.6 * torch.sigmoid(density_offset)
+
+            # 调制 base_density
+            base_density = base_density * modulation
+
+        return base_density
 
     def get_covariance(self, scaling_modifier=1):
         return self.covariance_activation(
             self.get_scaling, scaling_modifier, self._rotation
         )
+
+    def get_kplanes_features(self, xyz=None):
+        """
+        获取指定位置的 K-Planes 特征
+
+        参数：
+            xyz (torch.Tensor): 高斯中心坐标，形状 [N, 3]
+                               如果为 None，则使用 self._xyz
+
+        返回：
+            features (torch.Tensor): K-Planes 特征，形状 [N, feature_dim * 3]
+                                    如果未启用 K-Planes，返回 None
+        """
+        if not self.enable_kplanes or self.kplanes_encoder is None:
+            return None
+
+        if xyz is None:
+            xyz = self._xyz
+
+        return self.kplanes_encoder(xyz)
 
     def create_from_pcd(self, xyz, density, spatial_lr_scale: float):
         self.spatial_lr_scale = spatial_lr_scale
@@ -212,6 +277,25 @@ class GaussianModel:
             },
         ]
 
+        # K-Planes 参数组（可选）
+        if self.enable_kplanes and self.kplanes_encoder is not None:
+            kplanes_lr_init = getattr(training_args, 'kplanes_lr_init', 0.00016)
+            l.append({
+                "params": self.kplanes_encoder.parameters(),
+                "lr": kplanes_lr_init,
+                "name": "kplanes"
+            })
+
+            # 🎯 K-Planes Decoder 参数组（使用更低学习率防止过拟合）
+            # v3 改进：decoder 学习率降低到 encoder 的 0.5 倍
+            if self.density_decoder is not None:
+                decoder_lr_init = kplanes_lr_init * 0.5
+                l.append({
+                    "params": self.density_decoder.parameters(),
+                    "lr": decoder_lr_init,
+                    "name": "kplanes_decoder"
+                })
+
         self.optimizer = torch.optim.Adam(l, lr=0.0, eps=1e-15)
         self.xyz_scheduler_args = get_expon_lr_func(
             lr_init=training_args.position_lr_init * self.spatial_lr_scale,
@@ -234,6 +318,17 @@ class GaussianModel:
             max_steps=training_args.rotation_lr_max_steps,
         )
 
+        # K-Planes 学习率调度器（可选）
+        if self.enable_kplanes and self.kplanes_encoder is not None:
+            kplanes_lr_init = getattr(training_args, 'kplanes_lr_init', 0.00016)
+            kplanes_lr_final = getattr(training_args, 'kplanes_lr_final', 0.0000016)
+            kplanes_lr_max_steps = getattr(training_args, 'kplanes_lr_max_steps', 30000)
+            self.kplanes_scheduler_args = get_expon_lr_func(
+                lr_init=kplanes_lr_init,
+                lr_final=kplanes_lr_final,
+                max_steps=kplanes_lr_max_steps,
+            )
+
     def update_learning_rate(self, iteration):
         """Learning rate scheduling per step"""
         for param_group in self.optimizer.param_groups:
@@ -249,6 +344,15 @@ class GaussianModel:
             if param_group["name"] == "rotation":
                 lr = self.rotation_scheduler_args(iteration)
                 param_group["lr"] = lr
+            if param_group["name"] == "kplanes":
+                if self.enable_kplanes and hasattr(self, 'kplanes_scheduler_args'):
+                    lr = self.kplanes_scheduler_args(iteration)
+                    param_group["lr"] = lr
+            # 🎯 K-Planes Decoder 学习率（v3：使用 0.5 倍防止过拟合）
+            if param_group["name"] == "kplanes_decoder":
+                if self.enable_kplanes and hasattr(self, 'kplanes_scheduler_args'):
+                    lr = self.kplanes_scheduler_args(iteration) * 0.5
+                    param_group["lr"] = lr
 
     def construct_list_of_attributes(self):
         l = ["x", "y", "z", "nx", "ny", "nz"]
@@ -335,21 +439,26 @@ class GaussianModel:
     def _prune_optimizer(self, mask):
         optimizable_tensors = {}
         for group in self.optimizer.param_groups:
-            stored_state = self.optimizer.state.get(group["params"][0], None)
+            # 🎯 跳过 K-Planes 参数组（形状不匹配，不需要 prune）
+            param = group["params"][0]
+            if param.shape[0] != mask.shape[0]:
+                continue
+            
+            stored_state = self.optimizer.state.get(param, None)
             if stored_state is not None:
                 stored_state["exp_avg"] = stored_state["exp_avg"][mask]
                 stored_state["exp_avg_sq"] = stored_state["exp_avg_sq"][mask]
 
-                del self.optimizer.state[group["params"][0]]
+                del self.optimizer.state[param]
                 group["params"][0] = nn.Parameter(
-                    (group["params"][0][mask].requires_grad_(True))
+                    (param[mask].requires_grad_(True))
                 )
                 self.optimizer.state[group["params"][0]] = stored_state
 
                 optimizable_tensors[group["name"]] = group["params"][0]
             else:
                 group["params"][0] = nn.Parameter(
-                    group["params"][0][mask].requires_grad_(True)
+                    param[mask].requires_grad_(True)
                 )
                 optimizable_tensors[group["name"]] = group["params"][0]
         return optimizable_tensors
@@ -371,6 +480,10 @@ class GaussianModel:
     def cat_tensors_to_optimizer(self, tensors_dict):
         optimizable_tensors = {}
         for group in self.optimizer.param_groups:
+            # 🎯 跳过 K-Planes 参数组（不需要 densification）
+            if group["name"] not in tensors_dict:
+                continue
+            
             assert len(group["params"]) == 1
             extension_tensor = tensors_dict[group["name"]]
             stored_state = self.optimizer.state.get(group["params"][0], None)

@@ -27,6 +27,7 @@ from r2_gaussian.utils.cfg_utils import load_config
 from r2_gaussian.utils.log_utils import prepare_output_and_logger
 from r2_gaussian.dataset import Scene
 from r2_gaussian.utils.loss_utils import l1_loss, ssim, tv_3d_loss
+from r2_gaussian.utils.regulation import compute_plane_tv_loss
 from r2_gaussian.utils.image_utils import metric_vol, metric_proj
 from r2_gaussian.utils.plot_utils import show_two_slice
 from r2_gaussian.utils.binocular_utils import (
@@ -75,7 +76,7 @@ def training(
     )
 
     # Set up Gaussians
-    gaussians = GaussianModel(scale_bound)
+    gaussians = GaussianModel(scale_bound, args=dataset)  # 传递 dataset (ModelParams) 以支持 K-Planes
     initialize_gaussian(gaussians, dataset, None)
     scene.gaussians = gaussians
     gaussians.training_setup(opt)
@@ -144,6 +145,30 @@ def training(
             data_device=viewpoint_cam.data_device.type
         )
         return shifted_cam, angle_offset
+
+    # 🎯 K-Planes 诊断信息
+    if gaussians.enable_kplanes and gaussians.kplanes_encoder is not None:
+        print("=" * 70)
+        print("✓ K-Planes Encoder 已启用")
+        print(f"  - 平面分辨率: {dataset.kplanes_resolution}")
+        print(f"  - 特征维度: {dataset.kplanes_dim}")
+        print(f"  - 总特征维度: {dataset.kplanes_dim * 3} (3 个平面)")
+
+        kplanes_params = sum(p.numel() for p in gaussians.kplanes_encoder.parameters())
+        print(f"  - K-Planes 参数量: {kplanes_params:,}")
+
+        # 检查 TV 正则化
+        if opt.lambda_plane_tv > 0:
+            print(f"✓ K-Planes TV 正则化已启用")
+            print(f"  - lambda_plane_tv: {opt.lambda_plane_tv}")
+            print(f"  - TV 权重: {opt.plane_tv_weight_proposal}")
+            print(f"  - TV 损失类型: {opt.tv_loss_type}")
+        else:
+            print("⚠️ 警告：K-Planes 已启用但 TV 正则化未启用 (lambda_plane_tv = 0)")
+
+        print("=" * 70)
+    else:
+        print("⚠️ K-Planes 未启用（使用标准 R²-Gaussian）")
 
     # Train
     iter_start = torch.cuda.Event(enable_timing=True)
@@ -237,6 +262,26 @@ def training(
             loss["bino_smooth"] = bino_losses["smooth"]
             loss["total"] = loss["total"] + opt.binocular_loss_weight * bino_losses["total"]
 
+        # K-Planes TV 正则化损失（X²-Gaussian）
+        if opt.lambda_plane_tv > 0 and gaussians.enable_kplanes and gaussians.kplanes_encoder is not None:
+            planes = gaussians.kplanes_encoder.get_plane_params()
+            tv_loss_planes = compute_plane_tv_loss(
+                planes=planes,
+                weights=opt.plane_tv_weight_proposal,
+                loss_type=opt.tv_loss_type,
+            )
+            loss["plane_tv"] = tv_loss_planes
+            loss["total"] = loss["total"] + opt.lambda_plane_tv * tv_loss_planes
+
+            # 🎯 在前几个迭代输出诊断信息
+            if iteration <= 3:
+                kplanes_feat = gaussians.get_kplanes_features()
+                print(f"[Iter {iteration}] K-Planes 诊断:")
+                print(f"  - K-Planes 特征形状: {kplanes_feat.shape}")
+                print(f"  - 特征范围: [{kplanes_feat.min().item():.4f}, {kplanes_feat.max().item():.4f}]")
+                print(f"  - TV loss (plane): {tv_loss_planes.item():.6f}")
+                print(f"  - TV loss (weighted): {(opt.lambda_plane_tv * tv_loss_planes).item():.6f}")
+
         loss["total"].backward()
 
         iter_end.record()
@@ -292,12 +337,18 @@ def training(
 
             # Progress bar
             if iteration % 10 == 0:
-                progress_bar.set_postfix(
-                    {
-                        "loss": f"{loss['total'].item():.1e}",
-                        "pts": f"{gaussians.get_density.shape[0]:2.1e}",
-                    }
-                )
+                postfix = {
+                    "loss": f"{loss['total'].item():.1e}",
+                    "pts": f"{gaussians.get_density.shape[0]:2.1e}",
+                }
+                # 添加 K-Planes TV loss（如果启用）
+                if "plane_tv" in loss:
+                    postfix["tv_kp"] = f"{loss['plane_tv'].item():.1e}"
+                # 添加 3D TV loss（如果启用）
+                if "tv" in loss:
+                    postfix["tv_3d"] = f"{loss['tv'].item():.1e}"
+
+                progress_bar.set_postfix(postfix)
                 progress_bar.update(10)
             if iteration == opt.iterations:
                 progress_bar.close()
@@ -478,6 +529,7 @@ if __name__ == "__main__":
     parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[])
     parser.add_argument("--start_checkpoint", type=str, default=None)
     parser.add_argument("--config", type=str, default=None)
+    # 注意：K-Planes 相关参数已在 ModelParams 和 OptimizationParams 中定义，会自动注册
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
     args.test_iterations.append(args.iterations)

@@ -97,6 +97,15 @@ class ModelParams(ParamGroup):
         self.graph_lambda_lap = 8e-4  # Graph Laplacian 损失权重 (论文推荐 8e-4)
         self.graph_update_interval = 100  # 图重建间隔 (iterations)
 
+        # 🎯 X²-Gaussian K-Planes 参数 (2025-01-18)
+        self.enable_kplanes = False  # 是否启用 K-Planes 空间分解
+        self.kplanes_resolution = 64  # K-Planes 平面分辨率 (默认 64)
+        self.kplanes_dim = 32  # K-Planes 特征维度 (默认 32)
+
+        # 🎯 K-Planes MLP Decoder 参数 (2025-11-24)
+        self.kplanes_decoder_hidden = 128  # Decoder 隐藏层维度 (默认 128)
+        self.kplanes_decoder_layers = 3  # Decoder MLP 层数 (默认 3)
+
         super().__init__(parser, "Loading Parameters", sentinel)
 
     def extract(self, args):
@@ -164,6 +173,18 @@ class OptimizationParams(ParamGroup):
         self.binocular_smooth_weight = 0.05  # 视差平滑损失权重，论文推荐0.05
         self.binocular_loss_weight = 0.1  # 双目一致性损失总权重
         self.binocular_depth_method = "weighted_average"  # 深度估计方法: weighted_average/max_density/first_surface
+
+        # 🎯 X²-Gaussian K-Planes 优化参数 (2025-01-18, 修正 2025-01-23)
+        # 对齐 X²-Gaussian 原版设置：grid_lr_init=0.002, grid_lr_final=0.0002
+        self.kplanes_lr_init = 0.002  # K-Planes 初始学习率（修正：0.00016 → 0.002，提升 12.5 倍）
+        self.kplanes_lr_final = 0.0002  # K-Planes 最终学习率（修正：0.0000016 → 0.0002，提升 125 倍）
+        self.kplanes_lr_max_steps = 30000  # K-Planes 学习率衰减步数
+
+        # 🎯 X²-Gaussian TV 正则化参数 (2025-01-18, 修正 2025-01-23)
+        # 对齐 X²-Gaussian 原版设置：plane_tv_weight=0.0001, L2 损失
+        self.lambda_plane_tv = 0.0  # TV 正则化权重 (0 表示不启用)
+        self.plane_tv_weight_proposal = [0.0001, 0.0001, 0.0001]  # 每个平面的 TV 权重 [xy, xz, yz]
+        self.tv_loss_type = "l2"  # TV 损失类型（修正："l1" → "l2"，对齐原版）
 
         super().__init__(parser, "Optimization Parameters")
 

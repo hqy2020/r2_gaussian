@@ -31,11 +31,14 @@ class InitParams(ParamGroup):
         self.density_thresh = 0.05
         self.density_rescale = 0.15
         self.random_density_max = 1.0  # Parameters for random mode
-        # 新增：降噪参数
+
+        # 🆕 De-Init 降噪参数
         self.enable_denoise = False
         self.denoise_sigma = 3.0
-        # 新增：采样策略参数
+
+        # 🆕 采样策略参数 (init-pcd 分支)
         self.sampling_strategy = "random"  # random, density_weighted, stratified
+
         super().__init__(parser, "Initialization Parameters")
 
 
@@ -69,12 +72,11 @@ def init_pcd(
         )
         vol = recon_volume(projs, angles, copy.deepcopy(geo), recon_method)
 
-        # 新增：De-Init 降噪预处理（GR-Gaussian）
+        # 🆕 De-Init 降噪预处理（GR-Gaussian）
         if args.enable_denoise:
             print(f"Applying Gaussian filter for denoising (sigma={args.denoise_sigma})...")
             vol = gaussian_filter(vol, sigma=args.denoise_sigma)
             print(f"Denoising complete.")
-        # show_one_volume(vol)
 
         density_mask = vol > args.density_thresh
         valid_indices = np.argwhere(density_mask)
@@ -86,7 +88,7 @@ def init_pcd(
             valid_indices.shape[0] >= n_points
         ), "Valid voxels less than target number of sampling. Check threshold"
 
-        # 新增：支持多种采样策略
+        # 🆕 支持多种采样策略 (init-pcd 分支)
         if args.sampling_strategy == "random":
             # 原有的随机采样
             print(f"Using random sampling strategy.")
