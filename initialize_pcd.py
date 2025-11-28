@@ -25,19 +25,49 @@ np.random.seed(0)
 
 
 class InitParams(ParamGroup):
+    """
+    点云初始化参数
+
+    ============================================================================
+    参数分类说明：
+    ============================================================================
+    - [BASELINE] R²-Gaussian 原版初始化参数
+    - [INIT-PCD] 密度加权采样初始化参数（init-pcd 分支）
+
+    消融实验配置：
+    ----------------------------------------------------------------------------
+    1. 纯 BASELINE 初始化：
+       python initialize_pcd.py -s <data_path> --sampling_strategy random
+
+    2. INIT-PCD 密度加权采样（推荐）：
+       python initialize_pcd.py -s <data_path> --sampling_strategy density_weighted
+
+    3. INIT-PCD + De-Init 降噪：
+       python initialize_pcd.py -s <data_path> --sampling_strategy density_weighted \\
+           --enable_denoise --denoise_sigma 3.0
+    ============================================================================
+    """
     def __init__(self, parser):
-        self.recon_method = "fdk"
-        self.n_points = 50000
-        self.density_thresh = 0.05
-        self.density_rescale = 0.15
-        self.random_density_max = 1.0  # Parameters for random mode
+        # ════════════════════════════════════════════════════════════════════
+        # [BASELINE] R²-Gaussian 原版初始化参数
+        # ════════════════════════════════════════════════════════════════════
+        self.recon_method = "fdk"  # [BASELINE] 重建方法: fdk/random
+        self.n_points = 50000  # [BASELINE] 初始化点数
+        self.density_thresh = 0.05  # [BASELINE] 密度阈值（过滤低密度区域）
+        self.density_rescale = 0.15  # [BASELINE] 密度缩放因子
+        self.random_density_max = 1.0  # [BASELINE] 随机模式最大密度
 
-        # 🆕 De-Init 降噪参数
-        self.enable_denoise = False
-        self.denoise_sigma = 3.0
-
-        # 🆕 采样策略参数 (init-pcd 分支)
-        self.sampling_strategy = "random"  # random, density_weighted, stratified
+        # ════════════════════════════════════════════════════════════════════
+        # [INIT-PCD] 密度加权采样初始化参数
+        # 论文: 基于 GR-Gaussian 的 De-Init 思想
+        # 主开关: sampling_strategy (设为 density_weighted 启用)
+        # ════════════════════════════════════════════════════════════════════
+        self.enable_denoise = False  # [INIT-PCD] 启用 De-Init 高斯降噪
+        self.denoise_sigma = 3.0  # [INIT-PCD] 降噪核标准差
+        self.sampling_strategy = "random"  # [INIT-PCD] 采样策略: random/density_weighted/stratified
+        # - random: 原版随机采样（BASELINE 默认）
+        # - density_weighted: 密度加权采样（INIT-PCD 推荐，+0.16 dB）
+        # - stratified: 分层采样（实验性）
 
         super().__init__(parser, "Initialization Parameters")
 
