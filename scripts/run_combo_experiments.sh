@@ -5,18 +5,27 @@
 
 set -e
 
-COMBO=$1  # A, B, C, D
+# 激活 conda 环境
+source ~/anaconda3/etc/profile.d/conda.sh
+conda activate r2_gaussian_new
+
+cd /home/qyhu/Documents/r2_ours/r2_gaussian
+
+COMBO=$1  # A, B, C, D, E
 ORGAN=$2  # foot, chest, head, abdomen, pancreas
 VIEWS=$3  # 3, 6, 9
 GPU=${4:-0}    # 默认 GPU 0
 
 if [ -z "$COMBO" ] || [ -z "$ORGAN" ] || [ -z "$VIEWS" ]; then
-    echo "用法: $0 <组合A/B/C/D> <器官> <视角数> [GPU]"
+    echo "用法: $0 <组合A/B/C/D/E> <器官> <视角数> [GPU]"
     echo "组合说明:"
-    echo "  A: Init-PCD + X²-Gaussian (K-Planes)"
-    echo "  B: Init-PCD + X² + FSGS (深度监督)"
-    echo "  C: Init-PCD + X² + Bino (双目一致性)"
-    echo "  D: Init-PCD + FSGS + Bino (无 K-Planes)"
+    echo "  A: X²-Gaussian (K-Planes 空间调制)"
+    echo "  B: X² + FSGS (K-Planes + 深度监督)"
+    echo "  C: X² + Bino (K-Planes + 双目一致性)"
+    echo "  D: FSGS + Bino (深度监督 + 双目一致性)"
+    echo "  E: Full Combo (K-Planes + FSGS + Bino)"
+    echo ""
+    echo "注: Init-PCD 密度加权采样需要先运行 initialize_pcd.py"
     exit 1
 fi
 
@@ -36,18 +45,16 @@ COMMON_FLAGS="--iterations 30000 --test_iterations 10000 20000 30000"
 # 根据组合选择参数
 case $COMBO in
     A)
-        echo "=== 组合 A: Init-PCD + X²-Gaussian ==="
-        COMBO_FLAGS="--sampling_strategy density_weighted \
-            --enable_kplanes \
+        echo "=== 组合 A: X²-Gaussian (K-Planes) ==="
+        COMBO_FLAGS="--enable_kplanes \
             --kplanes_resolution 64 \
             --kplanes_dim 32 \
             --lambda_plane_tv 0.002 \
             --tv_loss_type l2"
         ;;
     B)
-        echo "=== 组合 B: Init-PCD + X² + FSGS ==="
-        COMBO_FLAGS="--sampling_strategy density_weighted \
-            --enable_kplanes \
+        echo "=== 组合 B: X² + FSGS (K-Planes + 深度监督) ==="
+        COMBO_FLAGS="--enable_kplanes \
             --kplanes_resolution 64 \
             --kplanes_dim 32 \
             --lambda_plane_tv 0.002 \
@@ -60,9 +67,8 @@ case $COMBO in
             --start_sample_pseudo 5000"
         ;;
     C)
-        echo "=== 组合 C: Init-PCD + X² + Bino ==="
-        COMBO_FLAGS="--sampling_strategy density_weighted \
-            --enable_kplanes \
+        echo "=== 组合 C: X² + Bino (K-Planes + 双目一致性) ==="
+        COMBO_FLAGS="--enable_kplanes \
             --kplanes_resolution 64 \
             --kplanes_dim 32 \
             --lambda_plane_tv 0.002 \
@@ -74,9 +80,8 @@ case $COMBO in
             --binocular_loss_weight 0.1"
         ;;
     D)
-        echo "=== 组合 D: Init-PCD + FSGS + Bino ==="
-        COMBO_FLAGS="--sampling_strategy density_weighted \
-            --enable_fsgs_depth \
+        echo "=== 组合 D: FSGS + Bino (深度监督 + 双目一致性) ==="
+        COMBO_FLAGS="--enable_fsgs_depth \
             --enable_medical_constraints \
             --depth_pseudo_weight 0.05 \
             --enable_binocular_consistency \
@@ -84,8 +89,29 @@ case $COMBO in
             --binocular_start_iter 7000 \
             --binocular_loss_weight 0.15"
         ;;
+    E)
+        echo "=== 组合 E: Full Combo (K-Planes + FSGS + Bino) [修复版] ==="
+        COMBO_FLAGS="--gaussiansN 1 \
+            --enable_kplanes \
+            --kplanes_resolution 64 \
+            --kplanes_dim 32 \
+            --lambda_plane_tv 0.002 \
+            --tv_loss_type l2 \
+            --enable_fsgs_depth \
+            --enable_fsgs_proximity \
+            --enable_medical_constraints \
+            --depth_pseudo_weight 0.03 \
+            --proximity_threshold 5.0 \
+            --proximity_k_neighbors 5 \
+            --start_sample_pseudo 5000 \
+            --enable_binocular_consistency \
+            --binocular_max_angle_offset 0.06 \
+            --binocular_start_iter 7000 \
+            --binocular_warmup_iters 3000 \
+            --binocular_loss_weight 0.15"
+        ;;
     *)
-        echo "错误: 未知组合 '$COMBO'，请使用 A/B/C/D"
+        echo "错误: 未知组合 '$COMBO'，请使用 A/B/C/D/E"
         exit 1
         ;;
 esac
