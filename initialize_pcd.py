@@ -26,25 +26,23 @@ np.random.seed(0)
 
 class InitParams(ParamGroup):
     """
-    点云初始化参数
+    点云初始化参数 - SPS (Spatial Prior Seeding)
 
     ============================================================================
-    参数分类说明：
+    SPAGS Stage 1: SPS - 空间先验播种
     ============================================================================
-    - [BASELINE] R²-Gaussian 原版初始化参数
-    - [INIT-PCD] 密度加权采样初始化参数（init-pcd 分支）
+    基于 FDK 重建体的密度分布进行智能采样初始化。
 
     消融实验配置：
     ----------------------------------------------------------------------------
-    1. 纯 BASELINE 初始化：
-       python initialize_pcd.py -s <data_path> --sampling_strategy random
+    1. Baseline 初始化（随机采样）：
+       python initialize_pcd.py -s <data_path>
 
-    2. INIT-PCD 密度加权采样（推荐）：
-       python initialize_pcd.py -s <data_path> --sampling_strategy density_weighted
+    2. SPS 密度加权采样（推荐，+0.16 dB）：
+       python initialize_pcd.py -s <data_path> --enable_sps
 
-    3. INIT-PCD + De-Init 降噪：
-       python initialize_pcd.py -s <data_path> --sampling_strategy density_weighted \\
-           --enable_denoise --denoise_sigma 3.0
+    3. SPS + 降噪预处理：
+       python initialize_pcd.py -s <data_path> --enable_sps --sps_denoise
     ============================================================================
     """
     def __init__(self, parser):
@@ -58,16 +56,21 @@ class InitParams(ParamGroup):
         self.random_density_max = 1.0  # [BASELINE] 随机模式最大密度
 
         # ════════════════════════════════════════════════════════════════════
-        # [INIT-PCD] 密度加权采样初始化参数
-        # 论文: 基于 GR-Gaussian 的 De-Init 思想
-        # 主开关: sampling_strategy (设为 density_weighted 启用)
+        # [SPS] Spatial Prior Seeding - 空间先验播种
+        # SPAGS Stage 1: 基于密度的智能采样初始化
+        # 主开关: enable_sps
         # ════════════════════════════════════════════════════════════════════
-        self.enable_denoise = False  # [INIT-PCD] 启用 De-Init 高斯降噪
-        self.denoise_sigma = 3.0  # [INIT-PCD] 降噪核标准差
-        self.sampling_strategy = "random"  # [INIT-PCD] 采样策略: random/density_weighted/stratified
-        # - random: 原版随机采样（BASELINE 默认）
-        # - density_weighted: 密度加权采样（INIT-PCD 推荐，+0.16 dB）
-        # - stratified: 分层采样（实验性）
+        self.enable_sps = False  # [SPS] 主开关：启用空间先验播种
+        self.sps_denoise = False  # [SPS] 启用高斯降噪预处理
+        self.sps_denoise_sigma = 3.0  # [SPS] 降噪核标准差
+        self.sps_strategy = "density_weighted"  # [SPS] 采样策略: density_weighted/stratified
+        # - density_weighted: 密度加权采样（推荐，公式: P(x) = ρ(x) / Σρ）
+        # - stratified: 分层采样（确保不同密度区间都有代表）
+
+        # 向下兼容旧参数名
+        self.enable_denoise = False  # [兼容] 旧名，映射到 sps_denoise
+        self.denoise_sigma = 3.0  # [兼容] 旧名
+        self.sampling_strategy = "random"  # [兼容] 旧名
 
         super().__init__(parser, "Initialization Parameters")
 
@@ -102,11 +105,13 @@ def init_pcd(
         )
         vol = recon_volume(projs, angles, copy.deepcopy(geo), recon_method)
 
-        # 🆕 De-Init 降噪预处理（GR-Gaussian）
-        if args.enable_denoise:
-            print(f"Applying Gaussian filter for denoising (sigma={args.denoise_sigma})...")
-            vol = gaussian_filter(vol, sigma=args.denoise_sigma)
-            print(f"Denoising complete.")
+        # [SPS] 降噪预处理（支持新旧参数名）
+        enable_denoise = getattr(args, 'sps_denoise', False) or getattr(args, 'enable_denoise', False)
+        denoise_sigma = getattr(args, 'sps_denoise_sigma', 3.0) or getattr(args, 'denoise_sigma', 3.0)
+        if enable_denoise:
+            print(f"[SPS] Applying Gaussian filter for denoising (sigma={denoise_sigma})...")
+            vol = gaussian_filter(vol, sigma=denoise_sigma)
+            print(f"[SPS] Denoising complete.")
 
         density_mask = vol > args.density_thresh
         valid_indices = np.argwhere(density_mask)
@@ -118,14 +123,24 @@ def init_pcd(
             valid_indices.shape[0] >= n_points
         ), "Valid voxels less than target number of sampling. Check threshold"
 
-        # 🆕 支持多种采样策略 (init-pcd 分支)
-        if args.sampling_strategy == "random":
-            # 原有的随机采样
-            print(f"Using random sampling strategy.")
+        # [SPS] 采样策略选择（支持新旧参数名）
+        # 新参数: enable_sps + sps_strategy
+        # 旧参数: sampling_strategy
+        enable_sps = getattr(args, 'enable_sps', False)
+        if enable_sps:
+            # 使用 SPS 新参数
+            strategy = getattr(args, 'sps_strategy', 'density_weighted')
+        else:
+            # 使用旧参数或默认随机
+            strategy = getattr(args, 'sampling_strategy', 'random')
+
+        if strategy == "random":
+            # Baseline: 随机采样
+            print(f"[Baseline] Using random sampling strategy.")
             sampled_idx = np.random.choice(len(valid_indices), n_points, replace=False)
-        elif args.sampling_strategy == "density_weighted":
-            # 密度加权采样：高密度区域更可能被采样
-            print(f"Using density-weighted sampling strategy.")
+        elif strategy == "density_weighted":
+            # [SPS] 密度加权采样：P(x) = ρ(x) / Σρ
+            print(f"[SPS] Using density-weighted sampling strategy.")
             densities_flat = vol[
                 valid_indices[:, 0],
                 valid_indices[:, 1],
@@ -136,9 +151,9 @@ def init_pcd(
             sampled_idx = np.random.choice(
                 len(valid_indices), n_points, replace=False, p=probs
             )
-        elif args.sampling_strategy == "stratified":
-            # 分层采样：确保不同密度区间都有代表
-            print(f"Using stratified sampling strategy.")
+        elif strategy == "stratified":
+            # [SPS] 分层采样：确保不同密度区间都有代表
+            print(f"[SPS] Using stratified sampling strategy.")
             densities_flat = vol[
                 valid_indices[:, 0],
                 valid_indices[:, 1],
@@ -169,7 +184,7 @@ def init_pcd(
                 )
             sampled_idx = np.array(sampled_idx[:n_points])
         else:
-            raise ValueError(f"Unknown sampling strategy: {args.sampling_strategy}")
+            raise ValueError(f"Unknown sampling strategy: {strategy}")
 
         sampled_indices = valid_indices[sampled_idx]
         sampled_positions = sampled_indices * dVoxel - sVoxel / 2 + offOrigin

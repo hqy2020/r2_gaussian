@@ -11,62 +11,42 @@
 
 """
 ================================================================================
-R²-Gaussian 参数配置 - 消融实验指南
+SPAGS: Spatial-aware Progressive Adaptive Gaussian Splatting
 ================================================================================
 
-集成的技术模块：
-  - [BASELINE] R²-Gaussian 原版参数
-  - [X2-GS]    X²-Gaussian K-Planes 密度调制 + TV 正则化
-  - [BINO]     Binocular-Guided 双目一致性损失（纯图像一致性，无边缘感知平滑）
-  - [FSGS]     FSGS Proximity-guided 密化（注：深度监督已移除）
-  - [INIT-PCD] 密度加权采样初始化 (需预生成点云，见 initialize_pcd.py)
+三阶段渐进式优化框架：
+  - [SPS]  Stage 1: Spatial Prior Seeding - 空间先验播种（密度加权初始化）
+  - [GAR]  Stage 2: Geometry-aware Refinement - 几何感知细化（双目一致性+邻近密化）
+  - [ADM]  Stage 3: Adaptive Density Modulation - 自适应密度调制（K-Planes）
 
 --------------------------------------------------------------------------------
-消融实验配置示例：
+SPAGS 消融实验配置：
 --------------------------------------------------------------------------------
 
-1. 纯 BASELINE（不加任何技术）：
-   --enable_kplanes false
-   --enable_binocular_consistency false
-   # init-pcd: 使用默认随机采样点云 (sampling_strategy=random)
+1. Baseline（不加任何技术）：
+   --enable_sps false --enable_gar false --enable_adm false
 
-2. 仅启用 INIT-PCD（密度加权采样初始化）：
-   --enable_kplanes false
-   --enable_binocular_consistency false
-   # 需预先生成点云: python initialize_pcd.py -s <data_path> --sampling_strategy density_weighted
-   # 然后训练时指定 --ply_path <预生成的点云路径>
+2. 仅 SPS（空间先验播种）：
+   --enable_sps true --enable_gar false --enable_adm false
+   # 需预生成点云: python initialize_pcd.py -s <data_path> --enable_sps
 
-3. 仅启用 X2-GS（K-Planes 密度调制）：
-   --enable_kplanes true
-   --lambda_plane_tv 0.0002
-   --enable_binocular_consistency false
+3. 仅 GAR（几何感知细化）：
+   --enable_sps false --enable_gar true --enable_adm false
 
-4. 仅启用 BINO（双目一致性）：
-   --enable_kplanes false
-   --enable_binocular_consistency true
-   --binocular_start_iter 7000
-   --binocular_loss_weight 0.15
+4. 仅 ADM（自适应密度调制）：
+   --enable_sps false --enable_gar false --enable_adm true
 
-5. 仅启用 FSGS Proximity（密化策略）：
-   --enable_kplanes false
-   --enable_binocular_consistency false
-   --enable_fsgs_proximity true
-   --enable_medical_constraints true
+5. SPS + GAR：
+   --enable_sps true --enable_gar true --enable_adm false
 
-6. X2-GS + BINO 组合：
-   --enable_kplanes true
-   --lambda_plane_tv 0.0002
-   --enable_binocular_consistency true
-   --binocular_start_iter 7000
-   --binocular_loss_weight 0.15
+6. SPS + ADM：
+   --enable_sps true --enable_gar false --enable_adm true
 
-7. 全部启用（Full Combo）：
-   --enable_kplanes true
-   --lambda_plane_tv 0.0002
-   --enable_binocular_consistency true
-   --binocular_start_iter 7000
-   --enable_fsgs_proximity true
-   # 搭配 init-pcd 预生成的密度加权点云效果最佳
+7. GAR + ADM：
+   --enable_sps false --enable_gar true --enable_adm true
+
+8. Full SPAGS（全部启用）：
+   --enable_sps true --enable_gar true --enable_adm true
 
 ================================================================================
 """
@@ -95,25 +75,38 @@ class ModelParams(ParamGroup):
         self.gaussiansN = 1  # [BASELINE] 高斯场数量（固定为 1，单模型训练）
 
         # ════════════════════════════════════════════════════════════════════
-        # [FSGS] Proximity-guided 密化参数
-        # 主开关: enable_fsgs_proximity
+        # [GAR] Geometry-aware Refinement - 邻近感知密化参数
+        # Stage 2 的 Proximity-guided 密化子模块
+        # 主开关: enable_gar_proximity (或兼容旧名 enable_fsgs_proximity)
         # ════════════════════════════════════════════════════════════════════
-        self.enable_fsgs_proximity = False  # [FSGS] 主开关：启用 proximity-guided 密化
-        self.proximity_threshold = 5.0  # [FSGS] proximity score 阈值
-        self.enable_medical_constraints = True  # [FSGS] 医学约束（推荐启用）
-        self.proximity_organ_type = "foot"  # [FSGS] 器官类型（影响约束策略）
-        self.proximity_k_neighbors = 5  # [FSGS] 邻居数量
+        self.enable_gar_proximity = False  # [GAR] 主开关：启用 proximity-guided 密化
+        self.gar_proximity_threshold = 5.0  # [GAR] proximity score 阈值
+        self.gar_medical_constraints = True  # [GAR] 医学约束（推荐启用）
+        self.gar_organ_type = "foot"  # [GAR] 器官类型（影响约束策略）
+        self.gar_proximity_k = 5  # [GAR] 邻居数量
+        # 向下兼容旧参数名
+        self.enable_fsgs_proximity = False  # [兼容] 旧名，映射到 enable_gar_proximity
+        self.proximity_threshold = 5.0  # [兼容] 旧名
+        self.enable_medical_constraints = True  # [兼容] 旧名
+        self.proximity_organ_type = "foot"  # [兼容] 旧名
+        self.proximity_k_neighbors = 5  # [兼容] 旧名
 
         # ════════════════════════════════════════════════════════════════════
-        # [X2-GS] X²-Gaussian K-Planes 参数
-        # 论文: X²-Gaussian (arXiv:2403.04116)
-        # 主开关: enable_kplanes
+        # [ADM] Adaptive Density Modulation - K-Planes 空间调制参数
+        # Stage 3: 自适应密度调制
+        # 主开关: enable_adm (或兼容旧名 enable_kplanes)
         # ════════════════════════════════════════════════════════════════════
-        self.enable_kplanes = False  # [X2-GS] 主开关：启用 K-Planes 空间分解
-        self.kplanes_resolution = 64  # [X2-GS] K-Planes 平面分辨率
-        self.kplanes_dim = 32  # [X2-GS] K-Planes 特征维度
-        self.kplanes_decoder_hidden = 128  # [X2-GS] MLP Decoder 隐藏层维度
-        self.kplanes_decoder_layers = 3  # [X2-GS] MLP Decoder 层数
+        self.enable_adm = False  # [ADM] 主开关：启用自适应密度调制
+        self.adm_resolution = 64  # [ADM] K-Planes 平面分辨率
+        self.adm_feature_dim = 32  # [ADM] K-Planes 特征维度
+        self.adm_decoder_hidden = 128  # [ADM] MLP Decoder 隐藏层维度
+        self.adm_decoder_layers = 3  # [ADM] MLP Decoder 层数
+        # 向下兼容旧参数名
+        self.enable_kplanes = False  # [兼容] 旧名，映射到 enable_adm
+        self.kplanes_resolution = 64  # [兼容] 旧名
+        self.kplanes_dim = 32  # [兼容] 旧名
+        self.kplanes_decoder_hidden = 128  # [兼容] 旧名
+        self.kplanes_decoder_layers = 3  # [兼容] 旧名
 
         super().__init__(parser, "Loading Parameters", sentinel)
 
@@ -164,31 +157,44 @@ class OptimizationParams(ParamGroup):
         self.opacity_lr = 0.05  # [BASELINE] 不透明度学习率
 
         # ════════════════════════════════════════════════════════════════════
-        # [BINO] Binocular-Guided 3D Gaussian Splatting 参数
-        # 论文: Binocular-Guided 3DGS (NeurIPS 2024)
-        # 主开关: enable_binocular_consistency
-        # 注：已移除边缘感知平滑损失，仅保留纯图像一致性约束
+        # [GAR] Geometry-aware Refinement - 双目一致性损失参数
+        # Stage 2: 几何感知细化（双目一致性子模块）
+        # 主开关: enable_gar (或兼容旧名 enable_binocular_consistency)
+        # 最优配置来自超参数搜索: weight=0.08, angle=0.04, start=5000
         # ════════════════════════════════════════════════════════════════════
-        self.enable_opacity_decay = False  # [BINO] 不透明度衰减（实验证明 CT 场景关闭更优）
-        self.opacity_decay_factor = 0.995  # [BINO] 衰减系数
-        self.enable_binocular_consistency = False  # [BINO] 主开关：启用双目一致性损失
-        self.binocular_max_angle_offset = 0.06  # [BINO] 最大角度偏移（弧度，推荐 0.05-0.08）
-        self.binocular_start_iter = 7000  # [BINO] 起始迭代（CT 可提前到 7000）
-        self.binocular_warmup_iters = 3000  # [BINO] warmup 迭代数
-        self.binocular_loss_weight = 0.15  # [BINO] 双目损失总权重（推荐 0.1-0.2）
-        self.binocular_depth_method = "weighted_average"  # [BINO] 深度估计方法
+        self.enable_gar = False  # [GAR] 主开关：启用几何感知细化
+        self.gar_loss_weight = 0.08  # [GAR] 双目损失权重（最优值，原 0.15）
+        self.gar_max_angle = 0.04  # [GAR] 最大角度偏移弧度（最优值，原 0.06）
+        self.gar_start_iter = 5000  # [GAR] 起始迭代（最优值，原 7000）
+        self.gar_warmup_iters = 3000  # [GAR] warmup 迭代数
+        self.gar_depth_method = "weighted_average"  # [GAR] 深度估计方法
+        self.enable_opacity_decay = False  # [GAR] 不透明度衰减（CT 场景关闭）
+        self.opacity_decay_factor = 0.995  # [GAR] 衰减系数
+        # 向下兼容旧参数名
+        self.enable_binocular_consistency = False  # [兼容] 旧名
+        self.binocular_max_angle_offset = 0.04  # [兼容] 旧名，使用最优值
+        self.binocular_start_iter = 5000  # [兼容] 旧名，使用最优值
+        self.binocular_warmup_iters = 3000  # [兼容] 旧名
+        self.binocular_loss_weight = 0.08  # [兼容] 旧名，使用最优值
+        self.binocular_depth_method = "weighted_average"  # [兼容] 旧名
 
         # ════════════════════════════════════════════════════════════════════
-        # [X2-GS] X²-Gaussian K-Planes 优化参数
-        # 论文: X²-Gaussian (arXiv:2403.04116)
-        # 需配合 ModelParams.enable_kplanes=True 使用
+        # [ADM] Adaptive Density Modulation - K-Planes 优化参数
+        # Stage 3: 自适应密度调制
+        # 需配合 ModelParams.enable_adm=True 使用
         # ════════════════════════════════════════════════════════════════════
-        self.kplanes_lr_init = 0.002  # [X2-GS] K-Planes 初始学习率
-        self.kplanes_lr_final = 0.0002  # [X2-GS] K-Planes 最终学习率
-        self.kplanes_lr_max_steps = 30000  # [X2-GS] K-Planes 学习率衰减步数
-        self.lambda_plane_tv = 0.0  # [X2-GS] K-Planes TV 正则化权重（0=关闭，推荐 0.0002）
-        self.plane_tv_weight_proposal = [0.0001, 0.0001, 0.0001]  # [X2-GS] 每个平面的 TV 权重 [xy, xz, yz]
-        self.tv_loss_type = "l2"  # [X2-GS] TV 损失类型（l2 效果更优）
+        self.adm_lr_init = 0.002  # [ADM] K-Planes 初始学习率
+        self.adm_lr_final = 0.0002  # [ADM] K-Planes 最终学习率
+        self.adm_lr_max_steps = 30000  # [ADM] K-Planes 学习率衰减步数
+        self.adm_lambda_tv = 0.002  # [ADM] Plane TV 正则化权重（最优值）
+        self.adm_tv_type = "l2"  # [ADM] TV 损失类型
+        # 向下兼容旧参数名
+        self.kplanes_lr_init = 0.002  # [兼容] 旧名
+        self.kplanes_lr_final = 0.0002  # [兼容] 旧名
+        self.kplanes_lr_max_steps = 30000  # [兼容] 旧名
+        self.lambda_plane_tv = 0.002  # [兼容] 旧名，使用最优值
+        self.plane_tv_weight_proposal = [0.0001, 0.0001, 0.0001]  # [兼容] 旧名
+        self.tv_loss_type = "l2"  # [兼容] 旧名
 
         super().__init__(parser, "Optimization Parameters")
 
