@@ -10,14 +10,16 @@ Binocular Stereo Consistency Utilities for R²-Gaussian
 - 本实现针对医学 CT 数据进行了特定优化
 
 核心组件:
-1. SmoothLoss: 边缘感知的视差平滑损失
-2. inverse_warp_images: 使用视差进行图像 warp
-3. create_shifted_camera: 生成平移后的虚拟相机
-4. compute_disparity: 从深度图计算视差
-5. BinocularConsistencyLoss: 整合上述组件的完整损失
+1. inverse_warp_images: 使用视差进行图像 warp
+2. create_shifted_camera: 生成平移后的虚拟相机
+3. compute_disparity: 从深度图计算视差
+4. BinocularConsistencyLoss: 整合上述组件的完整损失
+
+注意: 已移除 SmoothLoss（边缘感知平滑损失），统一使用纯图像一致性约束
 
 作者: Claude Code Agent
 日期: 2025-11-25
+更新: 2025-12-03 - 移除 SmoothLoss，简化为纯图像一致性
 """
 
 import torch
@@ -26,98 +28,6 @@ import torch.nn.functional as F
 import numpy as np
 from typing import Tuple, Optional, Dict
 import math
-
-
-class SmoothLoss(nn.Module):
-    """
-    边缘感知的视差平滑损失
-
-    原理: 在图像边缘处允许更大的视差变化，在平坦区域强制平滑
-    公式: L_smooth = mean(|∇d| * exp(-|∇I|))
-
-    参考: Godard et al. "Unsupervised Monocular Depth Estimation with
-          Left-Right Consistency" (CVPR 2017)
-    """
-
-    def __init__(self):
-        super(SmoothLoss, self).__init__()
-
-        # 水平方向 Sobel 算子 (1x3)
-        self.edge_conv_x_1 = nn.Conv2d(1, 1, kernel_size=(1, 3), padding=(0, 1), bias=False)
-        # 垂直方向 Sobel 算子 (3x1)
-        self.edge_conv_y_1 = nn.Conv2d(1, 1, kernel_size=(3, 1), padding=(1, 0), bias=False)
-
-        # 图像梯度检测 (3通道 -> 1通道)
-        self.edge_conv_x_3 = nn.Conv2d(3, 1, kernel_size=(1, 3), padding=(0, 1), bias=False)
-        self.edge_conv_y_3 = nn.Conv2d(3, 1, kernel_size=(3, 1), padding=(1, 0), bias=False)
-
-        # 初始化卷积核权重
-        with torch.no_grad():
-            # 视差梯度检测核 (1x3)
-            # kernel shape: [out_channels, in_channels, H, W] = [1, 1, 1, 3]
-            self.edge_conv_x_1.weight.data = torch.tensor(
-                [[[[-0.5, 0.0, 0.5]]]]  # [1, 1, 1, 3]
-            )
-            # (3x1)
-            self.edge_conv_y_1.weight.data = torch.tensor(
-                [[[[-0.5], [0.0], [0.5]]]]  # [1, 1, 3, 1]
-            )
-
-            # 图像梯度检测核 (3通道输入)
-            # kernel shape: [out_channels, in_channels, H, W] = [1, 3, 1, 3]
-            self.edge_conv_x_3.weight.data = torch.tensor(
-                [[[[-0.5, 0.0, 0.5]],
-                  [[-0.5, 0.0, 0.5]],
-                  [[-0.5, 0.0, 0.5]]]]  # [1, 3, 1, 3]
-            ) / 3.0
-            # [1, 3, 3, 1]
-            self.edge_conv_y_3.weight.data = torch.tensor(
-                [[[[-0.5], [0.0], [0.5]],
-                  [[-0.5], [0.0], [0.5]],
-                  [[-0.5], [0.0], [0.5]]]]  # [1, 3, 3, 1]
-            ) / 3.0
-
-        # 冻结权重
-        for param in self.parameters():
-            param.requires_grad = False
-
-    def forward(self, disparity: torch.Tensor, image: torch.Tensor) -> torch.Tensor:
-        """
-        计算边缘感知平滑损失
-
-        Args:
-            disparity: 视差图 [B, 1, H, W] 或 [1, H, W] 或 [H, W]
-            image: 参考图像 [B, C, H, W] 或 [C, H, W]
-
-        Returns:
-            平滑损失标量
-        """
-        # 确保维度正确
-        if disparity.dim() == 2:
-            disparity = disparity.unsqueeze(0).unsqueeze(0)
-        elif disparity.dim() == 3:
-            disparity = disparity.unsqueeze(0)
-
-        if image.dim() == 3:
-            image = image.unsqueeze(0)
-
-        # 如果是单通道图像，扩展为3通道
-        if image.shape[1] == 1:
-            image = image.expand(-1, 3, -1, -1)
-
-        # 计算图像梯度并生成边缘权重 (exp(-|∇I|))
-        # 系数 -0.33 控制边缘敏感度
-        edge_x_im = torch.exp(self.edge_conv_x_3(image).abs() * -0.33)
-        edge_y_im = torch.exp(self.edge_conv_y_3(image).abs() * -0.33)
-
-        # 计算视差梯度
-        edge_x_d = self.edge_conv_x_1(disparity)
-        edge_y_d = self.edge_conv_y_1(disparity)
-
-        # 边缘感知平滑损失
-        loss = (edge_x_im * edge_x_d.abs()).mean() + (edge_y_im * edge_y_d.abs()).mean()
-
-        return loss
 
 
 def inverse_warp_images(
@@ -318,42 +228,39 @@ def estimate_depth_from_gaussians(
 
 class BinocularConsistencyLoss(nn.Module):
     """
-    双目立体一致性损失
+    双目立体一致性损失（简化版）
 
     核心思想:
     1. 对训练视角进行小角度旋转，生成虚拟双目视角对
     2. 从深度估计视差
     3. 使用视差 warp 图像
-    4. 计算 warp 后图像与原图的一致性损失
+    4. 计算 warp 后图像与原图的一致性损失（仅 L1，无边缘感知平滑）
 
     针对医学 CT 的优化:
     - 使用角度偏移代替线性平移（适应 360° 旋转扫描）
     - 支持平行束和锥束投影
-    - 针对 CT 图像特点调整平滑正则化权重
+
+    更新历史:
+    - 2025-12-03: 移除 SmoothLoss，简化为纯图像一致性约束
     """
 
     def __init__(
         self,
-        smooth_weight: float = 0.05,
         max_angle_offset: float = 0.1,  # 最大角度偏移（弧度），约 5.7°
         start_iteration: int = 10000,   # 开始应用损失的迭代数（CT 可以更早）
         warmup_iterations: int = 2000,  # warmup 迭代数
     ):
         """
         Args:
-            smooth_weight: 平滑损失权重，原论文使用 0.05
             max_angle_offset: 最大角度偏移，对于 CT 建议 0.05-0.15 rad
             start_iteration: 开始应用损失的迭代数
             warmup_iterations: 损失权重 warmup 的迭代数
         """
         super(BinocularConsistencyLoss, self).__init__()
 
-        self.smooth_weight = smooth_weight
         self.max_angle_offset = max_angle_offset
         self.start_iteration = start_iteration
         self.warmup_iterations = warmup_iterations
-
-        self.smooth_loss = SmoothLoss()
 
     def get_loss_weight(self, iteration: int) -> float:
         """
@@ -392,7 +299,7 @@ class BinocularConsistencyLoss(nn.Module):
             iteration: 当前迭代数
 
         Returns:
-            损失字典，包含 'consistency', 'smooth', 'total'
+            损失字典，包含 'consistency', 'total'
         """
         weight = self.get_loss_weight(iteration)
 
@@ -400,7 +307,6 @@ class BinocularConsistencyLoss(nn.Module):
             zero = torch.tensor(0.0, device=rendered_image.device)
             return {
                 'consistency': zero,
-                'smooth': zero,
                 'total': zero
             }
 
@@ -442,18 +348,11 @@ class BinocularConsistencyLoss(nn.Module):
             reduction='sum'
         ) / (valid_mask.sum() + 1e-5)
 
-        # 平滑损失
-        smooth_loss = self.smooth_loss(disparity, gt_image)
-
-        # 总损失
-        total_loss = consistency_loss + self.smooth_weight * smooth_loss
-
         # 应用权重
-        total_loss = total_loss * weight
+        total_loss = consistency_loss * weight
 
         return {
-            'consistency': consistency_loss * weight,
-            'smooth': smooth_loss * weight,
+            'consistency': total_loss,
             'total': total_loss
         }
 

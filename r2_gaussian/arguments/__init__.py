@@ -17,8 +17,8 @@ R²-Gaussian 参数配置 - 消融实验指南
 集成的技术模块：
   - [BASELINE] R²-Gaussian 原版参数
   - [X2-GS]    X²-Gaussian K-Planes 密度调制 + TV 正则化
-  - [BINO]     Binocular-Guided 双目一致性损失
-  - [FSGS]     FSGS 伪视角深度监督 + Proximity 密化
+  - [BINO]     Binocular-Guided 双目一致性损失（纯图像一致性，无边缘感知平滑）
+  - [FSGS]     FSGS Proximity-guided 密化（注：深度监督已移除）
   - [INIT-PCD] 密度加权采样初始化 (需预生成点云，见 initialize_pcd.py)
 
 --------------------------------------------------------------------------------
@@ -28,14 +28,11 @@ R²-Gaussian 参数配置 - 消融实验指南
 1. 纯 BASELINE（不加任何技术）：
    --enable_kplanes false
    --enable_binocular_consistency false
-   --enable_fsgs_depth false
-   --enable_fsgs_pseudo_views false
    # init-pcd: 使用默认随机采样点云 (sampling_strategy=random)
 
 2. 仅启用 INIT-PCD（密度加权采样初始化）：
    --enable_kplanes false
    --enable_binocular_consistency false
-   --enable_fsgs_depth false
    # 需预先生成点云: python initialize_pcd.py -s <data_path> --sampling_strategy density_weighted
    # 然后训练时指定 --ply_path <预生成的点云路径>
 
@@ -43,20 +40,16 @@ R²-Gaussian 参数配置 - 消融实验指南
    --enable_kplanes true
    --lambda_plane_tv 0.0002
    --enable_binocular_consistency false
-   --enable_fsgs_depth false
 
 4. 仅启用 BINO（双目一致性）：
    --enable_kplanes false
    --enable_binocular_consistency true
    --binocular_start_iter 7000
    --binocular_loss_weight 0.15
-   --enable_fsgs_depth false
 
-5. 仅启用 FSGS（深度监督 + 伪视角）：
+5. 仅启用 FSGS Proximity（密化策略）：
    --enable_kplanes false
    --enable_binocular_consistency false
-   --enable_fsgs_depth true
-   --enable_fsgs_pseudo_views true
    --enable_fsgs_proximity true
    --enable_medical_constraints true
 
@@ -66,15 +59,12 @@ R²-Gaussian 参数配置 - 消融实验指南
    --enable_binocular_consistency true
    --binocular_start_iter 7000
    --binocular_loss_weight 0.15
-   --enable_fsgs_depth false
 
 7. 全部启用（Full Combo）：
    --enable_kplanes true
    --lambda_plane_tv 0.0002
    --enable_binocular_consistency true
    --binocular_start_iter 7000
-   --enable_fsgs_depth true
-   --enable_fsgs_pseudo_views true
    --enable_fsgs_proximity true
    # 搭配 init-pcd 预生成的密度加权点云效果最佳
 
@@ -103,19 +93,6 @@ class ModelParams(ParamGroup):
         self.scale_max = 0.5  # [BASELINE] 高斯最大尺度 (体积百分比)
         self.eval = True  # [BASELINE] 是否启用评估
         self.gaussiansN = 1  # [BASELINE] 高斯场数量（固定为 1，单模型训练）
-
-        # ════════════════════════════════════════════════════════════════════
-        # [FSGS] 深度监督参数 - Few-shot 3D Gaussian Splatting
-        # 论文: FSGS (arXiv:2312.00451)
-        # 主开关: enable_fsgs_depth, enable_fsgs_pseudo_views
-        # ════════════════════════════════════════════════════════════════════
-        self.enable_fsgs_depth = False  # [FSGS] 主开关：启用 MiDaS 深度监督
-        self.fsgs_depth_model = "dpt_hybrid"  # [FSGS] 深度模型: dpt_large/dpt_hybrid/midas_small
-        self.fsgs_depth_weight = 0.05  # [FSGS] 深度 loss 权重（推荐 0.01-0.1）
-        self.enable_fsgs_pseudo_views = False  # [FSGS] 主开关：启用伪视角生成
-        self.num_fsgs_pseudo_views = 10  # [FSGS] 每次迭代的伪视角数量
-        self.fsgs_noise_std = 0.05  # [FSGS] 伪视角位置噪声标准差
-        self.fsgs_start_iter = 5000  # [FSGS] 功能启动迭代数
 
         # ════════════════════════════════════════════════════════════════════
         # [FSGS] Proximity-guided 密化参数
@@ -187,19 +164,10 @@ class OptimizationParams(ParamGroup):
         self.opacity_lr = 0.05  # [BASELINE] 不透明度学习率
 
         # ════════════════════════════════════════════════════════════════════
-        # [BASELINE] 伪标签和深度相关参数（R²-Gaussian 原版）
-        # ════════════════════════════════════════════════════════════════════
-        self.sample_pseudo_interval = 1  # [BASELINE] 伪标签采样间隔
-        self.start_sample_pseudo = 2000  # [BASELINE] 伪标签起始迭代
-        self.end_sample_pseudo = 10000  # [BASELINE] 伪标签结束迭代
-        self.start_perturbation = 2000  # [BASELINE] 扰动起始迭代
-        self.depth_weight = 0.05  # [BASELINE] 深度 loss 权重
-        self.depth_pseudo_weight = 0.0  # [BASELINE] 伪深度 loss 权重（0=关闭）
-
-        # ════════════════════════════════════════════════════════════════════
         # [BINO] Binocular-Guided 3D Gaussian Splatting 参数
         # 论文: Binocular-Guided 3DGS (NeurIPS 2024)
         # 主开关: enable_binocular_consistency
+        # 注：已移除边缘感知平滑损失，仅保留纯图像一致性约束
         # ════════════════════════════════════════════════════════════════════
         self.enable_opacity_decay = False  # [BINO] 不透明度衰减（实验证明 CT 场景关闭更优）
         self.opacity_decay_factor = 0.995  # [BINO] 衰减系数
@@ -207,7 +175,6 @@ class OptimizationParams(ParamGroup):
         self.binocular_max_angle_offset = 0.06  # [BINO] 最大角度偏移（弧度，推荐 0.05-0.08）
         self.binocular_start_iter = 7000  # [BINO] 起始迭代（CT 可提前到 7000）
         self.binocular_warmup_iters = 3000  # [BINO] warmup 迭代数
-        self.binocular_smooth_weight = 0.05  # [BINO] 视差平滑权重
         self.binocular_loss_weight = 0.15  # [BINO] 双目损失总权重（推荐 0.1-0.2）
         self.binocular_depth_method = "weighted_average"  # [BINO] 深度估计方法
 

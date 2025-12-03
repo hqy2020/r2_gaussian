@@ -38,15 +38,6 @@ from r2_gaussian.utils.binocular_utils import (
 from r2_gaussian.dataset.cameras import Camera
 import copy
 
-# FSGS 伪视角深度监督
-try:
-    from r2_gaussian.utils.depth_estimator import get_depth_estimator, compute_depth_loss
-    from r2_gaussian.utils.pseudo_view_sampler import get_pseudo_view_sampler
-    HAS_DEPTH_SUPERVISION = True
-except ImportError as e:
-    HAS_DEPTH_SUPERVISION = False
-    print(f"⚠️ 深度监督模块未加载: {e}")
-
 
 def training(
     dataset: ModelParams,
@@ -102,17 +93,16 @@ def training(
         tv_vol_nVoxel = torch.tensor([tv_vol_size, tv_vol_size, tv_vol_size])
         tv_vol_sVoxel = torch.tensor(scanner_cfg["dVoxel"]) * tv_vol_nVoxel
 
-    # 🆕 Set up Binocular Consistency Loss (双目立体一致性损失)
+    # 🆕 Set up Binocular Consistency Loss (双目立体一致性损失，简化版)
     use_binocular = getattr(opt, 'enable_binocular_consistency', False)
     binocular_loss_module = None
     if use_binocular:
-        print("Use binocular stereo consistency loss")
+        print("Use binocular stereo consistency loss (simplified, no edge-aware smoothing)")
         binocular_loss_module = BinocularConsistencyLoss(
-            smooth_weight=opt.binocular_smooth_weight,
             max_angle_offset=opt.binocular_max_angle_offset,
             start_iteration=opt.binocular_start_iter,
             warmup_iterations=opt.binocular_warmup_iters
-        ).cuda()  # 🔧 Fix P0: 将模块移至 GPU，避免 CUDA 设备不匹配
+        ).cuda()
 
     def create_shifted_camera(viewpoint_cam, angle_offset):
         """为 CT 数据创建角度偏移的虚拟相机"""
@@ -178,27 +168,6 @@ def training(
         print("=" * 70)
     else:
         print("⚠️ K-Planes 未启用（使用标准 R²-Gaussian）")
-
-    # 🌟 Set up depth supervision (FSGS)
-    use_depth_supervision = (
-        HAS_DEPTH_SUPERVISION and
-        opt.depth_pseudo_weight > 0 and
-        opt.start_sample_pseudo < opt.iterations
-    )
-    depth_estimator = None
-    pseudo_view_sampler = None
-    if use_depth_supervision:
-        print(f"📊 尝试启用伪视角深度监督: weight={opt.depth_pseudo_weight}, "
-              f"iter=[{opt.start_sample_pseudo}, {opt.end_sample_pseudo}]")
-        try:
-            depth_estimator = get_depth_estimator(model_type="dpt_hybrid", device="cuda")
-            pseudo_view_sampler = get_pseudo_view_sampler(sampler_type="ct_circular")
-            print("✅ 深度监督模块加载成功")
-        except Exception as e:
-            print(f"⚠️ 深度监督模块加载失败，将禁用深度监督: {e}")
-            use_depth_supervision = False
-            depth_estimator = None
-            pseudo_view_sampler = None
 
     # Train
     iter_start = torch.cuda.Event(enable_timing=True)
@@ -289,7 +258,6 @@ def training(
             )
 
             loss["bino_consistency"] = bino_losses["consistency"]
-            loss["bino_smooth"] = bino_losses["smooth"]
             loss["total"] = loss["total"] + opt.binocular_loss_weight * bino_losses["total"]
 
         # K-Planes TV 正则化损失（X²-Gaussian）
@@ -311,39 +279,6 @@ def training(
                 print(f"  - 特征范围: [{kplanes_feat.min().item():.4f}, {kplanes_feat.max().item():.4f}]")
                 print(f"  - TV loss (plane): {tv_loss_planes.item():.6f}")
                 print(f"  - TV loss (weighted): {(opt.lambda_plane_tv * tv_loss_planes).item():.6f}")
-
-        # 🌟 FSGS 伪视角深度监督
-        if (use_depth_supervision and
-            iteration >= opt.start_sample_pseudo and
-            iteration <= opt.end_sample_pseudo and
-            iteration % opt.sample_pseudo_interval == 0):
-            # 生成伪视角
-            pseudo_cam = pseudo_view_sampler.sample_pseudo_view(viewpoint_cam)
-            # 渲染伪视角
-            with torch.no_grad():
-                pseudo_render_pkg = render(pseudo_cam, gaussians, pipe)
-                pseudo_image = pseudo_render_pkg["render"]
-                # 获取 MiDaS 深度估计（需要 batch 维度）
-                midas_depth = depth_estimator(pseudo_image.unsqueeze(0)).squeeze(0)
-            # 渲染深度（需要梯度）
-            # 注意：X-ray 投影没有真正的深度图，这里用渲染的累积密度近似
-            # 计算深度损失
-            rendered_depth = pseudo_render_pkg.get("depth", pseudo_image)  # 如果有深度输出则使用
-            if rendered_depth.shape != midas_depth.shape:
-                import torch.nn.functional as F
-                rendered_depth = F.interpolate(
-                    rendered_depth.unsqueeze(0) if rendered_depth.dim() == 3 else rendered_depth,
-                    size=midas_depth.shape[-2:],
-                    mode="bilinear",
-                    align_corners=False
-                ).squeeze(0)
-            loss_depth = compute_depth_loss(
-                rendered_depth.unsqueeze(0) if rendered_depth.dim() == 3 else rendered_depth,
-                midas_depth,
-                loss_type="pearson"
-            )
-            loss["depth_pseudo"] = loss_depth
-            loss["total"] = loss["total"] + opt.depth_pseudo_weight * loss_depth
 
         loss["total"].backward()
 

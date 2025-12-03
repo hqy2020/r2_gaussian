@@ -1,10 +1,13 @@
 # 从粗到细的稀疏视角CT重建优化框架
 
-> **技术报告 v1.1** | 2025-12-03
+> **技术报告 v1.2** | 2025-12-03
 >
 > 本报告介绍我们对R²-Gaussian基线的改进方法，采用从粗到细的三阶段渐进式优化策略。
 >
-> **v1.1 更新**：添加 Bino 边缘感知损失、FSGS 伪视角生成、X²-GS TV 正则化的完整数学公式
+> **v1.2 更新**：
+> - 移除 FSGS 深度监督（MiDaS 预训练模型）
+> - 移除 Bino 边缘感知平滑损失（SmoothLoss）
+> - 统一为纯图像一致性约束
 
 ---
 
@@ -417,11 +420,11 @@ elif args.sampling_strategy == "density_weighted":
 
 ##### 核心数学公式
 
-**1. 双目一致性总损失**：
+**1. 双目一致性损失**（纯图像一致性，v1.2 简化版）：
 
-$$\mathcal{L}_{\text{bino}} = \mathcal{L}_{\text{consistency}} + \lambda_{\text{smooth}} \cdot \mathcal{L}_{\text{smooth}}$$
+$$\mathcal{L}_{\text{bino}} = \mathcal{L}_{\text{consistency}}$$
 
-其中 $\lambda_{\text{smooth}} = 0.05$（默认值）。
+> **v1.2 更新**：已移除边缘感知平滑损失（$\mathcal{L}_{\text{smooth}}$），仅保留纯图像一致性约束。
 
 **2. 一致性损失（Warp 后的 L1 损失）**：
 
@@ -429,48 +432,7 @@ $$\mathcal{L}_{\text{consistency}} = \frac{1}{|M|} \sum_{p \in M} |I_{\text{warp
 
 其中 $M$ 是有效像素掩码，$I_{\text{warped}}$ 是通过视差变形后的图像。
 
-**3. 边缘感知平滑损失**（核心创新）：
-
-$$\mathcal{L}_{\text{smooth}} = \frac{1}{N} \sum_{p} \left( |\nabla_x d(p)| \cdot e^{-|\nabla_x I(p)|} + |\nabla_y d(p)| \cdot e^{-|\nabla_y I(p)|} \right)$$
-
-**公式解读**：
-- $d(p)$：像素 $p$ 处的视差值
-- $\nabla_x d$, $\nabla_y d$：视差的水平/垂直梯度
-- $\nabla_x I$, $\nabla_y I$：图像的水平/垂直梯度
-- $e^{-|\nabla I|}$：**边缘感知权重**
-
-**边缘感知原理图解**：
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                     边缘感知平滑的工作原理                        │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                 │
-│  情况1：平坦区域（器官内部）                                      │
-│  ─────────────────────────                                      │
-│  图像梯度 |∇I| ≈ 0  →  权重 exp(-0) = 1.0  →  强制视差平滑       │
-│                                                                 │
-│  情况2：边缘区域（器官边界）                                      │
-│  ─────────────────────────                                      │
-│  图像梯度 |∇I| >> 0  →  权重 exp(-大) ≈ 0  →  允许视差跳变       │
-│                                                                 │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                 │
-│  CT切片示意图：                                                  │
-│  ┌───────────────────────┐                                      │
-│  │   背景 (空气)          │  ← |∇I|≈0, 强制平滑                  │
-│  │  ┌─────────────────┐  │                                      │
-│  │  │                 │  │                                      │
-│  │  │   骨骼/器官     │  │  ← |∇I|≈0, 强制平滑                  │
-│  │  │                 │  │                                      │
-│  │  └─────────────────┘  │  ← 边界处 |∇I|大, 允许视差突变        │
-│  │   背景 (空气)          │                                      │
-│  └───────────────────────┘                                      │
-│                                                                 │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-**4. 视差计算公式**：
+**3. 视差计算公式**：
 
 $$d = \frac{f \cdot b}{D}$$
 
@@ -491,37 +453,39 @@ $$D_{\text{bino}} = \frac{\sum_{i} D_i \cdot \rho_i}{\sum_{i} \rho_i}$$
 2. 分别从两个视角渲染图像
 3. 从高斯点计算密度加权平均深度
 4. 用视差公式将一个视角的图像"变形"到另一个视角
-5. 要求变形后的图像与真实渲染尽量一致
+5. 要求变形后的图像与 GT 图像尽量一致
 
-**代码实现** (`r2_gaussian/utils/binocular_utils.py:31-120`):
+**代码实现** (`r2_gaussian/utils/binocular_utils.py:229-357`)：
 
 ```python
-class SmoothLoss(nn.Module):
+class BinocularConsistencyLoss(nn.Module):
     """
-    边缘感知的视差平滑损失
+    双目立体一致性损失（v1.2 简化版）
 
-    原理: 在图像边缘处允许更大的视差变化，在平坦区域强制平滑
-    公式: L_smooth = mean(|∇d| * exp(-|∇I|))
+    核心思想:
+    1. 对训练视角进行小角度旋转，生成虚拟双目视角对
+    2. 从深度估计视差
+    3. 使用视差 warp 图像
+    4. 计算 warp 后图像与 GT 图像的 L1 一致性损失
+
+    v1.2 更新: 已移除边缘感知平滑损失
     """
 
-    def forward(self, disparity: torch.Tensor, image: torch.Tensor) -> torch.Tensor:
-        # 计算图像梯度并生成边缘权重
-        # 系数 -0.33 控制边缘敏感度
-        edge_x_im = torch.exp(self.edge_conv_x_3(image).abs() * -0.33)
-        edge_y_im = torch.exp(self.edge_conv_y_3(image).abs() * -0.33)
+    def forward(self, rendered_image, gt_image, shifted_rendered_image,
+                depth_map, focal_length, baseline, iteration):
+        # 计算视差
+        disparity = compute_disparity_from_depth(depth_map, focal_length, baseline)
 
-        # 计算视差梯度
-        edge_x_d = self.edge_conv_x_1(disparity)
-        edge_y_d = self.edge_conv_y_1(disparity)
+        # Warp shifted image 到原视角
+        warped_image = inverse_warp_images(shifted_rendered_image, disparity)
 
-        # 🎯 核心：边缘感知平滑损失
-        # 边缘处允许大视差变化，平坦处强制平滑
-        loss = (edge_x_im * edge_x_d.abs()).mean() + \
-               (edge_y_im * edge_y_d.abs()).mean()
-        return loss
+        # 一致性损失 (L1)
+        consistency_loss = F.l1_loss(warped_image * valid_mask, gt_image * valid_mask)
+
+        return {'consistency': consistency_loss, 'total': consistency_loss}
 ```
 
-**训练流程中的调用** (`train.py:259-293`):
+**训练流程中的调用** (`train.py:228-261`)：
 
 ```python
 # 双目立体一致性损失
@@ -536,150 +500,45 @@ if use_binocular and iteration >= opt.binocular_start_iter:
     shifted_render_pkg = render(shifted_cam, gaussians, pipe)
     shifted_image = shifted_render_pkg["render"]
 
-    # 4. 估计深度图
-    depth_map = estimate_depth_for_ct(gaussians, viewpoint_cam, ...)
+    # 4. 估计深度图（密度加权平均）
+    depth_map = estimate_depth_for_ct(gaussians, viewpoint_cam)
 
-    # 5. 🎯 计算双目一致性损失
-    bino_losses = binocular_loss_module(
-        rendered_image=image,
-        gt_image=gt_image,
-        shifted_rendered_image=shifted_image,
-        depth_map=depth_map,
-        ...
-    )
+    # 5. 计算双目一致性损失
+    bino_losses = binocular_loss_module(...)
 
     # 6. 加入总损失
     loss["total"] += opt.binocular_loss_weight * bino_losses["total"]
 ```
 
-#### 2.2.2 FSGS：伪视角深度监督
+#### 2.2.2 FSGS：Proximity-guided 密化
 
-##### 通俗解释
+> ⚠️ **v1.2 更新**：FSGS 的深度监督功能（MiDaS 预训练模型）已被移除。当前仅保留 Proximity-guided 密化策略。
 
-我们借助一个预训练的"深度估计模型"（MiDaS）来提供额外的监督信号：
+##### 概述
 
-```
-渲染的图像 → MiDaS模型 → 估计的深度图
-                              ↓
-              要求渲染深度与估计深度一致
-```
+FSGS 模块在 v1.2 版本中仅保留 **Proximity-guided 密化策略**，用于改善高斯点的空间分布。
 
-这就像请了一个"深度专家"来指导我们的重建。
+##### 保留功能：Proximity-guided 密化
 
-##### 核心数学公式
+Proximity-guided 密化是一种基于邻域分析的密化策略，在高斯点稀疏的区域优先进行克隆/分裂操作。
 
-**1. 伪视角生成**（CT 圆形轨迹专用）：
+**相关参数**：
+- `enable_fsgs_proximity`: 主开关
+- `proximity_threshold`: proximity score 阈值
+- `enable_medical_constraints`: 医学约束开关
+- `proximity_organ_type`: 器官类型
 
-对于原始相机旋转矩阵 $\mathbf{R}$，伪视角通过复合旋转扰动生成：
+##### 已移除功能
 
-$$\mathbf{R}_{\text{pseudo}} = \mathbf{R}_z(\Delta\theta_z) \cdot \mathbf{R}_x(\Delta\theta_x) \cdot \mathbf{R}$$
+以下功能在 v1.2 版本中已被移除：
 
-其中：
-- $\Delta\theta_z \sim \mathcal{U}(-0.175, 0.175)$：圆周角度扰动（约 ±10°）
-- $\Delta\theta_x \sim \mathcal{U}(-0.087, 0.087)$：俯仰角扰动（约 ±5°）
+| 已移除功能 | 原因 |
+|-----------|------|
+| MiDaS 深度估计 | 第三方模型依赖，增加复杂度 |
+| `pseudo_view_sampler` | 与 Bino 的 `create_shifted_camera` 功能重复 |
+| Pearson 深度损失 | 移除深度监督后不再需要 |
 
-**旋转矩阵定义**：
-
-$$\mathbf{R}_z(\theta) = \begin{pmatrix} \cos\theta & -\sin\theta & 0 \\ \sin\theta & \cos\theta & 0 \\ 0 & 0 & 1 \end{pmatrix}, \quad \mathbf{R}_x(\theta) = \begin{pmatrix} 1 & 0 & 0 \\ 0 & \cos\theta & -\sin\theta \\ 0 & \sin\theta & \cos\theta \end{pmatrix}$$
-
-**2. 深度监督损失**（Pearson 相关性）：
-
-$$\mathcal{L}_{\text{depth}} = 1 - \rho(D_{\text{render}}, D_{\text{MiDaS}})$$
-
-其中 Pearson 相关系数：
-
-$$\rho(X, Y) = \frac{\text{Cov}(X, Y)}{\sigma_X \cdot \sigma_Y} = \frac{\sum_i (X_i - \bar{X})(Y_i - \bar{Y})}{\sqrt{\sum_i (X_i - \bar{X})^2} \cdot \sqrt{\sum_i (Y_i - \bar{Y})^2}}$$
-
-> **为什么用 Pearson 而非 L1/L2？** MiDaS 输出的是**相对深度**（尺度和偏移未知），Pearson 相关性只关心**相对排序**，对尺度不变。
-
-**3. FSGS 深度来源**（MiDaS 预训练模型）：
-
-$$D_{\text{MiDaS}} = \text{MiDaS}_{\text{DPT-Hybrid}}(I_{\text{pseudo}})$$
-
-MiDaS 是在大规模数据上预训练的单目深度估计模型，输出**逐像素**的相对深度图。
-
-##### Bino vs FSGS 对比
-
-| 对比项 | Bino | FSGS |
-|--------|------|------|
-| **伪视角生成方式** | `create_shifted_camera()` | `pseudo_view_sampler.sample_pseudo_view()` |
-| **角度偏移** | 固定小角度（~3.4°） | 随机扰动（~10° 圆周 + ~5° 俯仰） |
-| **深度来源** | **自身高斯点**密度加权平均 | **MiDaS 大模型**逐像素估计 |
-| **深度精度** | 粗糙（全图一个值） | 精细（逐像素） |
-| **损失类型** | L1 一致性 + 边缘感知平滑 | Pearson 相关性 |
-| **代码位置** | `train.py:259-293` | `train.py:315-346` |
-| **启动迭代** | `binocular_start_iter=7000` | `start_sample_pseudo=5000` |
-
-```
-训练循环中两个技术是独立的：
-├── Bino (line 259-293)
-│   └── shifted_cam = create_shifted_camera(viewpoint_cam, angle_offset)
-│   └── depth = estimate_depth_for_ct(gaussians, ...)  ← 自己算
-│
-└── FSGS (line 315-346)
-    └── pseudo_cam = pseudo_view_sampler.sample_pseudo_view(viewpoint_cam)
-    └── midas_depth = depth_estimator(pseudo_image)    ← MiDaS 算
-```
-
-##### 技术实现
-
-**文字描述**：
-1. 在训练视角基础上随机扰动生成"伪视角"（圆周 ±10°，俯仰 ±5°）
-2. 从伪视角渲染图像（无梯度）
-3. 用预训练的 MiDaS 模型估计逐像素深度
-4. 计算渲染深度与 MiDaS 深度的 Pearson 相关性损失
-
-**代码实现** (`r2_gaussian/utils/depth_estimator.py:22-99`):
-
-```python
-class MiDaSDepthEstimator(nn.Module):
-    """
-    MiDaS 深度估计器
-    使用预训练的 DPT (Dense Prediction Transformer) 模型估计相对深度
-    """
-
-    def __init__(self, model_type="dpt_hybrid", device="cuda"):
-        super().__init__()
-
-        # 🎯 加载预训练模型
-        self.model = torch.hub.load(
-            "intel-isl/MiDaS",
-            "DPT_Hybrid",  # 平衡速度和质量
-            pretrained=True
-        )
-        self.model = self.model.to(device)
-        self.model.eval()
-
-        # 冻结参数（不训练深度估计器本身）
-        for param in self.parameters():
-            param.requires_grad = False
-```
-
-**训练流程中的调用** (`train.py:315-346`):
-
-```python
-# FSGS 伪视角深度监督
-if use_depth_supervision and iteration >= opt.start_sample_pseudo:
-    # 1. 生成伪视角
-    pseudo_cam = pseudo_view_sampler.sample_pseudo_view(viewpoint_cam)
-
-    # 2. 渲染伪视角
-    with torch.no_grad():
-        pseudo_render_pkg = render(pseudo_cam, gaussians, pipe)
-        pseudo_image = pseudo_render_pkg["render"]
-
-        # 3. 🎯 MiDaS估计深度（不需要梯度）
-        midas_depth = depth_estimator(pseudo_image.unsqueeze(0)).squeeze(0)
-
-    # 4. 获取渲染深度（需要梯度，用于反向传播）
-    rendered_depth = pseudo_render_pkg.get("depth", pseudo_image)
-
-    # 5. 计算深度损失（使用Pearson相关性）
-    loss_depth = compute_depth_loss(rendered_depth, midas_depth, loss_type="pearson")
-
-    # 6. 加入总损失
-    loss["total"] += opt.depth_pseudo_weight * loss_depth
-```
+> 深度相关功能统一使用 Bino 模块的 `estimate_depth_for_ct()` 函数，基于高斯点自身计算密度加权平均深度。
 
 ---
 
@@ -994,51 +853,47 @@ def compute_plane_tv(plane: torch.Tensor, loss_type: str = "l2") -> torch.Tensor
 
 为方便查阅，以下汇总本文涉及的所有核心数学公式。
 
-### 3.1 总损失函数
+### 3.1 总损失函数（v1.2 更新）
 
-$$\mathcal{L}_{\text{total}} = \mathcal{L}_{\text{recon}} + \lambda_{\text{dssim}} \mathcal{L}_{\text{DSSIM}} + \lambda_{\text{tv}} \mathcal{L}_{\text{3D-TV}} + \lambda_{\text{bino}} \mathcal{L}_{\text{bino}} + \lambda_{\text{depth}} \mathcal{L}_{\text{depth}} + \lambda_{\text{plane-tv}} \mathcal{L}_{\text{plane-tv}}$$
+$$\mathcal{L}_{\text{total}} = \mathcal{L}_{\text{recon}} + \lambda_{\text{dssim}} \mathcal{L}_{\text{DSSIM}} + \lambda_{\text{tv}} \mathcal{L}_{\text{3D-TV}} + \lambda_{\text{bino}} \mathcal{L}_{\text{bino}} + \lambda_{\text{plane-tv}} \mathcal{L}_{\text{plane-tv}}$$
 
 | 损失项 | 公式 | 默认权重 | 来源技术 |
 |--------|------|----------|----------|
 | 重建损失 | $\|I_{\text{render}} - I_{\text{gt}}\|_1$ | 1.0 | Baseline |
 | DSSIM | $1 - \text{SSIM}(I_{\text{render}}, I_{\text{gt}})$ | 0.25 | Baseline |
 | 3D TV | $\sum_{d \in \{x,y,z\}} \|\nabla_d V\|_1$ | 0.05 | Baseline |
-| 双目一致性 | $\mathcal{L}_{\text{consistency}} + 0.05 \cdot \mathcal{L}_{\text{smooth}}$ | 0.08~0.15 | Bino |
-| 深度监督 | $1 - \rho(D_{\text{render}}, D_{\text{MiDaS}})$ | 0.03 | FSGS |
+| 双目一致性 | $\mathcal{L}_{\text{consistency}}$ | 0.08~0.15 | Bino |
 | Plane TV | $\sum_{p \in \{xy,xz,yz\}} \mathcal{L}_{\text{TV}}(\mathbf{P}_p)$ | 0.002 | X²-GS |
 
-### 3.2 Bino 边缘感知平滑损失
+> **v1.2 更新**：已移除 FSGS 深度监督损失和 Bino 边缘感知平滑损失。
 
-$$\mathcal{L}_{\text{smooth}} = \frac{1}{N} \sum_{p} \left( |\nabla_x d| \cdot e^{-|\nabla_x I|} + |\nabla_y d| \cdot e^{-|\nabla_y I|} \right)$$
+### 3.2 Bino 双目一致性损失
 
-**关键洞察**：
-- 边缘处 $|\nabla I|$ 大 → 权重 $e^{-|\nabla I|} \approx 0$ → 允许视差突变
-- 平坦处 $|\nabla I|$ 小 → 权重 $e^{-|\nabla I|} \approx 1$ → 强制视差平滑
+$$\mathcal{L}_{\text{bino}} = \mathcal{L}_{\text{consistency}} = \frac{1}{|M|} \sum_{p \in M} |I_{\text{warped}}(p) - I_{\text{gt}}(p)|$$
 
-### 3.3 FSGS 伪视角生成
+其中 $M$ 是有效像素掩码，$I_{\text{warped}}$ 是通过视差变形后的图像。
 
-$$\mathbf{R}_{\text{pseudo}} = \mathbf{R}_z(\Delta\theta_z) \cdot \mathbf{R}_x(\Delta\theta_x) \cdot \mathbf{R}_{\text{original}}$$
+> **v1.2 更新**：已移除边缘感知平滑损失（$\mathcal{L}_{\text{smooth}}$）。
 
-其中 $\Delta\theta_z \sim \mathcal{U}(-10°, +10°)$，$\Delta\theta_x \sim \mathcal{U}(-5°, +5°)$
-
-### 3.4 X²-Gaussian 密度调制
+### 3.3 X²-Gaussian 密度调制
 
 $$\rho_{\text{final}} = \rho_{\text{base}} \times \left( 0.7 + 0.6 \cdot \sigma(\text{MLP}(\mathbf{f}_{\text{kplanes}})) \right)$$
 
 调制范围：$[0.7, 1.3]$（即 ±30%）
 
-### 3.5 Plane TV 正则化
+### 3.4 Plane TV 正则化
 
 $$\mathcal{L}_{\text{TV}}(\mathbf{P}) = 2 \times \left( \frac{\|\nabla_h \mathbf{P}\|_2^2}{\text{count}_h} + \frac{\|\nabla_w \mathbf{P}\|_2^2}{\text{count}_w} \right)$$
 
-### 3.6 深度估计对比
+### 3.5 深度估计（统一方案）
 
-| 方法 | Bino | FSGS |
-|------|------|------|
-| **公式** | $D = \frac{\sum_i D_i \rho_i}{\sum_i \rho_i}$ | $D = \text{MiDaS}(I)$ |
-| **来源** | 自身高斯点 | 预训练大模型 |
-| **精度** | 粗糙（全局平均） | 精细（逐像素） |
-| **计算** | 快速 | 较慢 |
+v1.2 版本统一使用高斯点密度加权平均深度：
+
+$$D = \frac{\sum_i D_i \rho_i}{\sum_i \rho_i}$$
+
+其中 $D_i$ 是第 $i$ 个高斯点在相机坐标系下的深度，$\rho_i$ 是其密度值。
+
+> **v1.2 更新**：已移除 MiDaS 预训练模型深度估计，统一使用自身高斯点计算。
 
 ---
 
