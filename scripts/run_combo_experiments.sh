@@ -5,6 +5,16 @@
 
 set -e
 
+# 取消所有代理设置
+unset HTTP_PROXY
+unset HTTPS_PROXY
+unset http_proxy
+unset https_proxy
+unset NO_PROXY
+unset no_proxy
+unset ALL_PROXY
+unset all_proxy
+
 # 激活 conda 环境
 source ~/anaconda3/etc/profile.d/conda.sh
 conda activate r2_gaussian_new

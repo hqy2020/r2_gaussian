@@ -4,6 +4,16 @@
 
 set -e  # 遇到错误立即退出
 
+# 取消所有代理设置
+unset HTTP_PROXY
+unset HTTPS_PROXY
+unset http_proxy
+unset https_proxy
+unset NO_PROXY
+unset no_proxy
+unset ALL_PROXY
+unset all_proxy
+
 # 初始化 conda（支持非交互式 shell）
 eval "$(conda shell.bash hook)"
 
