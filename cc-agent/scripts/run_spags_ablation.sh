@@ -73,12 +73,11 @@ if [ ! -f "$DATA_PATH" ]; then
     exit 1
 fi
 
-# SPS 点云路径（如果需要）
-SPS_PCD_DIR="data/sps-369"
-SPS_PCD_PATH="${SPS_PCD_DIR}/${ORGAN}_50_${VIEWS}views/init_${ORGAN}_50_${VIEWS}views.npy"
+# SPS 点云路径（使用 density-369 目录的密度加权点云）
+SPS_PCD_PATH="data/density-369/init_${ORGAN}_50_${VIEWS}views.npy"
 
 # 公共参数
-COMMON_FLAGS="--iterations 30000 --test_iterations 10000 20000 30000 --gaussiansN 1"
+COMMON_FLAGS="--iterations 30000 --test_iterations 10000 20000 30000"
 
 # ============================================================================
 # 配置定义
@@ -95,26 +94,26 @@ GAR_FLAGS="--enable_gar true \
     --gar_proximity_k 5 \
     --gar_medical_constraints true"
 
-# 兼容旧参数的 GAR 配置
-GAR_FLAGS_COMPAT="--enable_binocular_consistency true \
+# 兼容旧参数的 GAR 配置（布尔参数不带 true）
+GAR_FLAGS_COMPAT="--enable_binocular_consistency \
     --binocular_loss_weight 0.08 \
     --binocular_max_angle_offset 0.04 \
     --binocular_start_iter 5000 \
     --binocular_warmup_iters 3000 \
-    --enable_fsgs_proximity true \
+    --enable_fsgs_proximity \
     --proximity_threshold 5.0 \
     --proximity_k_neighbors 5 \
-    --enable_medical_constraints true"
+    --enable_medical_constraints"
 
 # ADM 最优参数
-ADM_FLAGS="--enable_adm true \
+ADM_FLAGS="--enable_adm \
     --adm_resolution 64 \
     --adm_feature_dim 32 \
     --adm_lambda_tv 0.002 \
     --adm_tv_type l2"
 
-# 兼容旧参数的 ADM 配置
-ADM_FLAGS_COMPAT="--enable_kplanes true \
+# 兼容旧参数的 ADM 配置（布尔参数不带 true）
+ADM_FLAGS_COMPAT="--enable_kplanes \
     --kplanes_resolution 64 \
     --kplanes_dim 32 \
     --lambda_plane_tv 0.002 \
@@ -181,27 +180,16 @@ case $CONFIG in
 esac
 
 # ============================================================================
-# SPS 点云生成（如果需要）
+# SPS 点云检查（使用 density-369 目录已有的密度加权点云）
 # ============================================================================
 
 if [ "$USE_SPS" = true ]; then
     if [ ! -f "$SPS_PCD_PATH" ]; then
-        echo ">>> 生成 SPS 点云: $SPS_PCD_PATH"
-        mkdir -p "$SPS_PCD_DIR/${ORGAN}_50_${VIEWS}views"
-        python initialize_pcd.py \
-            --data "$DATA_PATH" \
-            --enable_sps \
-            --sps_strategy density_weighted \
-            --n_points 50000
-        # 移动生成的点云到 SPS 目录
-        GENERATED_PCD="data/369/${ORGAN}_50_${VIEWS}views/init_${ORGAN}_50_${VIEWS}views.npy"
-        if [ -f "$GENERATED_PCD" ]; then
-            cp "$GENERATED_PCD" "$SPS_PCD_PATH"
-            echo ">>> SPS 点云已保存: $SPS_PCD_PATH"
-        fi
-    else
-        echo ">>> 使用已有 SPS 点云: $SPS_PCD_PATH"
+        echo "错误: SPS 点云不存在: $SPS_PCD_PATH"
+        echo "请先在 data/density-369/ 目录生成密度加权点云"
+        exit 1
     fi
+    echo ">>> 使用 SPS 点云: $SPS_PCD_PATH"
     PLY_FLAG="--ply_path $SPS_PCD_PATH"
 else
     PLY_FLAG=""

@@ -72,7 +72,6 @@ class ModelParams(ParamGroup):
         self.scale_min = 0.0005  # [BASELINE] 高斯最小尺度 (体积百分比)
         self.scale_max = 0.5  # [BASELINE] 高斯最大尺度 (体积百分比)
         self.eval = True  # [BASELINE] 是否启用评估
-        self.gaussiansN = 1  # [BASELINE] 高斯场数量（固定为 1，单模型训练）
 
         # ════════════════════════════════════════════════════════════════════
         # [GAR] Geometry-aware Refinement - 邻近感知密化参数
