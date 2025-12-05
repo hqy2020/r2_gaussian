@@ -15,9 +15,10 @@ import gradio as gr
 from demo.backend.reconstruction import ReconstructionInference
 from demo.backend.segmentation import SegmentationInference, load_acdc_cases, get_acdc_data_path
 from demo.backend.data_manager import data_manager
-from demo.visualization.slice_viewer import create_slice_viewer
+from demo.visualization.slice_viewer import create_slice_viewer, create_segmentation_comparison
 from demo.visualization.volume_render import create_volume_render
 from demo.visualization.surface_render import create_segmentation_surface, create_ct_surface
+from demo.visualization.sam_prompt_viz import generate_sam_prompt_examples
 
 
 # 全局状态
@@ -87,7 +88,7 @@ def run_segmentation(case_name):
     global seg_model, seg_result
 
     if not case_name:
-        return None, None, None, "请选择案例", 0, 0, 0
+        return None, None, None, None, "请选择案例"
 
     try:
         if seg_model is None:
@@ -97,22 +98,32 @@ def run_segmentation(case_name):
         data_path = get_acdc_data_path(case_name)
         seg_result = seg_model.segment_from_h5(data_path)
 
-        # 可视化
-        original_fig = create_slice_viewer(seg_result.image, axis="z", title="原始图像")
-        seg_fig = create_slice_viewer(seg_result.prediction.astype(float), axis="z", colorscale="Viridis", title="分割结果")
-        surface_fig = create_segmentation_surface(seg_result.prediction, title="3D表面")
+        # 创建联动切片浏览器（原始图像和分割结果并排，共用滑块）
+        comparison_fig = create_segmentation_comparison(
+            seg_result.image,
+            seg_result.prediction,
+            axis="x"
+        )
 
-        # Dice
-        dice_rv = seg_result.dice_scores.get(1, 0) if seg_result.dice_scores else 0
-        dice_myo = seg_result.dice_scores.get(2, 0) if seg_result.dice_scores else 0
-        dice_lv = seg_result.dice_scores.get(3, 0) if seg_result.dice_scores else 0
+        # 生成 SAM 提示效果示例图
+        sam_examples = generate_sam_prompt_examples(
+            seg_result.image,
+            seg_result.prediction,
+            axis=0
+        )
 
-        return original_fig, seg_fig, surface_fig, "分割完成!", round(dice_rv, 4), round(dice_myo, 4), round(dice_lv, 4)
+        return (
+            comparison_fig,
+            sam_examples["point"],
+            sam_examples["box"],
+            sam_examples["mask"],
+            "分割完成!"
+        )
 
     except Exception as e:
         import traceback
         traceback.print_exc()
-        return None, None, None, f"错误: {str(e)}", 0, 0, 0
+        return None, None, None, None, f"错误: {str(e)}"
 
 
 def create_app():
@@ -151,9 +162,24 @@ def create_app():
                             psnr = gr.Number(label="PSNR")
                             ssim = gr.Number(label="SSIM")
 
-                load_btn.click(load_reconstruction_model, [recon_preset], [recon_status])
-                recon_btn.click(run_reconstruction, [], [recon_plot, recon_status, psnr, ssim])
-                update_btn.click(update_recon_viz, [viz_type, threshold], [recon_plot])
+                load_btn.click(
+                    fn=load_reconstruction_model,
+                    inputs=[recon_preset],
+                    outputs=[recon_status],
+                    api_name="load_model"
+                )
+                recon_btn.click(
+                    fn=run_reconstruction,
+                    inputs=[],
+                    outputs=[recon_plot, recon_status, psnr, ssim],
+                    api_name="run_reconstruction"
+                )
+                update_btn.click(
+                    fn=update_recon_viz,
+                    inputs=[viz_type, threshold],
+                    outputs=[recon_plot],
+                    api_name="update_viz"
+                )
 
             # 语义分割标签页
             with gr.TabItem("语义分割"):
@@ -161,27 +187,26 @@ def create_app():
                     with gr.Column(scale=1):
                         acdc_cases = load_acdc_cases()
                         seg_case = gr.Dropdown(
-                            choices=acdc_cases[:20] if len(acdc_cases) > 20 else acdc_cases,
-                            label="选择ACDC案例"
+                            choices=acdc_cases,
+                            label="选择ACDC案例（心脏MRI）"
                         )
                         seg_btn = gr.Button("执行分割", variant="primary")
                         seg_status = gr.Textbox(label="状态", lines=2)
 
-                        gr.Markdown("### Dice分数")
-                        dice_rv = gr.Number(label="RV (右心室)")
-                        dice_myo = gr.Number(label="MYO (心肌)")
-                        dice_lv = gr.Number(label="LV (左心室)")
+                        gr.Markdown("### SAM 提示效果展示")
+                        gr.Markdown("*基于分割结果自动生成的提示示例*")
+                        point_prompt_img = gr.Image(label="点提示 (Point Prompt)", height=150)
+                        box_prompt_img = gr.Image(label="框提示 (Box Prompt)", height=150)
+                        mask_prompt_img = gr.Image(label="掩码提示 (Mask Prompt)", height=150)
 
                     with gr.Column(scale=2):
-                        with gr.Row():
-                            original_plot = gr.Plot(label="原始图像")
-                            seg_plot = gr.Plot(label="分割结果")
-                        surface_plot = gr.Plot(label="3D表面")
+                        comparison_plot = gr.Plot(label="切片浏览（同步联动）")
 
                 seg_btn.click(
-                    run_segmentation,
-                    [seg_case],
-                    [original_plot, seg_plot, surface_plot, seg_status, dice_rv, dice_myo, dice_lv]
+                    fn=run_segmentation,
+                    inputs=[seg_case],
+                    outputs=[comparison_plot, point_prompt_img, box_prompt_img, mask_prompt_img, seg_status],
+                    api_name="run_segmentation"
                 )
 
             # 使用说明
@@ -194,9 +219,13 @@ def create_app():
                 4. 使用可视化选项浏览结果
 
                 ## 语义分割
-                1. 选择ACDC案例
+                1. 选择ACDC案例（心脏MRI数据）
                 2. 点击"执行分割"
-                3. 查看分割结果和3D表面
+                3. 使用同步滑块浏览原始图像和分割结果
+                4. 查看SAM提示效果展示：
+                   - **点提示**：绿色点标注器官中心，红色X标注背景
+                   - **框提示**：彩色矩形框标注器官边界
+                   - **掩码提示**：半透明颜色覆盖器官区域
                 """)
 
     return app
@@ -208,4 +237,9 @@ if __name__ == "__main__":
     print("=" * 60)
 
     app = create_app()
-    app.launch(server_name="0.0.0.0", server_port=7860, share=False)
+    # 尝试使用7860端口，如果被占用则自动选择其他可用端口
+    try:
+        app.launch(server_name="0.0.0.0", server_port=7860, share=False)
+    except OSError:
+        print("端口7860被占用，使用自动分配的端口...")
+        app.launch(server_name="0.0.0.0", server_port=None, share=False)

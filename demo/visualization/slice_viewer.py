@@ -199,6 +199,114 @@ def create_slice_comparison(
     return fig
 
 
+def create_segmentation_comparison(
+    image: np.ndarray,
+    prediction: np.ndarray,
+    axis: str = "x",
+    slice_idx: Optional[int] = None
+) -> go.Figure:
+    """
+    创建原始图像与分割结果的同步切片浏览器
+
+    Args:
+        image: 原始3D图像 [D, H, W]
+        prediction: 分割预测 [D, H, W]
+        axis: 切片方向 (x/y/z)
+        slice_idx: 初始切片索引
+
+    Returns:
+        Plotly Figure 对象，包含并排的两个图和同步滑块
+    """
+    axis_map = {"x": 0, "y": 1, "z": 2}
+    ax = axis_map.get(axis.lower(), 0)
+
+    n_slices = image.shape[ax]
+    if slice_idx is None:
+        slice_idx = n_slices // 2
+
+    def get_slice(vol, idx):
+        if ax == 0:
+            return vol[idx, :, :]
+        elif ax == 1:
+            return vol[:, idx, :]
+        else:
+            return vol[:, :, idx]
+
+    # 创建子图 1x2 布局
+    fig = make_subplots(
+        rows=1, cols=2,
+        subplot_titles=("原始图像", "分割结果"),
+        horizontal_spacing=0.05
+    )
+
+    # 添加初始切片
+    slice_img = get_slice(image, slice_idx)
+    slice_pred = get_slice(prediction, slice_idx).astype(float)
+
+    # 原始图像 - 灰度
+    fig.add_trace(
+        go.Heatmap(
+            z=slice_img,
+            colorscale="gray",
+            showscale=False,
+            hovertemplate="x: %{x}<br>y: %{y}<br>value: %{z:.2f}<extra></extra>"
+        ),
+        row=1, col=1
+    )
+
+    # 分割结果 - Viridis
+    fig.add_trace(
+        go.Heatmap(
+            z=slice_pred,
+            colorscale="Viridis",
+            showscale=True,
+            zmin=0,
+            zmax=3,
+            hovertemplate="x: %{x}<br>y: %{y}<br>class: %{z:.0f}<extra></extra>"
+        ),
+        row=1, col=2
+    )
+
+    # 创建滑块步骤 - 同步更新两个图
+    steps = []
+    for i in range(n_slices):
+        s_img = get_slice(image, i)
+        s_pred = get_slice(prediction, i).astype(float)
+        step = dict(
+            method="update",
+            args=[{"z": [s_img, s_pred]}],
+            label=str(i)
+        )
+        steps.append(step)
+
+    sliders = [dict(
+        active=slice_idx,
+        currentvalue={"prefix": f"{axis.upper()} Slice: "},
+        pad={"t": 50},
+        steps=steps,
+        len=0.9,
+        x=0.05,
+        xanchor="left"
+    )]
+
+    fig.update_layout(
+        sliders=sliders,
+        width=1000,
+        height=500,
+        margin=dict(l=20, r=20, t=60, b=20),
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='rgba(0,0,0,0)'
+    )
+
+    # 设置等比例并去除边框
+    for i in range(1, 3):
+        fig.update_xaxes(showline=False, zeroline=False, showgrid=False, row=1, col=i)
+        fig.update_yaxes(showline=False, zeroline=False, showgrid=False,
+                         scaleanchor=f"x{i}" if i > 1 else "x", scaleratio=1, row=1, col=i)
+
+    return fig
+
+
 def create_orthogonal_views(
     volume: np.ndarray,
     colorscale: str = "gray",
