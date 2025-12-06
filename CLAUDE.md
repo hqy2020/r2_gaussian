@@ -2,9 +2,11 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+IMPOERTANT
+neo4j 的mcp一定是在neo4j数据库里面的
 ## 项目概述
 
-**R²-Gaussian**: 基于 3D Gaussian Splatting 的 CT 断层扫描重建项目（NeurIPS 2024）。核心目标是稀疏视角（3/6/9 views）CT 体积重建。
+**SPAGS**: 基于 3D Gaussian Splatting 的 CT 断层扫描重建项目。核心目标是稀疏视角（3/6/9 views）新视角合成。
 
 ## 重要约定
 
@@ -15,15 +17,42 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **多使用 serena MCP 理解代码，修改代码**
 - **尽可能确保都是有专门的助手 agent 执行具体流程**
 
-## R²-Gaussian 三视角 (3 views) SOTA 基准值
+## R²-Gaussian 性能结果
+
+### 三视角 (3 views) 结果
 
 | 器官 | PSNR | SSIM |
 |------|------|------|
-| Chest | 26.506 | 0.8413 |
-| Foot | 28.4873 | 0.9005 |
-| Head | 26.6915 | 0.9247 |
-| Abdomen | 29.2896 | 0.9366 |
-| Pancreas | 28.7669 | 0.9247 |
+| Chest | 26.12 | 0.837 |
+| Foot | 28.56 | 0.898 |
+| Head | 26.67 | 0.922 |
+| Abdomen | 29.24 | 0.936 |
+| Pancreas | 28.60 | 0.920 |
+| 平均 | 27.84 | 0.903 |
+
+### 六视角 (6 views) 结果
+
+| 器官 | PSNR | SSIM |
+|------|------|------|
+| Chest | 33.24 | 0.927 |
+| Foot | 32.51 | 0.938 |
+| Head | 33.11 | 0.973 |
+| Abdomen | 34.11 | 0.974 |
+| Pancreas | 33.58 | 0.951 |
+| 平均 | 33.31 | 0.953 |
+
+### 九视角 (9 views) 结果
+
+| 器官 | PSNR | SSIM |
+|------|------|------|
+| Chest | 36.95 | 0.953 |
+| Foot | 34.95 | 0.955 |
+| Head | 35.87 | 0.982 |
+| Abdomen | 37.03 | 0.981 |
+| Pancreas | 35.71 | 0.961 |
+| 平均 | 36.10 | 0.966 |
+
+
 
 ## 常用命令
 
@@ -34,15 +63,29 @@ conda activate r2_gaussian_new
 
 ### 训练
 ```bash
-# 标准训练（NAF 格式）
-python train.py -s data/369/foot_50_3views.pickle -m output/experiment_name
+# SPAGS 消融实验脚本（推荐）
+# 用法: ./cc-agent/scripts/run_spags_ablation.sh <配置> <器官> <视角数> [GPU]
+#
+# 配置选项:
+#   baseline  - Baseline (无任何技术)
+#   sps       - 仅 SPS (空间先验播种)
+#   gar       - 仅 GAR (几何感知细化)
+#   adm       - 仅 ADM (自适应密度调制)
+#   sps_gar   - SPS + GAR
+#   sps_adm   - SPS + ADM
+#   gar_adm   - GAR + ADM
+#   spags     - Full SPAGS (SPS + GAR + ADM)
+#
+# 器官: foot, chest, head, abdomen, pancreas
+# 视角: 3, 6, 9
+#
+# 示例:
+./cc-agent/scripts/run_spags_ablation.sh spags foot 3 0
+./cc-agent/scripts/run_spags_ablation.sh baseline chest 6 1
+./cc-agent/scripts/run_spags_ablation.sh sps_gar pancreas 9 0
 
-# 带增强功能的训练
-python train.py \
-    -s data/369/foot_50_3views.pickle \
-    -m output/experiment_name \
-    --enable_depth --depth_loss_weight 0.05 --depth_loss_type pearson \
-    --pseudo_labels --pseudo_label_weight 0.02
+# 直接使用 train.py（不推荐，仅用于调试）
+python train.py -s data/369/foot_50_3views.pickle -m output/experiment_name
 ```
 
 ### 初始化点云
@@ -51,20 +94,6 @@ python initialize_pcd.py --data <path_to_data>
 python initialize_pcd.py --data <path_to_data> --evaluate  # 评估初始化质量
 ```
 
-### 测试与评估
-```bash
-python test.py -m output/experiment_name
-```
-
-### TensorBoard 监控
-```bash
-tensorboard --logdir output/ --port 6006
-```
-
-### 批量训练脚本
-```bash
-bash run_fsgs_fixed_optimized.sh
-```
 
 ## 代码架构
 
