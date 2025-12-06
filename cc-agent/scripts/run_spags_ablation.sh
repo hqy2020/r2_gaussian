@@ -126,49 +126,49 @@ ADM_FLAGS_COMPAT="--enable_kplanes \
 case $CONFIG in
     baseline)
         echo "=== Baseline (无技术) ==="
-        OUTPUT="output/${TIMESTAMP}_${ORGAN}_${VIEWS}views_baseline"
+        OUTPUT="output/aa_${TIMESTAMP}_${ORGAN}_${VIEWS}views_baseline"
         CONFIG_FLAGS=""
         USE_SPS=false
         ;;
     sps)
         echo "=== SPS (空间先验播种) ==="
-        OUTPUT="output/${TIMESTAMP}_${ORGAN}_${VIEWS}views_sps"
+        OUTPUT="output/aa_${TIMESTAMP}_${ORGAN}_${VIEWS}views_sps"
         CONFIG_FLAGS=""
         USE_SPS=true
         ;;
     gar)
         echo "=== GAR (几何感知细化) ==="
-        OUTPUT="output/${TIMESTAMP}_${ORGAN}_${VIEWS}views_gar"
+        OUTPUT="output/aa_${TIMESTAMP}_${ORGAN}_${VIEWS}views_gar"
         CONFIG_FLAGS="$GAR_FLAGS_COMPAT"
         USE_SPS=false
         ;;
     adm)
         echo "=== ADM (自适应密度调制) ==="
-        OUTPUT="output/${TIMESTAMP}_${ORGAN}_${VIEWS}views_adm"
+        OUTPUT="output/aa_${TIMESTAMP}_${ORGAN}_${VIEWS}views_adm"
         CONFIG_FLAGS="$ADM_FLAGS_COMPAT"
         USE_SPS=false
         ;;
     sps_gar)
         echo "=== SPS + GAR ==="
-        OUTPUT="output/${TIMESTAMP}_${ORGAN}_${VIEWS}views_sps_gar"
+        OUTPUT="output/aa_${TIMESTAMP}_${ORGAN}_${VIEWS}views_sps_gar"
         CONFIG_FLAGS="$GAR_FLAGS_COMPAT"
         USE_SPS=true
         ;;
     sps_adm)
         echo "=== SPS + ADM ==="
-        OUTPUT="output/${TIMESTAMP}_${ORGAN}_${VIEWS}views_sps_adm"
+        OUTPUT="output/aa_${TIMESTAMP}_${ORGAN}_${VIEWS}views_sps_adm"
         CONFIG_FLAGS="$ADM_FLAGS_COMPAT"
         USE_SPS=true
         ;;
     gar_adm)
         echo "=== GAR + ADM ==="
-        OUTPUT="output/${TIMESTAMP}_${ORGAN}_${VIEWS}views_gar_adm"
+        OUTPUT="output/aa_${TIMESTAMP}_${ORGAN}_${VIEWS}views_gar_adm"
         CONFIG_FLAGS="$GAR_FLAGS_COMPAT $ADM_FLAGS_COMPAT"
         USE_SPS=false
         ;;
     spags)
         echo "=== Full SPAGS (SPS + GAR + ADM) ==="
-        OUTPUT="output/${TIMESTAMP}_${ORGAN}_${VIEWS}views_spags"
+        OUTPUT="output/aa_${TIMESTAMP}_${ORGAN}_${VIEWS}views_spags"
         CONFIG_FLAGS="$GAR_FLAGS_COMPAT $ADM_FLAGS_COMPAT"
         USE_SPS=true
         ;;

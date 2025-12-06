@@ -27,3 +27,7 @@ init_files_30k/
 *.log
 *.jpg
 *.png
+*.pid
+error/
+init_comparison_test/
+ablation-foot3/

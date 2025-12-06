@@ -60,7 +60,7 @@ neo4j 的mcp一定是在neo4j数据库里面的
 ```bash
 conda activate r2_gaussian_new
 ```
-
+IMPORTANT
 ### 训练
 ```bash
 # SPAGS 消融实验脚本（推荐）

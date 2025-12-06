@@ -1,92 +1,0 @@
-正在激活 conda 环境 r2_gaussian_new...
-✅ 环境激活成功: r2_gaussian_new
-✅ Python 环境检查通过
-
-==========================================
-点云初始化优化实验 - 阶段一（10k快速筛选）
-时间戳: 2025_11_24_15_29
-数据集: data/369/foot_50_3views.pickle
-输出目录: output/init_optim_2025_11_24_15_29
-训练迭代: 10000
-==========================================
-
-[1/6] 实验 1: Baseline
-配置: n_points=50000, sampling=random, denoise=False
-使用现有 baseline 初始化文件
-进程启动: 788441
-
-[2/6] 实验 2: De-Init 降噪
-配置: n_points=50000, sampling=random, denoise=True (σ=3)
-Reading camera 1/3 for trainReading camera 2/3 for trainReading camera 3/3 for train
-Reading camera 1/50 for testReading camera 2/50 for testReading camera 3/50 for testReading camera 4/50 for testReading camera 5/50 for testReading camera 6/50 for testReading camera 7/50 for testReading camera 8/50 for testReading camera 9/50 for testReading camera 10/50 for testReading camera 11/50 for testReading camera 12/50 for testReading camera 13/50 for testReading camera 14/50 for testReading camera 15/50 for testReading camera 16/50 for testReading camera 17/50 for testReading camera 18/50 for testReading camera 19/50 for testReading camera 20/50 for testReading camera 21/50 for testReading camera 22/50 for testReading camera 23/50 for testReading camera 24/50 for testReading camera 25/50 for testReading camera 26/50 for testReading camera 27/50 for testReading camera 28/50 for testReading camera 29/50 for testReading camera 30/50 for testReading camera 31/50 for testReading camera 32/50 for testReading camera 33/50 for testReading camera 34/50 for testReading camera 35/50 for testReading camera 36/50 for testReading camera 37/50 for testReading camera 38/50 for testReading camera 39/50 for testReading camera 40/50 for testReading camera 41/50 for testReading camera 42/50 for testReading camera 43/50 for testReading camera 44/50 for testReading camera 45/50 for testReading camera 46/50 for testReading camera 47/50 for testReading camera 48/50 for testReading camera 49/50 for testReading camera 50/50 for test
-Loading Training Cameras
-Loading Test Cameras
-Initialize point clouds with the volume reconstructed from fdk.
-Applying Gaussian filter for denoising (sigma=3.0)...
-Denoising complete.
-Using random sampling strategy.
-Initialization saved in init_files/2025_11_24_15_29_exp2_denoise.npy.
-进程启动: 789233
-
-[3/6] 实验 3: 密度加权采样
-配置: n_points=50000, sampling=density_weighted, denoise=False
-Reading camera 1/3 for trainReading camera 2/3 for trainReading camera 3/3 for train
-Reading camera 1/50 for testReading camera 2/50 for testReading camera 3/50 for testReading camera 4/50 for testReading camera 5/50 for testReading camera 6/50 for testReading camera 7/50 for testReading camera 8/50 for testReading camera 9/50 for testReading camera 10/50 for testReading camera 11/50 for testReading camera 12/50 for testReading camera 13/50 for testReading camera 14/50 for testReading camera 15/50 for testReading camera 16/50 for testReading camera 17/50 for testReading camera 18/50 for testReading camera 19/50 for testReading camera 20/50 for testReading camera 21/50 for testReading camera 22/50 for testReading camera 23/50 for testReading camera 24/50 for testReading camera 25/50 for testReading camera 26/50 for testReading camera 27/50 for testReading camera 28/50 for testReading camera 29/50 for testReading camera 30/50 for testReading camera 31/50 for testReading camera 32/50 for testReading camera 33/50 for testReading camera 34/50 for testReading camera 35/50 for testReading camera 36/50 for testReading camera 37/50 for testReading camera 38/50 for testReading camera 39/50 for testReading camera 40/50 for testReading camera 41/50 for testReading camera 42/50 for testReading camera 43/50 for testReading camera 44/50 for testReading camera 45/50 for testReading camera 46/50 for testReading camera 47/50 for testReading camera 48/50 for testReading camera 49/50 for testReading camera 50/50 for test
-Loading Training Cameras
-Loading Test Cameras
-Initialize point clouds with the volume reconstructed from fdk.
-Using density-weighted sampling strategy.
-Initialization saved in init_files/2025_11_24_15_29_exp3_weighted.npy.
-进程启动: 790070
-
-[4/6] 实验 4: 增加点数
-配置: n_points=75000, sampling=random, denoise=False
-Reading camera 1/3 for trainReading camera 2/3 for trainReading camera 3/3 for train
-Reading camera 1/50 for testReading camera 2/50 for testReading camera 3/50 for testReading camera 4/50 for testReading camera 5/50 for testReading camera 6/50 for testReading camera 7/50 for testReading camera 8/50 for testReading camera 9/50 for testReading camera 10/50 for testReading camera 11/50 for testReading camera 12/50 for testReading camera 13/50 for testReading camera 14/50 for testReading camera 15/50 for testReading camera 16/50 for testReading camera 17/50 for testReading camera 18/50 for testReading camera 19/50 for testReading camera 20/50 for testReading camera 21/50 for testReading camera 22/50 for testReading camera 23/50 for testReading camera 24/50 for testReading camera 25/50 for testReading camera 26/50 for testReading camera 27/50 for testReading camera 28/50 for testReading camera 29/50 for testReading camera 30/50 for testReading camera 31/50 for testReading camera 32/50 for testReading camera 33/50 for testReading camera 34/50 for testReading camera 35/50 for testReading camera 36/50 for testReading camera 37/50 for testReading camera 38/50 for testReading camera 39/50 for testReading camera 40/50 for testReading camera 41/50 for testReading camera 42/50 for testReading camera 43/50 for testReading camera 44/50 for testReading camera 45/50 for testReading camera 46/50 for testReading camera 47/50 for testReading camera 48/50 for testReading camera 49/50 for testReading camera 50/50 for test
-Loading Training Cameras
-Loading Test Cameras
-Initialize point clouds with the volume reconstructed from fdk.
-Using random sampling strategy.
-Initialization saved in init_files/2025_11_24_15_29_exp4_more_points.npy.
-进程启动: 790708
-
-[5/6] 实验 5: 组合优化
-配置: n_points=60000, sampling=density_weighted, denoise=True, rescale=0.20
-Reading camera 1/3 for trainReading camera 2/3 for trainReading camera 3/3 for train
-Reading camera 1/50 for testReading camera 2/50 for testReading camera 3/50 for testReading camera 4/50 for testReading camera 5/50 for testReading camera 6/50 for testReading camera 7/50 for testReading camera 8/50 for testReading camera 9/50 for testReading camera 10/50 for testReading camera 11/50 for testReading camera 12/50 for testReading camera 13/50 for testReading camera 14/50 for testReading camera 15/50 for testReading camera 16/50 for testReading camera 17/50 for testReading camera 18/50 for testReading camera 19/50 for testReading camera 20/50 for testReading camera 21/50 for testReading camera 22/50 for testReading camera 23/50 for testReading camera 24/50 for testReading camera 25/50 for testReading camera 26/50 for testReading camera 27/50 for testReading camera 28/50 for testReading camera 29/50 for testReading camera 30/50 for testReading camera 31/50 for testReading camera 32/50 for testReading camera 33/50 for testReading camera 34/50 for testReading camera 35/50 for testReading camera 36/50 for testReading camera 37/50 for testReading camera 38/50 for testReading camera 39/50 for testReading camera 40/50 for testReading camera 41/50 for testReading camera 42/50 for testReading camera 43/50 for testReading camera 44/50 for testReading camera 45/50 for testReading camera 46/50 for testReading camera 47/50 for testReading camera 48/50 for testReading camera 49/50 for testReading camera 50/50 for test
-Loading Training Cameras
-Loading Test Cameras
-Initialize point clouds with the volume reconstructed from fdk.
-Applying Gaussian filter for denoising (sigma=3.0)...
-Denoising complete.
-Using density-weighted sampling strategy.
-Initialization saved in init_files/2025_11_24_15_29_exp5_combined.npy.
-进程启动: 791399
-
-[6/6] 实验 6: 更严格过滤
-配置: n_points=50000, sampling=random, denoise=True, thresh=0.08
-Reading camera 1/3 for trainReading camera 2/3 for trainReading camera 3/3 for train
-Reading camera 1/50 for testReading camera 2/50 for testReading camera 3/50 for testReading camera 4/50 for testReading camera 5/50 for testReading camera 6/50 for testReading camera 7/50 for testReading camera 8/50 for testReading camera 9/50 for testReading camera 10/50 for testReading camera 11/50 for testReading camera 12/50 for testReading camera 13/50 for testReading camera 14/50 for testReading camera 15/50 for testReading camera 16/50 for testReading camera 17/50 for testReading camera 18/50 for testReading camera 19/50 for testReading camera 20/50 for testReading camera 21/50 for testReading camera 22/50 for testReading camera 23/50 for testReading camera 24/50 for testReading camera 25/50 for testReading camera 26/50 for testReading camera 27/50 for testReading camera 28/50 for testReading camera 29/50 for testReading camera 30/50 for testReading camera 31/50 for testReading camera 32/50 for testReading camera 33/50 for testReading camera 34/50 for testReading camera 35/50 for testReading camera 36/50 for testReading camera 37/50 for testReading camera 38/50 for testReading camera 39/50 for testReading camera 40/50 for testReading camera 41/50 for testReading camera 42/50 for testReading camera 43/50 for testReading camera 44/50 for testReading camera 45/50 for testReading camera 46/50 for testReading camera 47/50 for testReading camera 48/50 for testReading camera 49/50 for testReading camera 50/50 for test
-Loading Training Cameras
-Loading Test Cameras
-Initialize point clouds with the volume reconstructed from fdk.
-Applying Gaussian filter for denoising (sigma=3.0)...
-Denoising complete.
-Using random sampling strategy.
-Initialization saved in init_files/2025_11_24_15_29_exp6_high_thresh.npy.
-进程启动: 792029
-
-==========================================
-所有实验已启动！
-==========================================
-
-监控命令：
-  查看进程: ps aux | grep train.py | grep 2025_11_24_15_29
-  查看 GPU: watch -n 1 nvidia-smi
-  查看日志: tail -f output/init_optim_2025_11_24_15_29/exp*.log
-
-预计完成时间: 2-3 小时
-
-结果分析命令（实验完成后运行）:
-  python scripts/analyze_init_results.py --timestamp 2025_11_24_15_29
-
