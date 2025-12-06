@@ -91,8 +91,7 @@ GAR_FLAGS="--enable_gar true \
     --gar_warmup_iters 3000 \
     --enable_gar_proximity true \
     --gar_proximity_threshold 5.0 \
-    --gar_proximity_k 5 \
-    --gar_medical_constraints true"
+    --gar_proximity_k 5"
 
 # 兼容旧参数的 GAR 配置（布尔参数不带 true）
 GAR_FLAGS_COMPAT="--enable_binocular_consistency \
@@ -102,8 +101,7 @@ GAR_FLAGS_COMPAT="--enable_binocular_consistency \
     --binocular_warmup_iters 3000 \
     --enable_fsgs_proximity \
     --proximity_threshold 5.0 \
-    --proximity_k_neighbors 5 \
-    --enable_medical_constraints"
+    --proximity_k_neighbors 5"
 
 # ADM 最优参数
 ADM_FLAGS="--enable_adm \

@@ -3,55 +3,43 @@
 # Paper: https://arxiv.org/abs/2312.00451
 # Authors: Zehao Zhu, Zhiwen Fan, Yifan Jiang, Zhangyang Wang
 #
-# Integrated into R²-Gaussian with Medical Constraints enhancement
-#
 
 """
 FSGS Module for R²-Gaussian
 
-This module implements the Proximity-Guided Densification algorithm from the FSGS paper,
-with additional Medical Constraints enhancement for CT reconstruction.
+This module implements the Proximity-Guided Densification algorithm from the FSGS paper.
 
 Key Components:
-    - ProximityGuidedDensifier: Core FSGS algorithm
-    - MedicalConstraints: Tissue-aware adaptive parameters
+    - ProximityGuidedDensifier: Core FSGS algorithm for sparse region densification
     - FSGSConfig: Configuration dataclass
     - Visualization utilities
 
 Usage:
-    from r2_gaussian.innovations.fsgs import ProximityGuidedDensifier, MedicalConstraints
+    from r2_gaussian.innovations.fsgs import ProximityGuidedDensifier
 
     # Initialize
-    densifier = ProximityGuidedDensifier(k_neighbors=6, proximity_threshold=8.0)
-    medical = MedicalConstraints.from_organ_type("foot")
+    densifier = ProximityGuidedDensifier(k_neighbors=5, proximity_threshold=5.0)
 
     # Compute proximity scores
-    scores = densifier.compute_proximity_scores(positions)
-
-    # Apply medical constraints
-    tissue_types = medical.classify_tissue(opacity_values)
-    adaptive_params = medical.get_adaptive_params(tissue_types)
+    scores, neighbor_indices, _ = densifier.compute_proximity_scores(positions, return_neighbors=True)
 
     # Identify densify candidates
-    candidates = densifier.identify_densify_candidates(scores, **adaptive_params)
+    candidates = densifier.identify_densify_candidates(scores)
 
     # Generate new Gaussians
-    new_gaussians = densifier.generate_new_gaussians(source, destination, attributes)
+    new_gaussians = densifier.generate_new_gaussians(source, neighbor_indices, all_positions, attributes)
 """
 
 from .proximity_densifier import ProximityGuidedDensifier
-from .medical_constraints import MedicalConstraints, TissueConfig
 from .config import FSGSConfig
 from .utils import compute_knn, log_proximity_stats
 
 __all__ = [
     "ProximityGuidedDensifier",
-    "MedicalConstraints",
-    "TissueConfig",
     "FSGSConfig",
     "compute_knn",
     "log_proximity_stats",
 ]
 
-__version__ = "2.0.0"  # Rewritten version with modular design
+__version__ = "2.1.0"  # Simplified version without Medical Constraints
 __paper__ = "FSGS: Real-Time Few-shot View Synthesis using Gaussian Splatting (ECCV 2024)"

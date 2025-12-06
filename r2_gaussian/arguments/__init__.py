@@ -16,7 +16,7 @@ SPAGS: Spatial-aware Progressive Adaptive Gaussian Splatting
 
 三阶段渐进式优化框架：
   - [SPS]  Stage 1: Spatial Prior Seeding - 空间先验播种（密度加权初始化）
-  - [GAR]  Stage 2: Geometry-aware Refinement - 几何感知细化（双目一致性+邻近密化）
+  - [GAR]  Stage 2: Geometry-aware Refinement - 几何感知细化（邻近密化）
   - [ADM]  Stage 3: Adaptive Density Modulation - 自适应密度调制（K-Planes）
 
 --------------------------------------------------------------------------------
@@ -75,20 +75,21 @@ class ModelParams(ParamGroup):
 
         # ════════════════════════════════════════════════════════════════════
         # [GAR] Geometry-aware Refinement - 邻近感知密化参数
-        # Stage 2 的 Proximity-guided 密化子模块
-        # 主开关: enable_gar_proximity (或兼容旧名 enable_fsgs_proximity)
+        # Stage 2: 几何感知细化（Proximity-guided Densification）
+        # 主开关: enable_gar (或兼容旧名 enable_gar_proximity / enable_fsgs_proximity)
         # ════════════════════════════════════════════════════════════════════
-        self.enable_gar_proximity = False  # [GAR] 主开关：启用 proximity-guided 密化
+        self.enable_gar = False  # [GAR] 主开关：启用几何感知细化（邻近密化）
+        self.enable_gar_proximity = False  # [兼容] 旧名，映射到 enable_gar
         self.gar_proximity_threshold = 5.0  # [GAR] proximity score 阈值
-        self.gar_medical_constraints = True  # [GAR] 医学约束（推荐启用）
-        self.gar_organ_type = "foot"  # [GAR] 器官类型（影响约束策略）
         self.gar_proximity_k = 5  # [GAR] 邻居数量
         # 向下兼容旧参数名
         self.enable_fsgs_proximity = False  # [兼容] 旧名，映射到 enable_gar_proximity
         self.proximity_threshold = 5.0  # [兼容] 旧名
-        self.enable_medical_constraints = True  # [兼容] 旧名
-        self.proximity_organ_type = "foot"  # [兼容] 旧名
         self.proximity_k_neighbors = 5  # [兼容] 旧名
+        # 邻近密化时间参数
+        self.proximity_start_iter = 1000  # [GAR] 邻近密化开始迭代
+        self.proximity_interval = 500  # [GAR] 邻近密化间隔
+        self.proximity_until_iter = 15000  # [GAR] 邻近密化结束迭代
 
         # ════════════════════════════════════════════════════════════════════
         # [ADM] Adaptive Density Modulation - K-Planes 空间调制参数
@@ -156,26 +157,11 @@ class OptimizationParams(ParamGroup):
         self.opacity_lr = 0.05  # [BASELINE] 不透明度学习率
 
         # ════════════════════════════════════════════════════════════════════
-        # [GAR] Geometry-aware Refinement - 双目一致性损失参数
-        # Stage 2: 几何感知细化（双目一致性子模块）
-        # 主开关: enable_gar (或兼容旧名 enable_binocular_consistency)
-        # 最优配置来自超参数搜索: weight=0.08, angle=0.04, start=5000
+        # [GAR] Geometry-aware Refinement - 辅助参数
+        # 注意: GAR 主开关 enable_gar 在 ModelParams 中定义
         # ════════════════════════════════════════════════════════════════════
-        self.enable_gar = False  # [GAR] 主开关：启用几何感知细化
-        self.gar_loss_weight = 0.08  # [GAR] 双目损失权重（最优值，原 0.15）
-        self.gar_max_angle = 0.04  # [GAR] 最大角度偏移弧度（最优值，原 0.06）
-        self.gar_start_iter = 5000  # [GAR] 起始迭代（最优值，原 7000）
-        self.gar_warmup_iters = 3000  # [GAR] warmup 迭代数
-        self.gar_depth_method = "weighted_average"  # [GAR] 深度估计方法
         self.enable_opacity_decay = False  # [GAR] 不透明度衰减（CT 场景关闭）
         self.opacity_decay_factor = 0.995  # [GAR] 衰减系数
-        # 向下兼容旧参数名
-        self.enable_binocular_consistency = False  # [兼容] 旧名
-        self.binocular_max_angle_offset = 0.04  # [兼容] 旧名，使用最优值
-        self.binocular_start_iter = 5000  # [兼容] 旧名，使用最优值
-        self.binocular_warmup_iters = 3000  # [兼容] 旧名
-        self.binocular_loss_weight = 0.08  # [兼容] 旧名，使用最优值
-        self.binocular_depth_method = "weighted_average"  # [兼容] 旧名
 
         # ════════════════════════════════════════════════════════════════════
         # [ADM] Adaptive Density Modulation - K-Planes 优化参数

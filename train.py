@@ -30,12 +30,7 @@ from r2_gaussian.utils.loss_utils import l1_loss, ssim, tv_3d_loss
 from r2_gaussian.utils.regulation import compute_plane_tv_loss
 from r2_gaussian.utils.image_utils import metric_vol, metric_proj
 from r2_gaussian.utils.plot_utils import show_two_slice
-from r2_gaussian.utils.binocular_utils import (
-    BinocularConsistencyLoss,
-    estimate_depth_for_ct,
-    get_random_angle_offset
-)
-from r2_gaussian.dataset.cameras import Camera
+from r2_gaussian.innovations.fsgs import ProximityGuidedDensifier
 import copy
 
 
@@ -93,57 +88,24 @@ def training(
         tv_vol_nVoxel = torch.tensor([tv_vol_size, tv_vol_size, tv_vol_size])
         tv_vol_sVoxel = torch.tensor(scanner_cfg["dVoxel"]) * tv_vol_nVoxel
 
-    # 🆕 Set up Binocular Consistency Loss (双目立体一致性损失，简化版)
-    use_binocular = getattr(opt, 'enable_binocular_consistency', False)
-    binocular_loss_module = None
-    if use_binocular:
-        print("Use binocular stereo consistency loss (simplified, no edge-aware smoothing)")
-        binocular_loss_module = BinocularConsistencyLoss(
-            max_angle_offset=opt.binocular_max_angle_offset,
-            start_iteration=opt.binocular_start_iter,
-            warmup_iterations=opt.binocular_warmup_iters
-        ).cuda()
-
-    def create_shifted_camera(viewpoint_cam, angle_offset):
-        """为 CT 数据创建角度偏移的虚拟相机"""
-        import math
-        new_angle = viewpoint_cam.angle + angle_offset
-        cos_a = math.cos(new_angle)
-        sin_a = math.sin(new_angle)
-
-        # 新的旋转矩阵 (绕 Y 轴旋转)
-        R_new = np.array([
-            [cos_a, 0, sin_a],
-            [0, 1, 0],
-            [-sin_a, 0, cos_a]
-        ], dtype=np.float32)
-
-        # 计算新的平移向量
-        camera_distance = np.linalg.norm(viewpoint_cam.T)
-        T_new = np.array([
-            camera_distance * sin_a,
-            viewpoint_cam.T[1],
-            -camera_distance * cos_a
-        ], dtype=np.float32)
-
-        # 创建虚拟相机 (复用原相机的图像作为占位符)
-        shifted_cam = Camera(
-            colmap_id=viewpoint_cam.colmap_id,
-            scanner_cfg=scanner_cfg,
-            R=R_new,
-            T=T_new,
-            angle=new_angle,
-            mode=viewpoint_cam.mode,
-            FoVx=viewpoint_cam.FoVx,
-            FoVy=viewpoint_cam.FoVy,
-            image=viewpoint_cam.original_image.cpu(),  # 占位符
-            image_name=f"shifted_{viewpoint_cam.image_name}",
-            uid=viewpoint_cam.uid + 10000,
-            trans=viewpoint_cam.trans,
-            scale=viewpoint_cam.scale,
-            data_device=viewpoint_cam.data_device.type
+    # 🆕 Set up Proximity-Guided Densification (GAR 邻近引导密化)
+    # 支持 enable_gar (主开关) 或 enable_gar_proximity / enable_fsgs_proximity (兼容旧名)
+    use_proximity = getattr(opt, 'enable_gar', False) or getattr(opt, 'enable_gar_proximity', False) or getattr(opt, 'enable_fsgs_proximity', False)
+    proximity_densifier = None
+    proximity_start_iter = opt.proximity_start_iter
+    proximity_interval = opt.proximity_interval
+    proximity_until_iter = opt.proximity_until_iter
+    if use_proximity:
+        print("Use FSGS proximity-guided densification")
+        proximity_densifier = ProximityGuidedDensifier(
+            k_neighbors=opt.proximity_k_neighbors,
+            proximity_threshold=opt.proximity_threshold,
+            chunk_size=5000,
+            enable=True
         )
-        return shifted_cam, angle_offset
+        print(f"  - k_neighbors: {proximity_densifier.k_neighbors}")
+        print(f"  - proximity_threshold: {proximity_densifier.proximity_threshold}")
+        print(f"  - start_iter: {proximity_start_iter}, interval: {proximity_interval}, until: {proximity_until_iter}")
 
     # 🎯 K-Planes 诊断信息
     if gaussians.enable_kplanes and gaussians.kplanes_encoder is not None:
@@ -225,41 +187,6 @@ def training(
             loss["tv"] = loss_tv
             loss["total"] = loss["total"] + opt.lambda_tv * loss_tv
 
-        # 🆕 Binocular Stereo Consistency Loss (双目立体一致性损失)
-        if use_binocular and iteration >= opt.binocular_start_iter:
-            # 生成随机角度偏移
-            angle_offset = get_random_angle_offset(opt.binocular_max_angle_offset)
-
-            # 创建虚拟双目相机
-            shifted_cam, baseline = create_shifted_camera(viewpoint_cam, angle_offset)
-
-            # 渲染虚拟视角
-            shifted_render_pkg = render(shifted_cam, gaussians, pipe)
-            shifted_image = shifted_render_pkg["render"]
-
-            # 估计深度图
-            depth_map = estimate_depth_for_ct(
-                gaussians,
-                viewpoint_cam,
-                method=opt.binocular_depth_method
-            )
-
-            # 计算双目一致性损失
-            # 对于 CT，使用角度偏移作为等效基线
-            focal_length = viewpoint_cam.image_width / 2.0  # 近似焦距
-            bino_losses = binocular_loss_module(
-                rendered_image=image,
-                gt_image=gt_image,
-                shifted_rendered_image=shifted_image,
-                depth_map=depth_map,
-                focal_length=focal_length,
-                baseline=abs(angle_offset) * 100,  # 缩放因子
-                iteration=iteration
-            )
-
-            loss["bino_consistency"] = bino_losses["consistency"]
-            loss["total"] = loss["total"] + opt.binocular_loss_weight * bino_losses["total"]
-
         # K-Planes TV 正则化损失（X²-Gaussian）
         if opt.lambda_plane_tv > 0 and gaussians.enable_kplanes and gaussians.kplanes_encoder is not None:
             planes = gaussians.kplanes_encoder.get_plane_params()
@@ -305,6 +232,77 @@ def training(
                         densify_scale_threshold,
                         bbox,
                     )
+
+            # 🆕 FSGS Proximity-Guided Densification (GAR核心组件)
+            if use_proximity and proximity_densifier is not None:
+                if (iteration >= proximity_start_iter and
+                    iteration <= proximity_until_iter and
+                    iteration % proximity_interval == 0):
+
+                    # 1. 计算邻近分数
+                    positions = gaussians.get_xyz
+                    proximity_scores, neighbor_indices, _ = proximity_densifier.compute_proximity_scores(
+                        positions, return_neighbors=True
+                    )
+
+                    # 2. 识别需要密化的候选点
+                    densify_mask = proximity_densifier.identify_densify_candidates(
+                        proximity_scores,
+                        hybrid_mode="proximity_only"
+                    )
+
+                    num_candidates = densify_mask.sum().item()
+
+                    if num_candidates > 0:
+                        # 限制每次最多密化的点数，避免内存爆炸
+                        max_densify = min(num_candidates, 5000)
+                        if num_candidates > max_densify:
+                            # 随机选择一部分
+                            candidate_indices = torch.where(densify_mask)[0]
+                            perm = torch.randperm(len(candidate_indices))[:max_densify]
+                            selected_indices = candidate_indices[perm]
+                            densify_mask = torch.zeros_like(densify_mask)
+                            densify_mask[selected_indices] = True
+                            num_candidates = max_densify
+
+                        # 3. 获取需要密化的点及其邻居
+                        source_positions = positions[densify_mask]
+                        source_neighbor_indices = neighbor_indices[densify_mask]
+
+                        # 4. 准备属性字典
+                        all_attributes = {
+                            'scales': gaussians._scaling,
+                            'opacities': gaussians._density,
+                            'rotations': gaussians._rotation,
+                        }
+
+                        # 5. 生成新的 Gaussians
+                        new_gaussians = proximity_densifier.generate_new_gaussians(
+                            source_positions,
+                            source_neighbor_indices,
+                            positions,
+                            all_attributes,
+                            max_new_per_source=1  # 每个源点只生成1个新点（最近邻中点）
+                        )
+
+                        num_new = new_gaussians['positions'].shape[0]
+
+                        if num_new > 0:
+                            # 6. 添加到 GaussianModel
+                            new_max_radii = torch.zeros(num_new, device=positions.device)
+
+                            gaussians.densification_postfix(
+                                new_xyz=new_gaussians['positions'],
+                                new_densities=new_gaussians['opacities'],
+                                new_scaling=new_gaussians['scales'],
+                                new_rotation=new_gaussians['rotations'],
+                                new_max_radii2D=new_max_radii,
+                            )
+
+                            if iteration % 1000 == 0:
+                                tqdm.write(f"[ITER {iteration}] Proximity densification: +{num_new} Gaussians "
+                                          f"(candidates: {num_candidates}, total: {gaussians.get_xyz.shape[0]})")
+
             if gaussians.get_density.shape[0] == 0:
                 raise ValueError(
                     "No Gaussian left. Change adaptive control hyperparameters!"
