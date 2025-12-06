@@ -4,390 +4,180 @@
 
 <p align="center"> <img src="assets/logo.png" width="250px"> </p>
 
-[Arxiv](https://arxiv.org/abs/2405.20693) | [Data](https://drive.google.com/drive/folders/1YZ3w87XrCNyjDRos6gkY8zgT5hESl-PN?usp=sharing) | [Models](https://drive.google.com/drive/folders/1HIvO7aS2gbp7Qx3ceHiRSNoAKKS_VnjU?usp=sharing) | [Project](https://ruyi-zha.github.io/r2_gaussian/r2_gaussian.html)
+<h2> SPAGS: Spatial-aware Progressive Adaptive Gaussian Splatting </h2> 
 
-<h2> Rectifying Radiative Gaussian Splatting for Tomographic Reconstruction </h2> 
-
-*Fast and direct CT reconstruction with 3D Gaussian Splatting.*
-
-
-![cover](assets/cover.png)
-
-![demo](assets/demo.gif)
+*稀疏视角 CT 重建的三阶段渐进式优化框架*
 
 </div>
 
-
 &nbsp;
 
+### 简介
 
-### Introduction
+**SPAGS** 是一个基于 3D Gaussian Splatting 的稀疏视角 CT 重建方法，采用三阶段渐进式优化策略：
 
-This is the official repo of our NeurIPS 2024 paper [R<sup>2</sup>-Gaussian: Rectifying Radiative Gaussian Splatting for Tomographic Reconstruction](https://arxiv.org/abs/2405.20693). If you find this repo useful, please give it a star ⭐ and consider citing our paper.
+- **SPS (Spatial Prior Seeding)**: 空间先验播种 - 利用 FDK 密度分布指导点云初始化
+- **GAR (Geometry-aware Refinement)**: 几何感知细化 - 双目一致性约束 + 邻近感知密化
+- **ADM (Adaptive Density Modulation)**: 自适应密度调制 - K-Planes 空间编码器学习位置相关密度修正
 
-### News
+本代码库基于 [R²-Gaussian](https://github.com/Ruyi-Zha/r2_gaussian) 改进，专门针对稀疏视角（3/6/9 views）CT 重建场景。
 
-* 2024.10.25: Code, data, and models have been released. Welcome to have a try!
-* 2024.09.27: Our work has been accepted to NeurIPS 2024.
-* 2024.05.31: Our paper is available on [arxiv](https://arxiv.org/abs/2405.20693).
+## Baseline 性能（R²-Gaussian）
 
-## 1. Installation
+我们在 5 个器官 × 3 个视角 = 15 个场景下评估了 baseline 方法（R²-Gaussian）的性能：
 
-We recommend using [Conda](https://docs.conda.io/en/latest/miniconda.html) to set up an environment. We tested the code on Ubuntu 20.04 with an RTX 3090 GPU. For installation issues on other platforms, please refer to [Gaussian Splatting](https://github.com/graphdeco-inria/gaussian-splatting).
+### 三视角 (3 views)
+
+| 器官 | PSNR | SSIM |
+|------|------|------|
+| Chest | 26.12 | 0.837 |
+| Foot | 28.56 | 0.898 |
+| Head | 26.67 | 0.922 |
+| Abdomen | 29.24 | 0.936 |
+| Pancreas | 28.60 | 0.920 |
+| **平均** | **27.84** | **0.903** |
+
+### 六视角 (6 views)
+
+| 器官 | PSNR | SSIM |
+|------|------|------|
+| Chest | 33.24 | 0.927 |
+| Foot | 32.51 | 0.938 |
+| Head | 33.11 | 0.973 |
+| Abdomen | 34.11 | 0.974 |
+| Pancreas | 33.58 | 0.951 |
+| **平均** | **33.31** | **0.953** |
+
+### 九视角 (9 views)
+
+| 器官 | PSNR | SSIM |
+|------|------|------|
+| Chest | 36.95 | 0.953 |
+| Foot | 34.95 | 0.955 |
+| Head | 35.87 | 0.982 |
+| Abdomen | 37.03 | 0.981 |
+| Pancreas | 35.71 | 0.961 |
+| **平均** | **36.10** | **0.966** |
+
+## 1. 安装
 
 ```sh
-# Download code
-git clone https://github.com/Ruyi-Zha/r2_gaussian.git --recursive
+# 克隆代码
+git clone <repository_url> --recursive
 
-# Install environment
-SET DISTUTILS_USE_SDK=1 # Windows only
+# 创建环境
 conda env create --file environment.yml
-conda activate r2_gaussian
+conda activate r2_gaussian_new
 
-# Install TIGRE for data generation and initialization
+# 安装 TIGRE（用于数据生成和初始化）
 wget https://github.com/CERN/TIGRE/archive/refs/tags/v2.3.zip
 unzip v2.3.zip
 pip install TIGRE-2.3/Python --no-build-isolation
 ```
 
-## 2. Dataset
+## 2. 数据准备
 
-You can download datasets (synthetic and real) used in our paper [here](https://drive.google.com/drive/folders/1YZ3w87XrCNyjDRos6gkY8zgT5hESl-PN?usp=sharing). We follow NeRF format (folders with `meta_data.json`). You can find more details of data format and generation process in [synthetic dataset](data_generator/synthetic_dataset/README.md) and [real dataset](data_generator/real_dataset/README.md). Organize data as follows.
-
-```sh
-└── data
-│   ├── synthetic_dataset
-│   │   ├── cone_ntrain_50_angle_360
-│   │   │   ├── 0_chest_cone  # Case name
-│   │   │   │   ├── proj_test  # Projections for 2D rendering evaluation
-│   │   │   │   │   └── *.npy
-│   │   │   │   ├── proj_train  # Projections for training
-│   │   │   │   │   └── *.npy
-│   │   │   │   ├── init_*.npy  # initialization point cloud file
-│   │   │   │   ├── meta_data.json  # Scanner configuration, projection parameters, etc.
-│   │   │   │   ├── vol_gt.npy  # Ground truth volume
-│   │   │   └──...
-│   │   └──...
-│   └── real dataset
-│   │   ├── cone_ntrain_50_angle_360
-│   │   │   ├── pine  # Case name
-│   │   │   └──...
-│   │   └──...
-```
-
-You can visually check the scene with `python scripts/visualize_scene.py -s <path to data>`. Thanks @MrMonk3y for providing code.
-![cover](assets/scene.png)
-
-We also support [NAF](https://github.com/Ruyi-Zha/naf_cbct) format data (`*.pickle`) used in [SAX-NeRF](https://github.com/caiyuanhao1998/SAX-NeRF).
-
-We have converted our datasets to NAF format for your convenience. You can find them in [here](https://drive.google.com/drive/folders/1YZ3w87XrCNyjDRos6gkY8zgT5hESl-PN?usp=sharing).
-
-## 3. Running
-
-### 3.1 Initialization (optional)
-
-We have included initialization files in our dataset. You can skip this step if using our dataset.
-
-For new data, you need to use `initialize_pcd.py` to generate a `*.npy` file which stores the point cloud for Gaussian initialization.
+支持 NAF 格式（`*.pickle`）和 NeRF 格式（`meta_data.json`）。数据组织如下：
 
 ```sh
-python initialize_pcd.py --data <path to data>
+data/
+└── 369/                    # 稀疏视角数据集（3/6/9 views）
+    ├── foot_50_3views.pickle
+    ├── init_foot_50_3views.npy  # SPS 初始化点云
+    └── ...
 ```
 
-<details>
-<summary><span style="font-weight: bold;">Command line arguments for initialize_pcd.py</span></summary>
+## 3. 快速开始
 
-##### --data
-
-Path to the source directory containing `meta_data.json` or `*.pickle`.
-
-##### --output
-
-Path to the output `*.npy` file. `<path to data>/<data name>_init.npy` by default.
-
-##### --evaluate
-
-Add this flag to evaluate the 3D PSNR of initial Gaussians. It is used for debugging purpose since it uses the ground truth volume.
-
-##### --recon_method
-
-Method used for reconstructing initial volume. Now we support `fdk` (sample from FDK volume) or `random` (sample randomly). `fdk` by default.
-
-##### --n_points
-
-Number of points for initialization. `50000` by default.
-
-##### --density_thresh
-
-We sample voxels with density higher than the threshold. `0.05` by default.
-
-##### --density_rescale
-
-We empirically rescale the queried density value to account for occlusion. `0.15` by default.
-
-##### --random_density_max
-
-Maximum density for random initialization. `1.0` by default.
-
-</details>
-<br>
-
-:exclamation: Initialization is important for most 3DGS-based methods, including ours. We initialize the point clouds by sampling from a noisy volume reconstructed using the FDK algorithm.
-
-Our default settings assume the density ranges from `[0, 1]`. You may need to adjust the parameters in `initialize_pcd.py` according to your dataset to achieve better results. To assess the quality of the initialization, add `--evaluation` flag.
-
-### 3.2 Training
-
-Use `train.py` to train Gaussians. Make sure that the initialization file `*.npy` has been generated.
+### 3.1 初始化点云（SPS）
 
 ```sh
-# Training
-python train.py -s <path to data>
-
-# Example
-python train.py -s XXX/0_chest_cone  # NeRF format
-python train.py -s XXX/*.pickle  # NAF format
+# 生成密度加权初始化点云
+python initialize_pcd.py --data <path_to_data> --enable_sps --n_points 50000
 ```
 
-<details>
-<summary><span style="font-weight: bold;">Command line arguments for train.py</span></summary>
-
-#### Dataset and Model
-
-##### --source_path / -s
-
-Path to the source directory containing `meta_data.json` or `*.pickle`.
-
-##### --model_path / -m
-
-Path where the trained model should be stored (```output/<random>``` by default).
-
-##### --ply_path
-
-Path to initialization point cloud `*.npy`. `<path to data>/init_<data name>.npy` by default.
-
-##### --scale_min
-
-Minimum scale of a Gaussian (expressed as a percentage of the volume size). `0.0005` by default.
-
-##### --scale_max
-
-Maximum scale of a Gaussian (expressed as a percentage of the volume size). `0.5` by default.
-
-##### --eval
-
-Add this flag to evaluate 2D rendering during training.
-
-#### Optimizer
-
-##### --iterations
-
-Number of total iterations to train for, `30_000` by default.
-
-##### --position_lr_init
-
-Initial position learning rate, `0.0002` by default.
-  
-##### -position_lr_final
-
-Initial position learning rate, `0.00002` by default.
-  
-##### --position_lr_max_steps
-
-Number of steps (from 0) where position learning rate goes from `initial` to `final`. `30_000` by default.
-  
-##### --density_lr_init
-
-Initial density learning rate, `0.01` by default.
-  
-##### --density_lr_final
-  
-Initial density learning rate, `0.001` by default.
-  
-##### --density_lr_max_steps
-  
-Number of steps (from 0) where density learning rate goes from `initial` to `final`. `30_000` by default.
-  
-##### --scaling_lr_init
-  
-Initial scaling learning rate, `0.005` by default.
-  
-##### --scaling_lr_final
-  
-Initial scaling learning rate, `0.0005` by default.
-  
-##### --scaling_lr_max_steps
-  
-Number of steps (from 0) where scaling learning rate goes from `initial` to `final`. `30_000` by default.
-  
-##### --rotation_lr_init
-  
-Initial rotation learning rate, `0.001` by default.
-  
-##### --rotation_lr_final
-  
-Initial rotation learning rate, `0.0001` by default.
-  
-##### --rotation_lr_max_steps
-  
-Number of steps (from 0) where rotation learning rate goes from `initial` to `final`. `30_000` by default.
-  
-##### --lambda_dssim
-
-Weight of SSIM loss. `0.25` by default.
-  
-##### --lambda_tv
-  
-Weight of total variation loss. `0.05` by default.
-  
-##### --tv_vol_size
-  
-Size of tiny volume used for computing total variation. `32` by default.
-  
-##### --density_min_threshold
-  
-For adaptive control. Prune Gaussians with density less than this threshold. `0.00001` by default.
-  
-##### --densification_interval
-  
-How frequently to densify, `100` (every 100 iterations) by default.
-  
-##### --densify_from_iter
-  
-Iteration where densification starts, `500` by default.
-  
-##### --densify_until_iter
-  
-Iteration where densification stops, `15_000` by default.
-  
-##### --densify_grad_threshold
-  
-Limit that decides if points should be densified based on position gradient, `0.00005` by default.
-  
-##### --densify_scale_threshold
-  
-Densify Gaussians with 3D size larger than this threshold (expressed as a percentage of the volume size). `0.1` by default.
-  
-##### --max_screen_size
-  
-Prune Gaussians with 2D screen size larger than this threshold. `None` by default.
-  
-##### --max_scale
-  
-Prune Gaussians with 3D size larger than this threshold. `None` by default.
-  
-##### --max_num_gaussians
-  
-Stop denstification if Gaussians are more than this threshold. `500_000` by default.
-
-#### Others
-  
-##### --test_iterations
-  
-Space-separated iterations at which the training script evaluate rendering and reconstruction performance over test set.
-  
-##### --save_iterations
-  
-Space-separated iterations at which the training script saves the Gaussian model.
-  
-##### --checkpoint_iterations
-  
-Space-separated iterations at which to store a checkpoint for continuing later, saved in the model directory.
-  
-##### --start_checkpoint
-  
-Path to a saved checkpoint to continue training from.
-  
-##### --quiet
-  
-Flag to omit any text written to standard out pipe.
-  
-##### --config
-  
-Path to `*.yml` file. If specified, overwrite other parameters.
-
-</details>
-<br>
-
-:exclamation: If the training speed is slow or too many Gaussians are generated, you can adjust `--densify_grad_threshold` by increasing its value or disable density control entirely by setting `--densify_until_iter` to `0`. In most cases, disabling density control does not greatly impact the reconstruction quality if a sufficient number of Gaussians are initialized.
-
-:exclamation:  We scale the entire scene (scanner, projections, target volume) into a `[-1,1]^3` space for numerical stability.
-
-For our synthetic dataset (`512x512` projections, `256x256x256` volume), the complete training process typically takes `5–15` minutes on an RTX 3090 GPU, with plausible results achievable in `3` minutes. The training time and model size depend on the object's structure. Sparser objects (e.g., a teapot) generally lead to faster training.
-
-You can also use `scripts/train_all.py` to train all cases in a folder.
+### 3.2 训练
 
 ```sh
-# Example
-python scripts/train_all.py \
-  --source data/synthetic_dataset/cone_ntrain_50_angle_360 \
-  --output output/synthetic_dataset/cone_ntrain_50_angle_360 \
-  --device 0
+# 使用消融实验脚本（推荐）
+./cc-agent/scripts/run_spags_ablation.sh <配置> <器官> <视角数> [GPU]
+
+# 配置选项:
+#   baseline  - Baseline (无任何技术)
+#   sps       - 仅 SPS
+#   gar       - 仅 GAR
+#   adm       - 仅 ADM
+#   spags     - Full SPAGS (SPS + GAR + ADM)
+
+# 示例
+./cc-agent/scripts/run_spags_ablation.sh spags foot 3 0
 ```
 
-### 3.3 Evaluation
-
-We store evaluation results into the tensorboard events during training. You can also perform more detailed evaluation with `test.py`.
+或直接使用 `train.py`：
 
 ```sh
-python test.py -m <path to trained model>
+python train.py -s data/369/foot_50_3views.pickle \
+    -m output/experiment_name \
+    --ply_path data/369/init_foot_50_3views.npy \
+    --enable_binocular_consistency \
+    --enable_fsgs_proximity \
+    --enable_kplanes
 ```
 
-<details>
-<summary><span style="font-weight: bold;">Command line arguments for test.py</span></summary>
+### 3.3 评估
 
-##### --model_path / -m
-  
-Path where the trained model should be stored. ```output/<random>``` by default.
-  
-##### --source_path / -s
-  
-Path to the source directory containing `meta_data.json` or `*.pickle`. If not set, it will be automatically loaded from the model path.
-  
-##### --iterations
-  
-Iterations for evaluation. `-1` (latest iteration) by default.
-  
-##### --skip_render_train
-  
-Flag to skip rendering the training set.
-  
-##### --skip_render_test
-  
-Flag to skip rendering the testing set.
-  
-##### --skip_recon
-  
-Flag to skip reconstructing the volume.
+```sh
+python test.py -m <path_to_trained_model>
+```
 
-</details>
-<br>
+## 4. SPAGS 核心参数
 
-You can find all trained models [here](https://drive.google.com/drive/folders/1HIvO7aS2gbp7Qx3ceHiRSNoAKKS_VnjU?usp=sharing). We report quantitative results on all datasets (synthetic, real, and SAX-NeRF datasets) [here](assets/results.md).
+### SPS (空间先验播种)
+- `--enable_sps`: 启用密度加权采样（需在 `initialize_pcd.py` 中设置）
+- `--n_points`: 初始化点云数量（默认 50000）
 
-## 4. Generate your own data
+### GAR (几何感知细化)
+- `--enable_binocular_consistency`: 启用双目一致性约束
+- `--binocular_loss_weight`: 双目损失权重（默认 0.08）
+- `--enable_fsgs_proximity`: 启用邻近感知密化
+- `--proximity_threshold`: 邻近密化阈值（默认 5.0）
 
-:exclamation: Our code supports both cone beam and parallel beam configurations.
+### ADM (自适应密度调制)
+- `--enable_kplanes`: 启用 K-Planes 编码器
+- `--kplanes_resolution`: K-Planes 分辨率（默认 64）
+- `--kplanes_dim`: 特征维度（默认 32）
+- `--lambda_plane_tv`: Plane TV 正则化权重（默认 0.002）
 
-If you have ground truth volumes but do not have X-ray projections, follow this [instruction](data_generator/synthetic_dataset/README.md) to generate your own dataset.
-
-If you have (more than 100) X-ray projections but do not have ground volumes, follow this [instruction](data_generator/real_dataset/README.md).
-
-If you want to test your own data, please first convert it to our format (`meta_data.json`) or SAX-NeRF (`*.pickle`) and generate initialization point clouds with `initialize_pcd.py`.
-
-## 5. Acknowledgement, license and citation
-
-Our code is adapted from [Gaussian Splatting](https://github.com/graphdeco-inria/gaussian-splatting), [SAX-NeRF](https://github.com/caiyuanhao1998/SAX-NeRF), [NAF](https://github.com/Ruyi-Zha/naf_cbct) and [TIGRE toolbox](https://github.com/CERN/TIGRE.git). We thank the authors for their excellent works.
-
-This project is under the license of [Gaussian Splatting](https://github.com/graphdeco-inria/gaussian-splatting).
-
-If this repo helps you, please consider citing our work:
+## 5. 代码结构
 
 ```
-@inproceedings{r2_gaussian,
-  title={R$^2$-Gaussian: Rectifying Radiative Gaussian Splatting for Tomographic Reconstruction},
-  author={Ruyi Zha and Tao Jun Lin and Yuanhao Cai and Jiwen Cao and Yanhao Zhang and Hongdong Li},
-  booktitle = {Advances in Neural Information Processing Systems (NeurIPS)},
-  year={2024}
+r2_gaussian/
+├── train.py                    # 主训练入口
+├── test.py                     # 测试评估入口
+├── initialize_pcd.py           # 点云初始化（SPS）
+├── r2_gaussian/
+│   ├── gaussian/
+│   │   ├── gaussian_model.py   # Gaussian 参数管理
+│   │   ├── kplanes.py          # K-Planes 编码器（ADM）
+│   │   └── render_query.py     # 渲染和查询
+│   ├── utils/
+│   │   ├── binocular_utils.py  # 双目一致性损失（GAR）
+│   │   └── loss_utils.py       # 基础损失函数
+│   └── innovations/fsgs/       # 邻近密集化模块（GAR）
+└── cc-agent/                   # 实验脚本和工具
+```
+
+## 6. 致谢与引用
+
+本代码基于 [R²-Gaussian](https://github.com/Ruyi-Zha/r2_gaussian)、[Gaussian Splatting](https://github.com/graphdeco-inria/gaussian-splatting) 和 [TIGRE](https://github.com/CERN/TIGRE.git) 开发。
+
+如果本代码库对您有帮助，请考虑引用：
+
+```
+@article{spags,
+  title={SPAGS: Spatial-aware Progressive Adaptive Gaussian Splatting for Sparse-View CT Reconstruction},
+  author={...},
+  journal={...},
+  year={2025}
 }
 ```
