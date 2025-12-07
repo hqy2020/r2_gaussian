@@ -4,6 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 IMPOERTANT
 neo4j 的mcp一定是在neo4j数据库里面的
+比较的都是2d情况下的psnr和ssim
 ## 项目概述
 
 **SPAGS**: 基于 3D Gaussian Splatting 的 CT 断层扫描重建项目。核心目标是稀疏视角（3/6/9 views）新视角合成。

@@ -90,16 +90,16 @@ def training(
 
     # 🆕 Set up Proximity-Guided Densification (GAR 邻近引导密化)
     # 支持 enable_gar (主开关) 或 enable_gar_proximity / enable_fsgs_proximity (兼容旧名)
-    use_proximity = getattr(opt, 'enable_gar', False) or getattr(opt, 'enable_gar_proximity', False) or getattr(opt, 'enable_fsgs_proximity', False)
+    use_proximity = getattr(dataset, 'enable_gar', False) or getattr(dataset, 'enable_gar_proximity', False) or getattr(dataset, 'enable_fsgs_proximity', False)
     proximity_densifier = None
-    proximity_start_iter = opt.proximity_start_iter
-    proximity_interval = opt.proximity_interval
-    proximity_until_iter = opt.proximity_until_iter
+    proximity_start_iter = dataset.proximity_start_iter
+    proximity_interval = dataset.proximity_interval
+    proximity_until_iter = dataset.proximity_until_iter
     if use_proximity:
         print("Use FSGS proximity-guided densification")
         proximity_densifier = ProximityGuidedDensifier(
-            k_neighbors=opt.proximity_k_neighbors,
-            proximity_threshold=opt.proximity_threshold,
+            k_neighbors=dataset.proximity_k_neighbors,
+            proximity_threshold=dataset.proximity_threshold,
             chunk_size=5000,
             enable=True
         )

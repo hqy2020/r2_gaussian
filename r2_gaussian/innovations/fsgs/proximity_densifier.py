@@ -479,8 +479,16 @@ class ProximityGuidedDensifier:
                 neighbor_attrs = attr_values[neighbor_indices]  # (M, max_new_per_source, ...)
                 new_attributes[attr_name] = neighbor_attrs.reshape(-1, *attr_values.shape[1:])
 
-            elif attr_name in ['rotations', 'features_dc', 'features_rest']:
-                # Initialize to zero (paper strategy)
+            elif attr_name == 'rotations':
+                # 四元数初始化为单位旋转 [1, 0, 0, 0]，而非全零
+                # 全零四元数不是有效的旋转表示，会导致协方差矩阵计算错误
+                new_shape = (M * max_new_per_source, *attr_values.shape[1:])
+                new_rotations = torch.zeros(new_shape, device=device, dtype=attr_values.dtype)
+                new_rotations[:, 0] = 1.0  # w=1, x=y=z=0 表示无旋转
+                new_attributes[attr_name] = new_rotations
+
+            elif attr_name in ['features_dc', 'features_rest']:
+                # SH 系数可以初始化为零
                 new_shape = (M * max_new_per_source, *attr_values.shape[1:])
                 new_attributes[attr_name] = torch.zeros(new_shape, device=device, dtype=attr_values.dtype)
 

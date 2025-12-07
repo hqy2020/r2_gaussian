@@ -94,14 +94,13 @@ GAR_FLAGS="--enable_gar true \
     --gar_proximity_k 5"
 
 # 兼容旧参数的 GAR 配置（布尔参数不带 true）
-GAR_FLAGS_COMPAT="--enable_binocular_consistency \
-    --binocular_loss_weight 0.08 \
-    --binocular_max_angle_offset 0.04 \
-    --binocular_start_iter 5000 \
-    --binocular_warmup_iters 3000 \
-    --enable_fsgs_proximity \
+# 注意: binocular consistency 已移除，GAR 现在只包含 proximity-guided densification
+GAR_FLAGS_COMPAT="--enable_fsgs_proximity \
     --proximity_threshold 5.0 \
-    --proximity_k_neighbors 5"
+    --proximity_k_neighbors 5 \
+    --proximity_start_iter 1000 \
+    --proximity_interval 500 \
+    --proximity_until_iter 15000"
 
 # ADM 最优参数
 ADM_FLAGS="--enable_adm \
@@ -124,49 +123,49 @@ ADM_FLAGS_COMPAT="--enable_kplanes \
 case $CONFIG in
     baseline)
         echo "=== Baseline (无技术) ==="
-        OUTPUT="output/aa_${TIMESTAMP}_${ORGAN}_${VIEWS}views_baseline"
+        OUTPUT="output/_${TIMESTAMP}_${ORGAN}_${VIEWS}views_baseline"
         CONFIG_FLAGS=""
         USE_SPS=false
         ;;
     sps)
         echo "=== SPS (空间先验播种) ==="
-        OUTPUT="output/aa_${TIMESTAMP}_${ORGAN}_${VIEWS}views_sps"
+        OUTPUT="output/_${TIMESTAMP}_${ORGAN}_${VIEWS}views_sps"
         CONFIG_FLAGS=""
         USE_SPS=true
         ;;
     gar)
         echo "=== GAR (几何感知细化) ==="
-        OUTPUT="output/aa_${TIMESTAMP}_${ORGAN}_${VIEWS}views_gar"
+        OUTPUT="output/_${TIMESTAMP}_${ORGAN}_${VIEWS}views_gar"
         CONFIG_FLAGS="$GAR_FLAGS_COMPAT"
         USE_SPS=false
         ;;
     adm)
         echo "=== ADM (自适应密度调制) ==="
-        OUTPUT="output/aa_${TIMESTAMP}_${ORGAN}_${VIEWS}views_adm"
+        OUTPUT="output/_${TIMESTAMP}_${ORGAN}_${VIEWS}views_adm"
         CONFIG_FLAGS="$ADM_FLAGS_COMPAT"
         USE_SPS=false
         ;;
     sps_gar)
         echo "=== SPS + GAR ==="
-        OUTPUT="output/aa_${TIMESTAMP}_${ORGAN}_${VIEWS}views_sps_gar"
+        OUTPUT="output/_${TIMESTAMP}_${ORGAN}_${VIEWS}views_sps_gar"
         CONFIG_FLAGS="$GAR_FLAGS_COMPAT"
         USE_SPS=true
         ;;
     sps_adm)
         echo "=== SPS + ADM ==="
-        OUTPUT="output/aa_${TIMESTAMP}_${ORGAN}_${VIEWS}views_sps_adm"
+        OUTPUT="output/_${TIMESTAMP}_${ORGAN}_${VIEWS}views_sps_adm"
         CONFIG_FLAGS="$ADM_FLAGS_COMPAT"
         USE_SPS=true
         ;;
     gar_adm)
         echo "=== GAR + ADM ==="
-        OUTPUT="output/aa_${TIMESTAMP}_${ORGAN}_${VIEWS}views_gar_adm"
+        OUTPUT="output/_${TIMESTAMP}_${ORGAN}_${VIEWS}views_gar_adm"
         CONFIG_FLAGS="$GAR_FLAGS_COMPAT $ADM_FLAGS_COMPAT"
         USE_SPS=false
         ;;
     spags)
         echo "=== Full SPAGS (SPS + GAR + ADM) ==="
-        OUTPUT="output/aa_${TIMESTAMP}_${ORGAN}_${VIEWS}views_spags"
+        OUTPUT="output/_${TIMESTAMP}_${ORGAN}_${VIEWS}views_spags"
         CONFIG_FLAGS="$GAR_FLAGS_COMPAT $ADM_FLAGS_COMPAT"
         USE_SPS=true
         ;;
