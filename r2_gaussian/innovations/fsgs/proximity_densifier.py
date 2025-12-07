@@ -44,7 +44,14 @@ class ProximityGuidedDensifier:
         k_neighbors: int = 3,
         proximity_threshold: float = 10.0,
         chunk_size: int = 5000,
-        enable: bool = True
+        enable: bool = True,
+        # 🆕 GAR 优化参数
+        adaptive_threshold: bool = False,
+        adaptive_method: str = "percentile",
+        adaptive_percentile: float = 90.0,
+        progressive_decay: bool = False,
+        decay_start_ratio: float = 0.5,
+        final_strength: float = 0.3,
     ):
         """
         Initialize FSGS Proximity Densifier
@@ -67,17 +74,34 @@ class ProximityGuidedDensifier:
 
             enable: Master switch for this module
                 - Set to False to disable FSGS densification entirely
+
+            adaptive_threshold: 启用自适应阈值（基于邻近分数分布）
+            adaptive_method: 自适应阈值计算方法 ("percentile", "std", "iqr")
+            adaptive_percentile: percentile 方法的百分位数（默认 90，只密化最稀疏的 10%）
+            progressive_decay: 启用渐进衰减（训练后期减少密化强度）
+            decay_start_ratio: 衰减开始的进度比例（默认 0.5，即 50% 进度后开始衰减）
+            final_strength: 最终密化强度（默认 0.3，即阈值提高到 1/0.3 ≈ 3.3 倍）
         """
         self.k_neighbors = k_neighbors
         self.proximity_threshold = proximity_threshold
         self.chunk_size = chunk_size
         self.enable = enable
 
+        # 🆕 GAR 优化参数
+        self.adaptive_threshold = adaptive_threshold
+        self.adaptive_method = adaptive_method
+        self.adaptive_percentile = adaptive_percentile
+        self.progressive_decay = progressive_decay
+        self.decay_start_ratio = decay_start_ratio
+        self.final_strength = final_strength
+
         # Statistics tracking (for TensorBoard logging)
         self.stats = {
             'num_densify_calls': 0,
             'total_new_gaussians': 0,
             'avg_proximity_score': 0.0,
+            'adaptive_threshold_value': 0.0,  # 🆕
+            'decay_multiplier': 1.0,  # 🆕
         }
 
     def compute_proximity_scores(
@@ -231,6 +255,119 @@ class ProximityGuidedDensifier:
         neighbor_indices = torch.cat(all_neighbor_indices, dim=0)  # (N, K)
 
         return neighbor_distances, neighbor_indices
+
+    def compute_adaptive_threshold_value(
+        self,
+        proximity_scores: torch.Tensor,
+        method: Optional[str] = None,
+        percentile: Optional[float] = None,
+    ) -> torch.Tensor:
+        """
+        基于邻近分数分布计算自适应阈值
+
+        核心思想：根据当前点云的邻近分数分布自动确定阈值，
+        而非使用固定值。这样可以适应不同密度的点云。
+
+        Args:
+            proximity_scores: (N,) 每个高斯的邻近分数
+            method: 阈值计算方法，可选:
+                - "percentile": 使用百分位数（推荐，只密化最稀疏的点）
+                - "std": mean + multiplier * std
+                - "iqr": Q3 + 1.5 * IQR（类似异常检测）
+            percentile: percentile 方法的百分位数
+
+        Returns:
+            threshold: 自适应阈值（标量）
+
+        Example:
+            >>> scores = densifier.compute_proximity_scores(positions)
+            >>> adaptive_thresh = densifier.compute_adaptive_threshold_value(scores)
+            >>> # adaptive_thresh 会根据点云密度自动调整
+        """
+        method = method or self.adaptive_method
+        percentile = percentile or self.adaptive_percentile
+
+        if method == "percentile":
+            # 使用百分位数：只密化邻近分数高于该百分位的点
+            # percentile=90 意味着只密化最稀疏的 10% 点
+            threshold = torch.quantile(proximity_scores, percentile / 100.0)
+        elif method == "std":
+            # 使用均值 + 标准差
+            mean = proximity_scores.mean()
+            std = proximity_scores.std()
+            threshold = mean + 1.5 * std
+        elif method == "iqr":
+            # 使用四分位距（类似箱线图异常检测）
+            q1 = torch.quantile(proximity_scores, 0.25)
+            q3 = torch.quantile(proximity_scores, 0.75)
+            iqr = q3 - q1
+            threshold = q3 + 1.5 * iqr
+        else:
+            raise ValueError(f"Unknown adaptive method: {method}")
+
+        # 下限保护：不低于固定阈值的 50%
+        threshold = threshold.clamp(min=self.proximity_threshold * 0.5)
+
+        # 更新统计
+        self.stats['adaptive_threshold_value'] = threshold.item()
+
+        return threshold
+
+    def get_decay_multiplier(
+        self,
+        iteration: int,
+        start_iter: int,
+        until_iter: int,
+        decay_start_ratio: Optional[float] = None,
+        final_strength: Optional[float] = None,
+    ) -> float:
+        """
+        计算渐进衰减乘数
+
+        核心思想：训练后期逐渐减少密化强度，给新生成的高斯
+        更多优化时间，避免在接近收敛时添加干扰。
+
+        Args:
+            iteration: 当前迭代次数
+            start_iter: GAR 开始迭代
+            until_iter: GAR 结束迭代
+            decay_start_ratio: 衰减开始的进度比例（默认 0.5）
+            final_strength: 最终强度（默认 0.3，阈值提高 ~3.3 倍）
+
+        Returns:
+            multiplier: 阈值乘数（>=1.0，越大越保守）
+
+        Example:
+            >>> mult = densifier.get_decay_multiplier(10000, 1000, 15000)
+            >>> # 如果 progress > 0.5，mult > 1.0（阈值提高）
+            >>> effective_threshold = base_threshold * mult
+        """
+        decay_start_ratio = decay_start_ratio or self.decay_start_ratio
+        final_strength = final_strength or self.final_strength
+
+        # 计算进度 [0, 1]
+        total_iters = until_iter - start_iter
+        if total_iters <= 0:
+            return 1.0
+
+        progress = (iteration - start_iter) / total_iters
+        progress = max(0.0, min(1.0, progress))  # clamp to [0, 1]
+
+        if progress < decay_start_ratio:
+            # 衰减开始前：正常密化
+            multiplier = 1.0
+        else:
+            # 衰减开始后：阈值逐渐提高
+            # 当 progress = 1.0 时，multiplier = 1/final_strength
+            decay_progress = (progress - decay_start_ratio) / (1.0 - decay_start_ratio)
+            # 线性插值：从 1.0 到 1/final_strength
+            final_multiplier = 1.0 / final_strength
+            multiplier = 1.0 + decay_progress * (final_multiplier - 1.0)
+
+        # 更新统计
+        self.stats['decay_multiplier'] = multiplier
+
+        return multiplier
 
     def identify_densify_candidates(
         self,

@@ -95,8 +95,18 @@ def training(
     proximity_start_iter = dataset.proximity_start_iter
     proximity_interval = dataset.proximity_interval
     proximity_until_iter = dataset.proximity_until_iter
+    # 🆕 GAR 优化参数
+    gar_adaptive_threshold = getattr(dataset, 'gar_adaptive_threshold', False)
+    gar_adaptive_method = getattr(dataset, 'gar_adaptive_method', 'percentile')
+    gar_adaptive_percentile = getattr(dataset, 'gar_adaptive_percentile', 90.0)
+    gar_progressive_decay = getattr(dataset, 'gar_progressive_decay', False)
+    gar_decay_start_ratio = getattr(dataset, 'gar_decay_start_ratio', 0.5)
+    gar_final_strength = getattr(dataset, 'gar_final_strength', 0.3)
+    gar_gradient_filter = getattr(dataset, 'gar_gradient_filter', False)
+    gar_gradient_threshold = getattr(dataset, 'gar_gradient_threshold', 0.0002)
+
     if use_proximity:
-        print("Use FSGS proximity-guided densification")
+        print("Use FSGS proximity-guided densification (GAR)")
         # 支持新参数名 gar_* 和旧参数名 proximity_*（优先使用新名）
         k_neighbors = getattr(dataset, 'gar_proximity_k', None) or getattr(dataset, 'proximity_k_neighbors', 5)
         proximity_threshold = getattr(dataset, 'gar_proximity_threshold', None) or getattr(dataset, 'proximity_threshold', 5.0)
@@ -104,11 +114,25 @@ def training(
             k_neighbors=k_neighbors,
             proximity_threshold=proximity_threshold,
             chunk_size=5000,
-            enable=True
+            enable=True,
+            # 🆕 GAR 优化参数
+            adaptive_threshold=gar_adaptive_threshold,
+            adaptive_method=gar_adaptive_method,
+            adaptive_percentile=gar_adaptive_percentile,
+            progressive_decay=gar_progressive_decay,
+            decay_start_ratio=gar_decay_start_ratio,
+            final_strength=gar_final_strength,
         )
         print(f"  - k_neighbors: {proximity_densifier.k_neighbors}")
         print(f"  - proximity_threshold: {proximity_densifier.proximity_threshold}")
         print(f"  - start_iter: {proximity_start_iter}, interval: {proximity_interval}, until: {proximity_until_iter}")
+        # 🆕 打印优化参数
+        if gar_adaptive_threshold:
+            print(f"  - 🆕 adaptive_threshold: {gar_adaptive_method} (p={gar_adaptive_percentile})")
+        if gar_progressive_decay:
+            print(f"  - 🆕 progressive_decay: start={gar_decay_start_ratio}, final={gar_final_strength}")
+        if gar_gradient_filter:
+            print(f"  - 🆕 gradient_filter: threshold={gar_gradient_threshold}")
 
     # 🎯 K-Planes 诊断信息
     if gaussians.enable_kplanes and gaussians.kplanes_encoder is not None:
@@ -242,7 +266,7 @@ def training(
                         bbox,
                     )
 
-            # 🆕 FSGS Proximity-Guided Densification (GAR核心组件)
+            # 🆕 FSGS Proximity-Guided Densification (GAR核心组件) - 优化版
             if use_proximity and proximity_densifier is not None:
                 if (iteration >= proximity_start_iter and
                     iteration <= proximity_until_iter and
@@ -254,11 +278,38 @@ def training(
                         positions, return_neighbors=True
                     )
 
-                    # 2. 识别需要密化的候选点
+                    # 🆕 2. 计算有效阈值（自适应 + 渐进衰减）
+                    effective_threshold = None
+
+                    # 2a. 自适应阈值
+                    if gar_adaptive_threshold:
+                        effective_threshold = proximity_densifier.compute_adaptive_threshold_value(
+                            proximity_scores
+                        )
+
+                    # 2b. 渐进衰减
+                    if gar_progressive_decay:
+                        decay_mult = proximity_densifier.get_decay_multiplier(
+                            iteration, proximity_start_iter, proximity_until_iter
+                        )
+                        if effective_threshold is not None:
+                            effective_threshold = effective_threshold * decay_mult
+                        else:
+                            effective_threshold = proximity_densifier.proximity_threshold * decay_mult
+
+                    # 3. 识别需要密化的候选点
                     densify_mask = proximity_densifier.identify_densify_candidates(
                         proximity_scores,
+                        custom_threshold=effective_threshold,
                         hybrid_mode="proximity_only"
                     )
+
+                    # 🆕 4. 梯度过滤（只保留高梯度点）
+                    if gar_gradient_filter:
+                        grads = gaussians.xyz_gradient_accum / (gaussians.denom + 1e-7)
+                        grads[grads.isnan()] = 0.0
+                        gradient_mask = grads.squeeze() > gar_gradient_threshold
+                        densify_mask = densify_mask & gradient_mask
 
                     num_candidates = densify_mask.sum().item()
 
@@ -273,18 +324,18 @@ def training(
                             densify_mask[selected_indices] = True
                             num_candidates = 5000
 
-                        # 3. 获取需要密化的点及其邻居
+                        # 5. 获取需要密化的点及其邻居
                         source_positions = positions[densify_mask]
                         source_neighbor_indices = neighbor_indices[densify_mask]
 
-                        # 4. 准备属性字典
+                        # 6. 准备属性字典
                         all_attributes = {
                             'scales': gaussians._scaling,
                             'opacities': gaussians._density,
                             'rotations': gaussians._rotation,
                         }
 
-                        # 5. 生成新的 Gaussians
+                        # 7. 生成新的 Gaussians
                         new_gaussians = proximity_densifier.generate_new_gaussians(
                             source_positions,
                             source_neighbor_indices,
@@ -296,7 +347,7 @@ def training(
                         num_new = new_gaussians['positions'].shape[0]
 
                         if num_new > 0:
-                            # 6. 添加到 GaussianModel
+                            # 8. 添加到 GaussianModel
                             new_max_radii = torch.zeros(num_new, device=positions.device)
 
                             gaussians.densification_postfix(
