@@ -107,6 +107,10 @@ class GaussianModel:
             self.kplanes_encoder = None
             self.density_decoder = None
 
+        # 存储 ADM 调度参数（用于 _get_adm_strength）
+        if self.enable_kplanes:
+            self.adm_max_range = getattr(args, 'adm_max_range', 0.3) if args else 0.3
+
     def capture(self):
         # K-Planes 状态（如果启用）
         kplanes_state = None
@@ -197,23 +201,53 @@ class GaussianModel:
     def get_density(self):
         base_density = self.density_activation(self._density)
 
-        # 🎯 K-Planes 特征调制（X²-Gaussian 多头解码器架构）
+        # 🎯 ADM 自适应密度调制（双头输出 + 训练调度）
         if self.enable_kplanes and self.kplanes_encoder is not None and self.density_decoder is not None:
             kplanes_feat = self.get_kplanes_features()  # [N, 96]
 
-            # 使用 MLP Decoder 将 96 维特征映射到 density offset
-            # Decoder 输出范围 [-1, 1] (通过 Tanh 约束)
-            density_offset = self.density_decoder(kplanes_feat)  # [N, 1], range: [-1, 1]
+            # 双头输出: offset [-1,1] 控制调制方向, confidence [0,1] 控制调制强度
+            offset, confidence = self.density_decoder(kplanes_feat)
 
-            # 🎯 v3 超保守调制：使用 sigmoid 平滑映射到 [0.7, 1.3]（±30% 调制范围）
-            # 公式：modulation = 0.7 + 0.6 * sigmoid(density_offset)
-            # sigmoid 提供平滑过渡，避免极端值，减少过拟合
-            modulation = 0.7 + 0.6 * torch.sigmoid(density_offset)
+            # 获取调制参数
+            max_range = getattr(self, 'adm_max_range', 0.3)
+            strength = self._get_adm_strength()
 
-            # 调制 base_density
+            # 自适应调制公式: modulation = 1 + offset * confidence * max_range * strength
+            # - offset: 调制方向（增强或减弱密度）
+            # - confidence: 网络学习的调制置信度（简单区域趋近0，困难区域趋近1）
+            # - max_range: 最大调制范围（默认±30%）
+            # - strength: 训练进程调度（warmup -> hold -> decay）
+            effective_offset = offset * confidence * max_range * strength
+            modulation = 1.0 + effective_offset
+
             base_density = base_density * modulation
 
         return base_density
+
+    def _get_adm_strength(self):
+        """
+        训练进程调度: warmup -> hold -> decay
+
+        - [0, warmup): 从 0 线性增加到 1（避免初期干扰收敛）
+        - [warmup, decay_start): 保持 1.0（正常调制）
+        - [decay_start, total): 从 1.0 衰减到 final_strength（后期稳定）
+        """
+        if not hasattr(self, 'current_iteration'):
+            return 1.0
+
+        it = self.current_iteration
+        warmup = getattr(self, 'adm_warmup_iters', 3000)
+        decay_start = getattr(self, 'adm_decay_start', 20000)
+        final = getattr(self, 'adm_final_strength', 0.5)
+        total = 30000
+
+        if it < warmup:
+            return it / warmup
+        elif it < decay_start:
+            return 1.0
+        else:
+            progress = (it - decay_start) / (total - decay_start)
+            return 1.0 - (1.0 - final) * min(1.0, progress)
 
     def get_covariance(self, scaling_modifier=1):
         return self.covariance_activation(
@@ -373,6 +407,11 @@ class GaussianModel:
                 lr_final=kplanes_lr_final,
                 max_steps=kplanes_lr_max_steps,
             )
+
+            # ADM 训练调度参数（用于 _get_adm_strength）
+            self.adm_warmup_iters = getattr(training_args, 'adm_warmup_iters', 3000)
+            self.adm_decay_start = getattr(training_args, 'adm_decay_start', 20000)
+            self.adm_final_strength = getattr(training_args, 'adm_final_strength', 0.5)
 
     def update_learning_rate(self, iteration):
         """Learning rate scheduling per step"""

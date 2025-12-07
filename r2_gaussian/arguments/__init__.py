@@ -101,6 +101,7 @@ class ModelParams(ParamGroup):
         self.adm_feature_dim = 32  # [ADM] K-Planes 特征维度
         self.adm_decoder_hidden = 128  # [ADM] MLP Decoder 隐藏层维度
         self.adm_decoder_layers = 3  # [ADM] MLP Decoder 层数
+        self.adm_max_range = 0.3  # [ADM] 最大调制范围 (±30%)
         # 向下兼容旧参数名
         self.enable_kplanes = False  # [兼容] 旧名，映射到 enable_adm
         self.kplanes_resolution = 64  # [兼容] 旧名
@@ -173,6 +174,10 @@ class OptimizationParams(ParamGroup):
         self.adm_lr_max_steps = 30000  # [ADM] K-Planes 学习率衰减步数
         self.adm_lambda_tv = 0.002  # [ADM] Plane TV 正则化权重（最优值）
         self.adm_tv_type = "l2"  # [ADM] TV 损失类型
+        # [ADM] 训练调度参数（自适应置信度调制）
+        self.adm_warmup_iters = 3000  # [ADM] warmup 迭代数（避免初期干扰）
+        self.adm_decay_start = 20000  # [ADM] 调制衰减开始迭代
+        self.adm_final_strength = 0.5  # [ADM] 最终调制强度（后期稳定）
         # 向下兼容旧参数名
         self.kplanes_lr_init = 0.002  # [兼容] 旧名
         self.kplanes_lr_final = 0.0002  # [兼容] 旧名

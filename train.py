@@ -149,6 +149,9 @@ def training(
     for iteration in range(first_iter, opt.iterations + 1):
         iter_start.record()
 
+        # 传递当前迭代次数给 ADM 调度
+        gaussians.current_iteration = iteration
+
         # Update learning rate
         gaussians.update_learning_rate(iteration)
 

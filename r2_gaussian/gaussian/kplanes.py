@@ -171,10 +171,11 @@ class KPlanesEncoder(nn.Module):
 
 class DensityMLPDecoder(nn.Module):
     """
-    MLP Decoder：将 K-Planes 特征映射到 density 调制因子
+    MLP Decoder：双头输出 offset + confidence
 
-    对齐 X²-Gaussian 原版的 deformation network 架构，
-    使用多层 MLP 学习从 K-Planes 特征到 density offset 的映射。
+    使用共享 backbone 提取特征，然后分别输出：
+    - offset: 密度调制方向 [-1, 1]
+    - confidence: 调制置信度 [0, 1]，让网络自动学习哪些区域需要调制
 
     参数：
         input_dim (int): 输入特征维度（默认 96，对应 feature_dim * 3）
@@ -182,7 +183,8 @@ class DensityMLPDecoder(nn.Module):
         num_layers (int): MLP 层数（默认 3）
 
     输出：
-        density_offset (torch.Tensor): 形状 [N, 1]，density 的调制因子
+        offset (torch.Tensor): 形状 [N, 1]，density 调制方向
+        confidence (torch.Tensor): 形状 [N, 1]，调制置信度
     """
 
     def __init__(self, input_dim: int = 96, hidden_dim: int = 128, num_layers: int = 3):
@@ -192,43 +194,57 @@ class DensityMLPDecoder(nn.Module):
         self.hidden_dim = hidden_dim
         self.num_layers = num_layers
 
-        # 构建 MLP 网络
-        layers = []
+        # 共享 backbone
+        backbone_layers = []
+        backbone_layers.append(nn.Linear(input_dim, hidden_dim))
+        backbone_layers.append(nn.ReLU(inplace=True))
 
-        # 第一层：input_dim -> hidden_dim
-        layers.append(nn.Linear(input_dim, hidden_dim))
-        layers.append(nn.ReLU(inplace=True))
-
-        # 中间层：hidden_dim -> hidden_dim
         for _ in range(num_layers - 2):
-            layers.append(nn.Linear(hidden_dim, hidden_dim))
-            layers.append(nn.ReLU(inplace=True))
+            backbone_layers.append(nn.Linear(hidden_dim, hidden_dim))
+            backbone_layers.append(nn.ReLU(inplace=True))
 
-        # 输出层：hidden_dim -> 1
-        layers.append(nn.Linear(hidden_dim, 1))
-        # 🎯 约束输出到 [-1, 1] 防止极端调制
-        layers.append(nn.Tanh())
+        self.backbone = nn.Sequential(*backbone_layers)
 
-        self.network = nn.Sequential(*layers)
+        # 双头输出
+        self.offset_head = nn.Sequential(
+            nn.Linear(hidden_dim, 1),
+            nn.Tanh()  # [-1, 1]
+        )
+        self.confidence_head = nn.Sequential(
+            nn.Linear(hidden_dim, 1),
+            nn.Sigmoid()  # [0, 1]
+        )
 
-        # 初始化权重（使用 Xavier 初始化）
-        for m in self.modules():
+        # 初始化 backbone（Xavier）
+        for m in self.backbone.modules():
             if isinstance(m, nn.Linear):
                 nn.init.xavier_uniform_(m.weight)
-                if m.bias is not None:
-                    nn.init.zeros_(m.bias)
+                nn.init.zeros_(m.bias)
 
-    def forward(self, kplanes_feat: torch.Tensor) -> torch.Tensor:
+        # offset_head 正常初始化
+        nn.init.xavier_uniform_(self.offset_head[0].weight)
+        nn.init.zeros_(self.offset_head[0].bias)
+
+        # confidence_head 初始化为低值（避免初期过度调制）
+        # sigmoid(-1) ≈ 0.27，让网络从保守状态开始学习
+        nn.init.normal_(self.confidence_head[0].weight, std=0.01)
+        nn.init.constant_(self.confidence_head[0].bias, -1.0)
+
+    def forward(self, kplanes_feat: torch.Tensor):
         """
-        前向传播：将 K-Planes 特征映射到 density offset
+        前向传播：将 K-Planes 特征映射到 (offset, confidence)
 
         参数：
             kplanes_feat (torch.Tensor): K-Planes 特征，形状 [N, input_dim]
 
         返回：
-            density_offset (torch.Tensor): density 调制因子，形状 [N, 1]
+            offset (torch.Tensor): density 调制方向，形状 [N, 1]，范围 [-1, 1]
+            confidence (torch.Tensor): 调制置信度，形状 [N, 1]，范围 [0, 1]
         """
-        return self.network(kplanes_feat)
+        features = self.backbone(kplanes_feat)
+        offset = self.offset_head(features)
+        confidence = self.confidence_head(features)
+        return offset, confidence
 
 
 # 测试代码（可选）
