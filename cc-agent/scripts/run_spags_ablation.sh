@@ -83,38 +83,15 @@ COMMON_FLAGS="--iterations 30000 --test_iterations 10000 20000 30000"
 # 配置定义
 # ============================================================================
 
-# GAR 最优参数（来自超参数搜索）
-GAR_FLAGS="--enable_gar true \
-    --gar_loss_weight 0.08 \
-    --gar_max_angle 0.04 \
-    --gar_start_iter 5000 \
-    --gar_warmup_iters 3000 \
-    --enable_gar_proximity true \
-    --gar_proximity_threshold 5.0 \
-    --gar_proximity_k 5"
+# GAR 参数（Proximity-guided Densification）
+# 注意: 布尔参数使用 flag 格式（不带 true/false 值）
+# 默认值: threshold=5.0, k=5, start=1000, interval=500, until=15000
+GAR_FLAGS_COMPAT="--enable_fsgs_proximity"
 
-# 兼容旧参数的 GAR 配置（布尔参数不带 true）
-# 注意: binocular consistency 已移除，GAR 现在只包含 proximity-guided densification
-GAR_FLAGS_COMPAT="--enable_fsgs_proximity \
-    --proximity_threshold 5.0 \
-    --proximity_k_neighbors 5 \
-    --proximity_start_iter 1000 \
-    --proximity_interval 500 \
-    --proximity_until_iter 15000"
-
-# ADM 最优参数
-ADM_FLAGS="--enable_adm \
-    --adm_resolution 64 \
-    --adm_feature_dim 32 \
-    --adm_lambda_tv 0.002 \
-    --adm_tv_type l2"
-
-# 兼容旧参数的 ADM 配置（布尔参数不带 true）
-ADM_FLAGS_COMPAT="--enable_kplanes \
-    --kplanes_resolution 64 \
-    --kplanes_dim 32 \
-    --lambda_plane_tv 0.002 \
-    --tv_loss_type l2"
+# ADM 参数（K-Planes Density Modulation）
+# 注意: 布尔参数使用 flag 格式（不带 true/false 值）
+# 默认值: resolution=64, dim=32, lambda_plane_tv=0.002, tv_type=l2
+ADM_FLAGS_COMPAT="--enable_kplanes"
 
 # ============================================================================
 # 根据配置选择参数
@@ -221,7 +198,7 @@ GPU: $GPU
 时间: $(date)
 
 SPS 启用: $USE_SPS
-GAR 启用: $(echo "$CONFIG_FLAGS" | grep -q "binocular" && echo "true" || echo "false")
+GAR 启用: $(echo "$CONFIG_FLAGS" | grep -q "proximity" && echo "true" || echo "false")
 ADM 启用: $(echo "$CONFIG_FLAGS" | grep -q "kplanes" && echo "true" || echo "false")
 
 完整命令:

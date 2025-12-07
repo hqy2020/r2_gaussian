@@ -41,31 +41,27 @@ def compute_plane_tv(
 
     batch_size, c, h, w = plane.shape
 
-    # 计算精确的计数（X²-Gaussian 原版方式）
-    count_h = batch_size * c * (h - 1) * w
-    count_w = batch_size * c * h * (w - 1)
+    # 计算水平梯度（沿 W 方向，相邻列之间的差异）
+    # 形状：[batch, C, H, W-1]，元素数量 = batch * C * H * (W-1)
+    grad_w = plane[:, :, :, 1:] - plane[:, :, :, :-1]
+    count_grad_w = batch_size * c * h * (w - 1)
 
-    # 计算水平梯度（相邻列之间的差异）
-    # plane[:, :, :, 1:] - plane[:, :, :, :-1]
-    # 形状：[batch, C, H, W-1]
-    grad_h = plane[:, :, :, 1:] - plane[:, :, :, :-1]
-
-    # 计算垂直梯度（相邻行之间的差异）
-    # plane[:, :, 1:, :] - plane[:, :, :-1, :]
-    # 形状：[batch, C, H-1, W]
-    grad_w = plane[:, :, 1:, :] - plane[:, :, :-1, :]
+    # 计算垂直梯度（沿 H 方向，相邻行之间的差异）
+    # 形状：[batch, C, H-1, W]，元素数量 = batch * C * (H-1) * W
+    grad_h = plane[:, :, 1:, :] - plane[:, :, :-1, :]
+    count_grad_h = batch_size * c * (h - 1) * w
 
     # 根据损失类型计算（默认 L2）
     if loss_type == "l2":
         # X²-Gaussian 原版公式：平方差求和再归一化
-        h_tv = torch.square(grad_h).sum()
-        w_tv = torch.square(grad_w).sum()
-        tv_loss = 2 * (h_tv / count_h + w_tv / count_w)
+        tv_w = torch.square(grad_w).sum()
+        tv_h = torch.square(grad_h).sum()
+        tv_loss = 2 * (tv_w / count_grad_w + tv_h / count_grad_h)
     elif loss_type == "l1":
         # L1 版本（保留向下兼容）
-        h_tv = grad_h.abs().sum()
-        w_tv = grad_w.abs().sum()
-        tv_loss = 2 * (h_tv / count_h + w_tv / count_w)
+        tv_w = grad_w.abs().sum()
+        tv_h = grad_h.abs().sum()
+        tv_loss = 2 * (tv_w / count_grad_w + tv_h / count_grad_h)
     else:
         raise ValueError(f"不支持的 loss_type: {loss_type}，请选择 'l1' 或 'l2'")
 

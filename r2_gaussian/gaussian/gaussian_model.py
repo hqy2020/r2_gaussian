@@ -77,11 +77,16 @@ class GaussianModel:
         self.setup_functions()
 
         # K-Planes 支持（可选）
-        self.enable_kplanes = getattr(args, 'enable_kplanes', False) if args is not None else False
+        # 支持新参数名 enable_adm 和旧参数名 enable_kplanes
+        self.enable_kplanes = (
+            getattr(args, 'enable_adm', False) or
+            getattr(args, 'enable_kplanes', False)
+        ) if args is not None else False
         if self.enable_kplanes:
             from r2_gaussian.gaussian.kplanes import KPlanesEncoder, DensityMLPDecoder
-            kplanes_resolution = getattr(args, 'kplanes_resolution', 64)
-            kplanes_dim = getattr(args, 'kplanes_dim', 32)
+            # 支持新参数名 adm_* 和旧参数名 kplanes_*（优先使用新名）
+            kplanes_resolution = getattr(args, 'adm_resolution', None) or getattr(args, 'kplanes_resolution', 64)
+            kplanes_dim = getattr(args, 'adm_feature_dim', None) or getattr(args, 'kplanes_dim', 32)
             self.kplanes_encoder = KPlanesEncoder(
                 grid_resolution=kplanes_resolution,
                 feature_dim=kplanes_dim,
@@ -90,8 +95,9 @@ class GaussianModel:
             ).cuda()
 
             # 🎯 MLP Decoder: 将 K-Planes 特征映射到 density 调制因子
-            kplanes_decoder_hidden = getattr(args, 'kplanes_decoder_hidden', 128)
-            kplanes_decoder_layers = getattr(args, 'kplanes_decoder_layers', 3)
+            # 支持新参数名 adm_* 和旧参数名 kplanes_*（优先使用新名）
+            kplanes_decoder_hidden = getattr(args, 'adm_decoder_hidden', None) or getattr(args, 'kplanes_decoder_hidden', 128)
+            kplanes_decoder_layers = getattr(args, 'adm_decoder_layers', None) or getattr(args, 'kplanes_decoder_layers', 3)
             self.density_decoder = DensityMLPDecoder(
                 input_dim=self.kplanes_encoder.get_output_dim(),  # 96
                 hidden_dim=kplanes_decoder_hidden,
@@ -102,6 +108,15 @@ class GaussianModel:
             self.density_decoder = None
 
     def capture(self):
+        # K-Planes 状态（如果启用）
+        kplanes_state = None
+        decoder_state = None
+        if self.enable_kplanes:
+            if self.kplanes_encoder is not None:
+                kplanes_state = self.kplanes_encoder.state_dict()
+            if self.density_decoder is not None:
+                decoder_state = self.density_decoder.state_dict()
+
         return (
             self._xyz,
             self._scaling,
@@ -113,26 +128,58 @@ class GaussianModel:
             self.optimizer.state_dict(),
             self.spatial_lr_scale,
             self.scale_bound,
+            kplanes_state,      # K-Planes encoder 状态
+            decoder_state,      # K-Planes decoder 状态
         )
 
     def restore(self, model_args, training_args):
-        (
-            self._xyz,
-            self._scaling,
-            self._rotation,
-            self._density,
-            self.max_radii2D,
-            xyz_gradient_accum,
-            denom,
-            opt_dict,
-            self.spatial_lr_scale,
-            self.scale_bound,
-        ) = model_args
+        # 处理新旧 checkpoint 格式兼容
+        if len(model_args) == 10:
+            # 旧格式（无 K-Planes）
+            (
+                self._xyz,
+                self._scaling,
+                self._rotation,
+                self._density,
+                self.max_radii2D,
+                xyz_gradient_accum,
+                denom,
+                opt_dict,
+                self.spatial_lr_scale,
+                self.scale_bound,
+            ) = model_args
+            kplanes_state, decoder_state = None, None
+        else:
+            # 新格式（包含 K-Planes）
+            (
+                self._xyz,
+                self._scaling,
+                self._rotation,
+                self._density,
+                self.max_radii2D,
+                xyz_gradient_accum,
+                denom,
+                opt_dict,
+                self.spatial_lr_scale,
+                self.scale_bound,
+                kplanes_state,
+                decoder_state,
+            ) = model_args
+
         self.training_setup(training_args)
         self.xyz_gradient_accum = xyz_gradient_accum
         self.denom = denom
         self.optimizer.load_state_dict(opt_dict)
         self.setup_functions()  # Reset activation functions
+
+        # 恢复 K-Planes 状态（如果有）
+        if self.enable_kplanes:
+            if kplanes_state is not None and self.kplanes_encoder is not None:
+                self.kplanes_encoder.load_state_dict(kplanes_state)
+                print("✓ K-Planes encoder 状态已恢复")
+            if decoder_state is not None and self.density_decoder is not None:
+                self.density_decoder.load_state_dict(decoder_state)
+                print("✓ K-Planes decoder 状态已恢复")
 
     @property
     def get_scaling(self):
@@ -277,7 +324,7 @@ class GaussianModel:
 
         # K-Planes 参数组（可选）
         if self.enable_kplanes and self.kplanes_encoder is not None:
-            kplanes_lr_init = getattr(training_args, 'kplanes_lr_init', 0.00016)
+            kplanes_lr_init = getattr(training_args, 'kplanes_lr_init', 0.002)  # 与 arguments 默认值一致
             l.append({
                 "params": self.kplanes_encoder.parameters(),
                 "lr": kplanes_lr_init,
@@ -318,8 +365,8 @@ class GaussianModel:
 
         # K-Planes 学习率调度器（可选）
         if self.enable_kplanes and self.kplanes_encoder is not None:
-            kplanes_lr_init = getattr(training_args, 'kplanes_lr_init', 0.00016)
-            kplanes_lr_final = getattr(training_args, 'kplanes_lr_final', 0.0000016)
+            kplanes_lr_init = getattr(training_args, 'kplanes_lr_init', 0.002)  # 与 arguments 默认值一致
+            kplanes_lr_final = getattr(training_args, 'kplanes_lr_final', 0.0002)  # 与 arguments 默认值一致
             kplanes_lr_max_steps = getattr(training_args, 'kplanes_lr_max_steps', 30000)
             self.kplanes_scheduler_args = get_expon_lr_func(
                 lr_init=kplanes_lr_init,
@@ -662,22 +709,19 @@ class GaussianModel:
 
     def opacity_decay(self, factor=0.995):
         """
-        应用不透明度衰减策略（Binocular3DGS方法）
-        
+        应用不透明度衰减策略
+
         对 density 应用指数衰减，自动过滤梯度低的冗余 Gaussians。
         在激活空间应用衰减（density *= factor），然后转回逆激活空间存储。
-        
-        论文来源: Binocular-Guided 3D Gaussian Splatting with View Consistency 
-                  for Sparse View Synthesis (NeurIPS 2024)
-        
+
         Args:
-            factor (float): 衰减系数，论文推荐值 0.995
+            factor (float): 衰减系数，默认 0.995
                           - 梯度高的点：opacity增长 > 衰减 → 保留
                           - 梯度低的点：opacity增长 < 衰减 → 逐渐被剪枝
-        
+
         Note:
             - R²-Gaussian使用Softplus激活([0,+∞))，而非标准3DGS的Sigmoid([0,1])
-            - 衰减原理相同：降低低贡献点的密度值
+            - 衰减原理：降低低贡献点的密度值
             - 应在 densify_from_iter 后每次迭代调用
         """
         # 在激活空间应用衰减

@@ -119,7 +119,6 @@ python initialize_pcd.py --data <path_to_data> --enable_sps --n_points 50000
 python train.py -s data/369/foot_50_3views.pickle \
     -m output/experiment_name \
     --ply_path data/369/init_foot_50_3views.npy \
-    --enable_binocular_consistency \
     --enable_fsgs_proximity \
     --enable_kplanes
 ```
@@ -137,8 +136,6 @@ python test.py -m <path_to_trained_model>
 - `--n_points`: 初始化点云数量（默认 50000）
 
 ### GAR (几何感知细化)
-- `--enable_binocular_consistency`: 启用双目一致性约束
-- `--binocular_loss_weight`: 双目损失权重（默认 0.08）
 - `--enable_fsgs_proximity`: 启用邻近感知密化
 - `--proximity_threshold`: 邻近密化阈值（默认 5.0）
 
@@ -161,7 +158,6 @@ r2_gaussian/
 │   │   ├── kplanes.py          # K-Planes 编码器（ADM）
 │   │   └── render_query.py     # 渲染和查询
 │   ├── utils/
-│   │   ├── binocular_utils.py  # 双目一致性损失（GAR）
 │   │   └── loss_utils.py       # 基础损失函数
 │   └── innovations/fsgs/       # 邻近密集化模块（GAR）
 └── cc-agent/                   # 实验脚本和工具

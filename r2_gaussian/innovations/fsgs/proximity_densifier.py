@@ -10,16 +10,6 @@ import torch.nn.functional as F
 from typing import Dict, Tuple, Optional, List
 import warnings
 
-# Try to import CUDA-accelerated K-NN (optional)
-try:
-    from simple_knn._C import distCUDA2
-    HAS_SIMPLE_KNN = True
-except ImportError:
-    HAS_SIMPLE_KNN = False
-    warnings.warn(
-        "simple_knn not available. Using PyTorch fallback (slower). "
-        "Install with: cd r2_gaussian/submodules/simple-knn && pip install ."
-    )
 
 
 class ProximityGuidedDensifier:
@@ -54,7 +44,6 @@ class ProximityGuidedDensifier:
         k_neighbors: int = 3,
         proximity_threshold: float = 10.0,
         chunk_size: int = 5000,
-        use_cuda_knn: bool = True,
         enable: bool = True
     ):
         """
@@ -76,17 +65,12 @@ class ProximityGuidedDensifier:
                 - Decrease for OOM errors: 2000-3000
                 - No effect on results, only memory/speed tradeoff
 
-            use_cuda_knn: Whether to use simple_knn CUDA acceleration
-                - Auto-disabled if simple_knn not available
-                - 10-30x faster than PyTorch fallback
-
             enable: Master switch for this module
                 - Set to False to disable FSGS densification entirely
         """
         self.k_neighbors = k_neighbors
         self.proximity_threshold = proximity_threshold
         self.chunk_size = chunk_size
-        self.use_cuda_knn = use_cuda_knn and HAS_SIMPLE_KNN
         self.enable = enable
 
         # Statistics tracking (for TensorBoard logging)
@@ -145,24 +129,10 @@ class ProximityGuidedDensifier:
                 f"Cannot compute {K}-nearest neighbors."
             )
 
-        # Method 1: CUDA-accelerated K-NN (fastest, if available)
-        if self.use_cuda_knn and N > 1000:  # Only beneficial for large N
-            try:
-                neighbor_distances, neighbor_indices = self._compute_knn_cuda(
-                    positions, K
-                )
-            except Exception as e:
-                warnings.warn(
-                    f"CUDA K-NN failed: {e}. Falling back to PyTorch implementation."
-                )
-                neighbor_distances, neighbor_indices = self._compute_knn_chunked(
-                    positions, K
-                )
-        else:
-            # Method 2: PyTorch batched topk (memory-efficient fallback)
-            neighbor_distances, neighbor_indices = self._compute_knn_chunked(
-                positions, K
-            )
+        # 使用 PyTorch chunked 实现（稳定可靠）
+        neighbor_distances, neighbor_indices = self._compute_knn_chunked(
+            positions, K
+        )
 
         # Compute proximity score: average distance to K nearest neighbors
         proximity_scores = neighbor_distances.mean(dim=1)  # (N,)
@@ -173,46 +143,6 @@ class ProximityGuidedDensifier:
         if return_neighbors:
             return proximity_scores, neighbor_indices, neighbor_distances
         return proximity_scores
-
-    def _compute_knn_cuda(
-        self,
-        positions: torch.Tensor,  # (N, 3)
-        K: int
-    ) -> Tuple[torch.Tensor, torch.Tensor]:  # (N, K), (N, K)
-        """
-        Compute K-nearest neighbors using CUDA-accelerated simple_knn
-
-        This is 10-30x faster than PyTorch for large N (>10k), but requires
-        the simple_knn CUDA extension to be compiled.
-
-        Args:
-            positions: (N, 3) Gaussian positions
-            K: Number of nearest neighbors
-
-        Returns:
-            neighbor_distances: (N, K) distances to K nearest neighbors
-            neighbor_indices: (N, K) indices of K nearest neighbors
-        """
-        # distCUDA2 returns sorted distances from each point to all points
-        # Shape: (N, N), where distances[i, j] = ||pos[i] - pos[j]||
-        distances_sorted = distCUDA2(positions)  # (N, N)
-
-        # Extract K nearest neighbors (excluding self at index 0)
-        # distCUDA2 already sorted, so we just slice
-        neighbor_distances = distances_sorted[:, 1:K+1]  # (N, K)
-
-        # Get indices (need to argsort or use topk)
-        # Since distances_sorted is already sorted, we can just use range indices
-        # But distCUDA2 doesn't return indices, so we need to use topk
-        _, neighbor_indices = torch.topk(
-            distances_sorted,
-            k=K+1,  # +1 to include self
-            dim=1,
-            largest=False  # Smallest distances (nearest neighbors)
-        )
-        neighbor_indices = neighbor_indices[:, 1:]  # Remove self, (N, K)
-
-        return neighbor_distances, neighbor_indices
 
     def _compute_knn_chunked(
         self,

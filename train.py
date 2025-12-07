@@ -97,9 +97,12 @@ def training(
     proximity_until_iter = dataset.proximity_until_iter
     if use_proximity:
         print("Use FSGS proximity-guided densification")
+        # 支持新参数名 gar_* 和旧参数名 proximity_*（优先使用新名）
+        k_neighbors = getattr(dataset, 'gar_proximity_k', None) or getattr(dataset, 'proximity_k_neighbors', 5)
+        proximity_threshold = getattr(dataset, 'gar_proximity_threshold', None) or getattr(dataset, 'proximity_threshold', 5.0)
         proximity_densifier = ProximityGuidedDensifier(
-            k_neighbors=dataset.proximity_k_neighbors,
-            proximity_threshold=dataset.proximity_threshold,
+            k_neighbors=k_neighbors,
+            proximity_threshold=proximity_threshold,
             chunk_size=5000,
             enable=True
         )
@@ -111,9 +114,12 @@ def training(
     if gaussians.enable_kplanes and gaussians.kplanes_encoder is not None:
         print("=" * 70)
         print("✓ K-Planes Encoder 已启用")
-        print(f"  - 平面分辨率: {dataset.kplanes_resolution}")
-        print(f"  - 特征维度: {dataset.kplanes_dim}")
-        print(f"  - 总特征维度: {dataset.kplanes_dim * 3} (3 个平面)")
+        # 从实际的 encoder 获取参数，而非 dataset（确保显示实际使用的值）
+        actual_resolution = gaussians.kplanes_encoder.grid_resolution
+        actual_dim = gaussians.kplanes_encoder.feature_dim
+        print(f"  - 平面分辨率: {actual_resolution}")
+        print(f"  - 特征维度: {actual_dim}")
+        print(f"  - 总特征维度: {actual_dim * 3} (3 个平面)")
 
         kplanes_params = sum(p.numel() for p in gaussians.kplanes_encoder.parameters())
         print(f"  - K-Planes 参数量: {kplanes_params:,}")
@@ -255,15 +261,14 @@ def training(
 
                     if num_candidates > 0:
                         # 限制每次最多密化的点数，避免内存爆炸
-                        max_densify = min(num_candidates, 5000)
-                        if num_candidates > max_densify:
+                        if num_candidates > 5000:
                             # 随机选择一部分
                             candidate_indices = torch.where(densify_mask)[0]
-                            perm = torch.randperm(len(candidate_indices))[:max_densify]
+                            perm = torch.randperm(len(candidate_indices), device=candidate_indices.device)[:5000]
                             selected_indices = candidate_indices[perm]
-                            densify_mask = torch.zeros_like(densify_mask)
+                            densify_mask.fill_(False)  # 原地操作，减少内存分配
                             densify_mask[selected_indices] = True
-                            num_candidates = max_densify
+                            num_candidates = 5000
 
                         # 3. 获取需要密化的点及其邻居
                         source_positions = positions[densify_mask]
@@ -308,13 +313,12 @@ def training(
                     "No Gaussian left. Change adaptive control hyperparameters!"
                 )
 
-            # Opacity Decay (Binocular3DGS策略)
-            # 在密度控制开始后的每次迭代应用衰减，过滤低梯度的冗余Gaussians
+            # Opacity Decay: 在密度控制开始后的每次迭代应用衰减，过滤低梯度的冗余Gaussians
             if iteration > opt.densify_from_iter and opt.enable_opacity_decay:
                 gaussians.opacity_decay(factor=opt.opacity_decay_factor)
 
-            # Optimization
-            if iteration < opt.iterations:
+            # Optimization（包括最后一次迭代）
+            if iteration <= opt.iterations:
                 gaussians.optimizer.step()
                 gaussians.optimizer.zero_grad(set_to_none=True)
 

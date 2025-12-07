@@ -178,7 +178,7 @@ class OptimizationParams(ParamGroup):
         self.kplanes_lr_final = 0.0002  # [兼容] 旧名
         self.kplanes_lr_max_steps = 30000  # [兼容] 旧名
         self.lambda_plane_tv = 0.002  # [兼容] 旧名，使用最优值
-        self.plane_tv_weight_proposal = [0.0001, 0.0001, 0.0001]  # [兼容] 旧名
+        self.plane_tv_weight_proposal = [1.0, 1.0, 1.0]  # [兼容] 均匀权重，由 lambda_plane_tv 控制总强度
         self.tv_loss_type = "l2"  # [兼容] 旧名
 
         super().__init__(parser, "Optimization Parameters")

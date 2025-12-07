@@ -114,7 +114,6 @@ r2_gaussian/
 │   │   └── cameras.py          # Camera 类定义
 │   ├── utils/
 │   │   ├── loss_utils.py       # L1/SSIM/TV 损失函数
-│   │   ├── binocular_utils.py  # 双目一致性损失
 │   │   └── ...
 │   ├── arguments/              # 命令行参数定义（ModelParams/OptimizationParams）
 │   ├── innovations/fsgs/       # FSGS 邻近密集化模块

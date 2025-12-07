@@ -41,8 +41,8 @@
 
 **示例**：
 - `2024_11_17_foot_3views_fsgs`
-- `2024_11_18_chest_6views_sss`
-- `2024_11_19_abdomen_9views_corgs`
+- `2024_11_18_chest_6views_spags`
+- `2024_11_19_abdomen_9views_baseline`
 
 ### 输出目录命名
 - 简化格式：`{organ}dd_{views}_{MMDD}`
@@ -69,10 +69,10 @@ type: 简短描述（50字符内）
 
 **示例**：
 ```
-feat: 集成 SSS (Student Splatting and Scooping) 完整实现
+feat: 集成 FSGS 邻近密集化模块
 
-- 添加 sss_helpers.py 和 sss_utils.py
-- 在 train.py 中集成 SSS 训练逻辑
+- 添加 proximity_densifier.py
+- 在 train.py 中集成 FSGS 训练逻辑
 - 更新配置参数支持
 ```
 

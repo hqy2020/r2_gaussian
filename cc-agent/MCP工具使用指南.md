@@ -132,10 +132,10 @@
 #### ❌ 错误示例（颗粒度过大）
 
 ```markdown
-Memory Name: "SSS v3修复验证成功"
+Memory Name: "FSGS v2修复验证成功"
 Memory Type: implementation
 Observations:
-  1. "根因：SSS机制的 sigmoid 调制公式错误，density_offset 未处理...（270字）...TV正则化提升10倍..."
+  1. "根因：FSGS邻近密集化阈值设置错误，proximity_threshold 过小...（270字）...导致过度密集化..."
   2. "修复方案：3行代码修改...测试结果...训练配置...（300字）"
   3. "验证流程：启动训练...参数范围正常...（200字）"
 ```
@@ -149,39 +149,39 @@ Observations:
 
 **Memory 1: 根因诊断**
 ```markdown
-Name: "SSS机制 sigmoid 调制公式错误"
+Name: "FSGS邻近密集化阈值设置错误"
 Type: issue
 Observations:
-  1. "density_offset 直接作为 sigmoid 输入，导致调制范围 [0, 1] 过窄（50%），不足以产生有效的 density-aware 效果。"（72字）
-  2. "症状：训练 2000 步后 opacity 全部归零，gaussian 完全消失。"（31字）
+  1. "proximity_threshold 默认值 10.0 过大，导致几乎所有高斯点都被判定为邻近区域，密集化过度。"（52字）
+  2. "症状：训练 5000 步后高斯点数量爆炸，VRAM 溢出。"（28字）
 ```
 
 **Memory 2: 修复决策**
 ```markdown
-Name: "禁用 Balance Loss L1 正则化"
+Name: "调整 FSGS 邻近阈值为 5.0"
 Type: decision
 Observations:
-  1. "决定暂时禁用 Balance Loss，将 opacity_reg_weight 从 0.01 改为 0.0。"（42字）
-  2. "原因：在缺少 Student's t 渲染时，L1 正则化将所有 opacity 压缩到 0。"（38字）
-  3. "后续：等 Student's t 渲染实现后再启用，或添加 opacity 下界约束。"（36字）
+  1. "决定将 proximity_threshold 从 10.0 调整为 5.0，限制密集化范围。"（42字）
+  2. "原因：阈值过大会导致过度密集化，5.0 是平衡精度和效率的经验值。"（36字）
+  3. "后续：可根据具体场景调整，稀疏视角建议 3.0-7.0 范围。"（32字）
 ```
 
 **Memory 3: 代码实现**
 ```markdown
-Name: "SSS sigmoid 调制公式修复"
+Name: "FSGS 邻近阈值参数化修复"
 Type: implementation
 Observations:
-  1. "修改位置：r2_gaussian/scene/gaussian_model.py:456。公式改为 `0.7 + 0.6 * sigmoid(density_offset)`，调制范围 [0.7, 1.3]。"（85字）
-  2. "TV 正则化强度提升 10 倍：lambda_plane_tv 从 0.0002 增加到 0.002。"（42字）
+  1. "修改位置：r2_gaussian/innovations/fsgs/proximity_densifier.py:89。默认阈值从 10.0 改为 5.0。"（65字）
+  2. "新增命令行参数 --proximity_threshold，支持运行时配置。"（38字）
 ```
 
 **Memory 4: 训练验证**
 ```markdown
-Name: "SSS v3 参数验证结果"
+Name: "FSGS 阈值调整验证结果"
 Type: implementation
 Observations:
-  1. "Encoder 学习率 0.002，Decoder 学习率 0.001（0.5 倍），防止过拟合。"（41字）
-  2. "训练启动成功，参数范围正常：density_offset ∈ [-2, 2]，modulation ∈ [0.7, 1.3]。"（48字）
+  1. "Foot 3views 测试：高斯点数量稳定在 80k-120k，VRAM 占用 8GB 内。"（41字）
+  2. "PSNR 提升 0.3dB，密集化控制在合理范围，训练稳定。"（32字）
 ```
 
 **关系连接**：

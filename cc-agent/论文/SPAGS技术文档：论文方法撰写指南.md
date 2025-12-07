@@ -316,19 +316,9 @@ $$\mathcal{L}_{\text{plane-TV}} = \sum_{p \in \{xy, xz, yz\}} w_p \cdot \text{TV
 **平面 TV 计算**：
 $$\text{TV}(P) = \frac{2}{H \cdot W} \left( \sum_{i,j} (P_{i+1,j} - P_{i,j})^2 + \sum_{i,j} (P_{i,j+1} - P_{i,j})^2 \right)$$
 
-### 5.4 双目一致性损失（扩展）
+### 5.4 总损失函数
 
-为提高稀疏视角下的几何一致性，引入基于角度偏移的双目一致性损失：
-
-**原理**：对于给定的训练视角 $\theta$，生成相邻角度 $\theta \pm \Delta\theta$ 的"虚拟视角"投影，并约束它们之间的一致性。
-
-$$\mathcal{L}_{\text{bino}} = \frac{1}{2} \left( \|I_{\theta+\Delta\theta} - \text{Warp}(I_\theta, \Delta\theta)\|_1 + \|I_{\theta-\Delta\theta} - \text{Warp}(I_\theta, -\Delta\theta)\|_1 \right)$$
-
-其中 $\text{Warp}$ 为基于深度的视图变换函数。
-
-### 5.5 总损失函数
-
-$$\mathcal{L}_{\text{total}} = \mathcal{L}_{\text{proj}} + \lambda_{\text{TV}} \cdot \mathcal{L}_{\text{TV}} + \lambda_{\text{plane-TV}} \cdot \mathcal{L}_{\text{plane-TV}} + \lambda_{\text{bino}} \cdot \mathcal{L}_{\text{bino}}$$
+$$\mathcal{L}_{\text{total}} = \mathcal{L}_{\text{proj}} + \lambda_{\text{TV}} \cdot \mathcal{L}_{\text{TV}} + \lambda_{\text{plane-TV}} \cdot \mathcal{L}_{\text{plane-TV}}$$
 
 ---
 

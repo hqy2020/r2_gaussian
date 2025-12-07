@@ -22,6 +22,12 @@ class ParamGroup:
                     group.add_argument(
                         "--" + key, ("-" + key[0:1]), default=value, action="store_true"
                     )
+                elif t == list:
+                    # list 类型需要使用 nargs 正确解析
+                    elem_type = type(value[0]) if value else float
+                    group.add_argument(
+                        "--" + key, ("-" + key[0:1]), default=value, nargs='+', type=elem_type
+                    )
                 else:
                     group.add_argument(
                         "--" + key, ("-" + key[0:1]), default=value, type=t
@@ -29,6 +35,10 @@ class ParamGroup:
             else:
                 if t == bool:
                     group.add_argument("--" + key, default=value, action="store_true")
+                elif t == list:
+                    # list 类型需要使用 nargs 正确解析
+                    elem_type = type(value[0]) if value else float
+                    group.add_argument("--" + key, default=value, nargs='+', type=elem_type)
                 else:
                     group.add_argument("--" + key, default=value, type=t)
 

@@ -43,11 +43,7 @@ r2_gaussian/
 │   ├── warp_utils.py        # 变形工具
 │   ├── depth_estimator.py   # 深度估计
 │   ├── sghmc_optimizer.py   # SGHMC 优化器
-│   ├── fsgs_proximity_optimized.py  # FSGS 邻近优化
-│   ├── sss_helpers.py       # SSS 辅助函数
-│   ├── sss_utils.py         # SSS 工具
-│   ├── corgs_metrics.py     # CoR-GS 指标
-│   └── advanced_pseudo_label.py  # 高级伪标签
+│   └── fsgs_proximity_optimized.py  # FSGS 邻近优化
 ├── dataset/                  # 数据集加载器
 ├── arguments/                # 命令行参数定义
 └── submodules/              # CUDA 子模块

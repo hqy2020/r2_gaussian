@@ -330,7 +330,6 @@ $$\mathcal{L}_{SPAGS} = \mathcal{L}_{recon} + \lambda_{dssim} \mathcal{L}_{DSSIM
 | 模块 | 代码文件 | 核心类/函数 |
 |------|----------|-------------|
 | SPS | `initialize_pcd.py:126-138` | `density_weighted` 采样分支 |
-| GAR-Stereo | `r2_gaussian/utils/binocular_utils.py` | `BinocularConsistencyLoss` |
 | GAR-Proximity | `r2_gaussian/gaussian/gaussian_model.py` | proximity-guided 密化逻辑 |
 | ADM-Encoder | `r2_gaussian/gaussian/kplanes.py:16-168` | `KPlanesEncoder` |
 | ADM-TV | `r2_gaussian/utils/regulation.py:15-71` | `compute_plane_tv()` |
