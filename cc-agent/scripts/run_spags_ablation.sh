@@ -83,12 +83,12 @@ COMMON_FLAGS="--iterations 30000 --test_iterations 10000 20000 30000"
 # 配置定义
 # ============================================================================
 
-# GAR 参数（Proximity-guided Densification）- 🆕 优化版本
-# 基于 15 场景 good/bad case 分析优化：
-#   - 自适应阈值 (percentile=95)：只密化最稀疏的 5% 点，避免过度密化
-#   - 渐进衰减 (start=0.5, final=0.3)：训练后期减少密化，给新点更多优化时间
+# GAR 参数（Proximity-guided Densification）- 🆕 优化版本 v2
+# 基于日志分析优化（iter 9000 后几乎停止密化问题）：
+#   - 自适应阈值 (percentile=85)：密化最稀疏的 15% 点（之前 5% 太保守）
+#   - 渐进衰减 (start=0.7, final=0.5)：延迟衰减开始，减少衰减幅度
 # 注意: 布尔参数使用 flag 格式（不带 true/false 值）
-GAR_FLAGS_COMPAT="--enable_fsgs_proximity --gar_adaptive_threshold --gar_adaptive_percentile 95 --gar_progressive_decay --gar_decay_start_ratio 0.5 --gar_final_strength 0.3"
+GAR_FLAGS_COMPAT="--enable_fsgs_proximity --gar_adaptive_threshold --gar_adaptive_percentile 85 --gar_progressive_decay --gar_decay_start_ratio 0.7 --gar_final_strength 0.5"
 
 # ADM 参数（K-Planes Density Modulation）
 # 注意: 布尔参数使用 flag 格式（不带 true/false 值）
