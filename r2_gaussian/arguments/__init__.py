@@ -112,6 +112,7 @@ class ModelParams(ParamGroup):
         self.adm_decoder_hidden = 128  # [ADM] MLP Decoder 隐藏层维度
         self.adm_decoder_layers = 3  # [ADM] MLP Decoder 层数
         self.adm_max_range = 0.3  # [ADM] 最大调制范围 (±30%)
+        self.adm_view_adaptive = True  # [ADM] 🆕 视角自适应：自动根据训练视角数调整调制强度和TV正则化
         # 向下兼容旧参数名
         self.enable_kplanes = False  # [兼容] 旧名，映射到 enable_adm
         self.kplanes_resolution = 64  # [兼容] 旧名

@@ -75,6 +75,11 @@ def training(
     initialize_gaussian(gaussians, dataset, None)
     scene.gaussians = gaussians
     gaussians.training_setup(opt)
+
+    # 🆕 设置训练视角数（用于视角自适应的 ADM 调制）
+    num_train_views = len(scene.getTrainCameras())
+    gaussians.set_num_train_views(num_train_views)
+
     if checkpoint is not None:
         (model_params, first_iter) = torch.load(checkpoint)
         gaussians.restore(model_params, opt)
@@ -221,6 +226,7 @@ def training(
             loss["total"] = loss["total"] + opt.lambda_tv * loss_tv
 
         # K-Planes TV 正则化损失（X²-Gaussian）
+        # 🆕 视角自适应：视角越多，TV 正则化越强（避免过拟合）
         if opt.lambda_plane_tv > 0 and gaussians.enable_kplanes and gaussians.kplanes_encoder is not None:
             planes = gaussians.kplanes_encoder.get_plane_params()
             tv_loss_planes = compute_plane_tv_loss(
@@ -229,7 +235,16 @@ def training(
                 loss_type=opt.tv_loss_type,
             )
             loss["plane_tv"] = tv_loss_planes
-            loss["total"] = loss["total"] + opt.lambda_plane_tv * tv_loss_planes
+
+            # 🆕 视角自适应 TV 正则化权重
+            # view_scale 是 ADM 的缩放因子（视角越多越小）
+            # TV 权重应该是反向的：视角越多，TV 权重越大
+            # tv_scale = 1 / view_scale = sqrt(num_views / 3)
+            view_scale = gaussians.get_view_adaptive_scale()
+            tv_scale = 1.0 / view_scale if view_scale > 0 else 1.0
+            effective_lambda_tv = opt.lambda_plane_tv * tv_scale
+
+            loss["total"] = loss["total"] + effective_lambda_tv * tv_loss_planes
 
             # 🎯 在前几个迭代输出诊断信息
             if iteration <= 3:
@@ -238,7 +253,9 @@ def training(
                 print(f"  - K-Planes 特征形状: {kplanes_feat.shape}")
                 print(f"  - 特征范围: [{kplanes_feat.min().item():.4f}, {kplanes_feat.max().item():.4f}]")
                 print(f"  - TV loss (plane): {tv_loss_planes.item():.6f}")
-                print(f"  - TV loss (weighted): {(opt.lambda_plane_tv * tv_loss_planes).item():.6f}")
+                print(f"  - 🆕 视角自适应: view_scale={view_scale:.3f}, tv_scale={tv_scale:.3f}")
+                print(f"  - 🆕 有效 lambda_tv: {effective_lambda_tv:.6f} (base={opt.lambda_plane_tv:.6f})")
+                print(f"  - TV loss (weighted): {(effective_lambda_tv * tv_loss_planes).item():.6f}")
 
         loss["total"].backward()
 

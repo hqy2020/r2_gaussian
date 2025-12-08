@@ -111,6 +111,12 @@ class GaussianModel:
         if self.enable_kplanes:
             self.adm_max_range = getattr(args, 'adm_max_range', 0.3) if args else 0.3
 
+        # 🆕 视角数感知的自适应约束
+        # 训练视角数，用于自动缩放 ADM 调制强度
+        # 默认 3（稀疏视角），由 train.py 设置实际值
+        self.num_train_views = 3
+        self.adm_view_adaptive = getattr(args, 'adm_view_adaptive', True) if args else True
+
     def capture(self):
         # K-Planes 状态（如果启用）
         kplanes_state = None
@@ -185,6 +191,45 @@ class GaussianModel:
                 self.density_decoder.load_state_dict(decoder_state)
                 print("✓ K-Planes decoder 状态已恢复")
 
+    def set_num_train_views(self, num_views: int):
+        """
+        设置训练视角数，用于视角自适应的 ADM 调制
+
+        参数:
+            num_views: 训练视角数量（如 3, 6, 9）
+        """
+        self.num_train_views = num_views
+        print(f"✓ 设置训练视角数: {num_views}")
+        if self.adm_view_adaptive and self.enable_kplanes:
+            scale = self.get_view_adaptive_scale()
+            print(f"  - ADM max_range 缩放因子: {scale:.3f}")
+            print(f"  - 有效 max_range: {self.adm_max_range * scale:.4f}")
+
+    def get_view_adaptive_scale(self) -> float:
+        """
+        获取视角自适应的缩放因子
+
+        原理：
+        - 视角越少（信息不足），需要更强的 ADM 调制（先验）
+        - 视角越多（信息充足），需要更弱的 ADM 调制（避免干扰）
+
+        公式: scale = 1 / sqrt(num_views / 3)
+        - 3-views: scale = 1.0 (保持强调制)
+        - 6-views: scale ≈ 0.71 (中等)
+        - 9-views: scale ≈ 0.58 (弱调制)
+
+        返回:
+            float: 缩放因子 [0.58, 1.0]
+        """
+        if not self.adm_view_adaptive:
+            return 1.0
+
+        import math
+        # 以 3 视角为基准，视角越多缩放越小
+        scale = 1.0 / math.sqrt(self.num_train_views / 3.0)
+        # 限制最小值，避免过度衰减
+        return max(scale, 0.3)
+
     @property
     def get_scaling(self):
         return self.scaling_activation(self._scaling)
@@ -201,7 +246,7 @@ class GaussianModel:
     def get_density(self):
         base_density = self.density_activation(self._density)
 
-        # 🎯 ADM 自适应密度调制（双头输出 + 训练调度）
+        # 🎯 ADM 自适应密度调制（双头输出 + 训练调度 + 视角自适应）
         if self.enable_kplanes and self.kplanes_encoder is not None and self.density_decoder is not None:
             kplanes_feat = self.get_kplanes_features()  # [N, 96]
 
@@ -212,12 +257,16 @@ class GaussianModel:
             max_range = getattr(self, 'adm_max_range', 0.3)
             strength = self._get_adm_strength()
 
-            # 自适应调制公式: modulation = 1 + offset * confidence * max_range * strength
+            # 🆕 视角自适应缩放: 视角越多，调制越弱
+            view_scale = self.get_view_adaptive_scale()
+
+            # 自适应调制公式: modulation = 1 + offset * confidence * max_range * strength * view_scale
             # - offset: 调制方向（增强或减弱密度）
             # - confidence: 网络学习的调制置信度（简单区域趋近0，困难区域趋近1）
             # - max_range: 最大调制范围（默认±30%）
             # - strength: 训练进程调度（warmup -> hold -> decay）
-            effective_offset = offset * confidence * max_range * strength
+            # - view_scale: 视角自适应缩放（3v=1.0, 6v≈0.71, 9v≈0.58）
+            effective_offset = offset * confidence * max_range * strength * view_scale
             modulation = 1.0 + effective_offset
 
             base_density = base_density * modulation
