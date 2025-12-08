@@ -41,8 +41,8 @@ class ProximityGuidedDensifier:
 
     def __init__(
         self,
-        k_neighbors: int = 3,
-        proximity_threshold: float = 10.0,
+        k_neighbors: int = 5,
+        proximity_threshold: float = 0.05,
         chunk_size: int = 5000,
         enable: bool = True,
         # 🆕 GAR 优化参数
@@ -59,12 +59,12 @@ class ProximityGuidedDensifier:
         Args:
             k_neighbors: Number of nearest neighbors for proximity calculation
                 - FSGS paper default: 3
-                - R²-Gaussian CT optimal: 6 (more stable for noisy CT data)
+                - R²-Gaussian CT optimal: 5 (more stable for noisy CT data)
                 - Sensitivity: Higher K → smoother scores, more computation
 
             proximity_threshold: Proximity score threshold for densification trigger
-                - FSGS paper default: 10.0 (for scenes normalized to [-1, 1]³)
-                - R²-Gaussian CT optimal: 8.0 (more conservative)
+                - 场景归一化到 [-1, 1]³ 后，典型邻近分数范围: 0.01 ~ 0.5
+                - R²-Gaussian CT optimal: 0.05 (密化邻近分数 > 0.05 的稀疏区域)
                 - Physical meaning: Average distance to K nearest neighbors
 
             chunk_size: Chunk size for batched K-NN computation (memory optimization)
@@ -305,8 +305,11 @@ class ProximityGuidedDensifier:
         else:
             raise ValueError(f"Unknown adaptive method: {method}")
 
-        # 下限保护：不低于固定阈值的 50%
-        threshold = threshold.clamp(min=self.proximity_threshold * 0.5)
+        # 下限保护：使用分数分布的 P50（中位数）作为绝对下限
+        # 这确保了至少有一半的点不会被密化，避免过度密化
+        # 注意：旧版本使用 proximity_threshold * 0.5，但在归一化场景中阈值尺度不匹配
+        p50 = torch.quantile(proximity_scores, 0.5)
+        threshold = threshold.clamp(min=p50)
 
         # 更新统计
         self.stats['adaptive_threshold_value'] = threshold.item()

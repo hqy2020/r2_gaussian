@@ -80,11 +80,11 @@ class ModelParams(ParamGroup):
         # ════════════════════════════════════════════════════════════════════
         self.enable_gar = False  # [GAR] 主开关：启用几何感知细化（邻近密化）
         self.enable_gar_proximity = False  # [兼容] 旧名，映射到 enable_gar
-        self.gar_proximity_threshold = 5.0  # [GAR] proximity score 阈值
+        self.gar_proximity_threshold = 0.05  # [GAR] proximity score 阈值（场景归一化到[-1,1]³，典型分数范围0.01-0.5）
         self.gar_proximity_k = 5  # [GAR] 邻居数量
         # 向下兼容旧参数名
         self.enable_fsgs_proximity = False  # [兼容] 旧名，映射到 enable_gar_proximity
-        self.proximity_threshold = 5.0  # [兼容] 旧名
+        self.proximity_threshold = 0.05  # [兼容] 旧名（注意：场景归一化后邻近分数范围约0.01-0.5）
         self.proximity_k_neighbors = 5  # [兼容] 旧名
         # 邻近密化时间参数
         self.proximity_start_iter = 1000  # [GAR] 邻近密化开始迭代
