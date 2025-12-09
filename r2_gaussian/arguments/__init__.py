@@ -100,6 +100,7 @@ class ModelParams(ParamGroup):
         self.gar_final_strength = 0.3  # [GAR] 最终强度（0.3=阈值提高~3.3倍）
         self.gar_gradient_filter = False  # [GAR] 启用梯度过滤（只密化高梯度点）
         self.gar_gradient_threshold = 0.0002  # [GAR] 梯度过滤阈值
+        self.gar_max_candidates = 5000  # [GAR] 每次密化最大候选点数（避免 OOM）
 
         # ════════════════════════════════════════════════════════════════════
         # [ADM] Adaptive Density Modulation - K-Planes 空间调制参数
@@ -119,27 +120,6 @@ class ModelParams(ParamGroup):
         self.kplanes_dim = 32  # [兼容] 旧名
         self.kplanes_decoder_hidden = 128  # [兼容] 旧名
         self.kplanes_decoder_layers = 3  # [兼容] 旧名
-
-        # ════════════════════════════════════════════════════════════════════
-        # [SAGP] Structure-Aware Gaussian Pruning - 结构感知高斯剪枝
-        # 来源: SeCuRe 论文 (Sparse-view 3D Curve Reconstruction)
-        # 策略: 空间一致性剪枝 + 可见性一致性剪枝
-        # ════════════════════════════════════════════════════════════════════
-        self.enable_sagp = False  # [SAGP] 主开关：启用结构感知剪枝
-        # 空间一致性参数 (DBSCAN + KNN)
-        self.sagp_spatial_k = 10  # [SAGP] KNN 邻居数
-        self.sagp_spatial_scale = 2.0  # [SAGP] 邻域半径缩放因子 γ
-        self.sagp_min_cluster_size = 5  # [SAGP] DBSCAN 最小聚类大小
-        # 可见性一致性参数 (多视角投影)
-        self.sagp_visibility_threshold = 0.3  # [SAGP] 可见性阈值 η
-        self.sagp_min_views = 2  # [SAGP] 最少可见视角
-        # 执行时间参数
-        self.sagp_start_iter = 5000  # [SAGP] 开始迭代
-        self.sagp_interval = 2000  # [SAGP] 执行间隔
-        self.sagp_until_iter = 25000  # [SAGP] 结束迭代
-        # 策略开关
-        self.sagp_use_spatial = True  # [SAGP] 启用空间一致性剪枝
-        self.sagp_use_visibility = True  # [SAGP] 启用可见性一致性剪枝
 
         super().__init__(parser, "Loading Parameters", sentinel)
 
@@ -217,18 +197,6 @@ class OptimizationParams(ParamGroup):
         self.lambda_plane_tv = 0.002  # [兼容] 旧名，使用最优值
         self.plane_tv_weight_proposal = [1.0, 1.0, 1.0]  # [兼容] 均匀权重，由 lambda_plane_tv 控制总强度
         self.tv_loss_type = "l2"  # [兼容] 旧名
-
-        # ════════════════════════════════════════════════════════════════════
-        # [SPARSITY] Sparsity Loss - 稀疏损失（来自 SeCuRe 论文）
-        # 惩罚低密度区域和边界外区域的高斯
-        # ════════════════════════════════════════════════════════════════════
-        self.lambda_sparsity = 0.0  # [SPARSITY] 稀疏损失权重（0 = 禁用）
-        self.sparsity_type = "ct"  # [SPARSITY] 类型: "ct"（推荐）或 "density_weighted"
-        self.sparsity_air_threshold = 0.01  # [SPARSITY] 空气密度阈值
-        self.sparsity_delta = 0.5  # [SPARSITY] Cauchy loss 缩放因子
-        self.sparsity_boundary_weight = 2.0  # [SPARSITY] 边界外惩罚权重
-        self.sparsity_target = 0.8  # [SPARSITY] 目标稀疏度（density_weighted 备选）
-        self.sparsity_start_iter = 1000  # [SPARSITY] 开始迭代
 
         super().__init__(parser, "Optimization Parameters")
 

@@ -10,6 +10,13 @@ import torch.nn.functional as F
 from typing import Dict, Tuple, Optional, List
 import warnings
 
+# 尝试导入 FAISS（可选依赖）
+try:
+    import faiss
+    FAISS_AVAILABLE = True
+except ImportError:
+    FAISS_AVAILABLE = False
+
 
 
 class ProximityGuidedDensifier:
@@ -52,6 +59,8 @@ class ProximityGuidedDensifier:
         progressive_decay: bool = False,
         decay_start_ratio: float = 0.5,
         final_strength: float = 0.3,
+        # 🆕 K-NN 加速选项
+        use_faiss: bool = True,  # 是否使用 FAISS 加速 K-NN
     ):
         """
         Initialize FSGS Proximity Densifier
@@ -81,6 +90,7 @@ class ProximityGuidedDensifier:
             progressive_decay: 启用渐进衰减（训练后期减少密化强度）
             decay_start_ratio: 衰减开始的进度比例（默认 0.5，即 50% 进度后开始衰减）
             final_strength: 最终密化强度（默认 0.3，即阈值提高到 1/0.3 ≈ 3.3 倍）
+            use_faiss: 是否使用 FAISS 加速 K-NN（需要安装 faiss-gpu 或 faiss-cpu）
         """
         self.k_neighbors = k_neighbors
         self.proximity_threshold = proximity_threshold
@@ -95,6 +105,14 @@ class ProximityGuidedDensifier:
         self.decay_start_ratio = decay_start_ratio
         self.final_strength = final_strength
 
+        # 🆕 K-NN 加速选项
+        self.use_faiss = use_faiss and FAISS_AVAILABLE
+        if use_faiss and not FAISS_AVAILABLE:
+            warnings.warn(
+                "FAISS not available. Install with: pip install faiss-gpu (or faiss-cpu). "
+                "Falling back to PyTorch chunked K-NN."
+            )
+
         # Statistics tracking (for TensorBoard logging)
         self.stats = {
             'num_densify_calls': 0,
@@ -102,6 +120,7 @@ class ProximityGuidedDensifier:
             'avg_proximity_score': 0.0,
             'adaptive_threshold_value': 0.0,  # 🆕
             'decay_multiplier': 1.0,  # 🆕
+            'knn_method': 'faiss' if self.use_faiss else 'pytorch',  # 🆕
         }
 
     def compute_proximity_scores(
@@ -153,10 +172,15 @@ class ProximityGuidedDensifier:
                 f"Cannot compute {K}-nearest neighbors."
             )
 
-        # 使用 PyTorch chunked 实现（稳定可靠）
-        neighbor_distances, neighbor_indices = self._compute_knn_chunked(
-            positions, K
-        )
+        # 选择 K-NN 实现：FAISS（快速）或 PyTorch chunked（稳定）
+        if self.use_faiss:
+            neighbor_distances, neighbor_indices = self._compute_knn_faiss(
+                positions, K
+            )
+        else:
+            neighbor_distances, neighbor_indices = self._compute_knn_chunked(
+                positions, K
+            )
 
         # Compute proximity score: average distance to K nearest neighbors
         proximity_scores = neighbor_distances.mean(dim=1)  # (N,)
@@ -167,6 +191,78 @@ class ProximityGuidedDensifier:
         if return_neighbors:
             return proximity_scores, neighbor_indices, neighbor_distances
         return proximity_scores
+
+    def _compute_knn_faiss(
+        self,
+        positions: torch.Tensor,  # (N, 3)
+        K: int
+    ) -> Tuple[torch.Tensor, torch.Tensor]:  # (N, K), (N, K)
+        """
+        使用 FAISS 计算 K-近邻（高效实现，O(N log N)）
+
+        FAISS 是 Facebook AI Research 开发的高效相似度搜索库，
+        相比 torch.cdist 的 O(N²) 复杂度，FAISS 使用索引结构可以
+        达到 O(N log N) 或更好的复杂度。
+
+        Args:
+            positions: (N, 3) Gaussian 位置
+            K: 近邻数量
+
+        Returns:
+            neighbor_distances: (N, K) 到 K 个近邻的距离
+            neighbor_indices: (N, K) K 个近邻的索引
+        """
+        N = positions.shape[0]
+        device = positions.device
+
+        # 转换为 numpy（FAISS 需要）
+        positions_np = positions.detach().cpu().numpy().astype('float32')
+
+        # 创建 FAISS 索引
+        # 对于小规模数据使用精确搜索，大规模数据使用近似搜索
+        d = 3  # 维度
+        if N < 50000:
+            # 精确搜索（小规模）
+            index = faiss.IndexFlatL2(d)
+        else:
+            # 使用 IVF 近似搜索（大规模，更快）
+            nlist = min(100, N // 100)  # 聚类数
+            quantizer = faiss.IndexFlatL2(d)
+            index = faiss.IndexIVFFlat(quantizer, d, nlist)
+            index.train(positions_np)
+            index.nprobe = min(10, nlist)  # 搜索时检查的聚类数
+
+        # 添加数据到索引
+        index.add(positions_np)
+
+        # K+1 因为会包含自己
+        distances_sq, indices = index.search(positions_np, K + 1)
+
+        # 移除自己（第一个结果通常是自己）
+        # 但有时候不是，所以需要检查
+        neighbor_distances = []
+        neighbor_indices = []
+        for i in range(N):
+            mask = indices[i] != i
+            valid_indices = indices[i][mask][:K]
+            valid_distances = distances_sq[i][mask][:K]
+
+            # 如果不够 K 个，补充（理论上不会发生）
+            if len(valid_indices) < K:
+                valid_indices = indices[i, 1:K+1]
+                valid_distances = distances_sq[i, 1:K+1]
+
+            neighbor_indices.append(valid_indices)
+            neighbor_distances.append(valid_distances)
+
+        # 转换回 torch tensor
+        neighbor_indices = torch.tensor(neighbor_indices, device=device, dtype=torch.long)
+        neighbor_distances = torch.tensor(neighbor_distances, device=device, dtype=torch.float32)
+
+        # FAISS 返回的是 L2 距离的平方，需要开根号
+        neighbor_distances = torch.sqrt(neighbor_distances)
+
+        return neighbor_distances, neighbor_indices
 
     def _compute_knn_chunked(
         self,
@@ -596,4 +692,62 @@ class ProximityGuidedDensifier:
             'num_densify_calls': 0,
             'total_new_gaussians': 0,
             'avg_proximity_score': 0.0,
+        }
+
+    def get_diagnostics(
+        self,
+        proximity_scores: torch.Tensor,
+        iteration: int,
+        start_iter: int,
+        until_iter: int,
+    ) -> Dict[str, float]:
+        """
+        获取 GAR 诊断信息，用于训练日志输出
+
+        Args:
+            proximity_scores: (N,) 邻近分数张量
+            iteration: 当前迭代次数
+            start_iter: GAR 开始迭代
+            until_iter: GAR 结束迭代
+
+        Returns:
+            diagnostics: 诊断信息字典
+                {
+                    'score_mean': float,  # 邻近分数均值
+                    'score_std': float,   # 邻近分数标准差
+                    'score_min': float,   # 邻近分数最小值
+                    'score_max': float,   # 邻近分数最大值
+                    'threshold': float,   # 当前阈值（自适应或固定）
+                    'decay_mult': float,  # 衰减系数
+                }
+        """
+        # 邻近分数统计
+        score_mean = proximity_scores.mean().item()
+        score_std = proximity_scores.std().item()
+        score_min = proximity_scores.min().item()
+        score_max = proximity_scores.max().item()
+
+        # 计算当前阈值
+        if self.adaptive_threshold:
+            threshold = self.compute_adaptive_threshold_value(proximity_scores).item()
+        else:
+            threshold = self.proximity_threshold
+
+        # 计算衰减系数
+        if self.progressive_decay:
+            decay_mult = self.get_decay_multiplier(iteration, start_iter, until_iter)
+        else:
+            decay_mult = 1.0
+
+        # 应用衰减后的有效阈值
+        effective_threshold = threshold * decay_mult
+
+        return {
+            'score_mean': score_mean,
+            'score_std': score_std,
+            'score_min': score_min,
+            'score_max': score_max,
+            'threshold': effective_threshold,
+            'base_threshold': threshold,
+            'decay_mult': decay_mult,
         }

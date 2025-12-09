@@ -34,7 +34,9 @@ class ParamGroup:
                     )
             else:
                 if t == bool:
+                    # 支持 --xxx (设为True) 和 --no_xxx (设为False)
                     group.add_argument("--" + key, default=value, action="store_true")
+                    group.add_argument("--no_" + key, dest=key, action="store_false")
                 elif t == list:
                     # list 类型需要使用 nargs 正确解析
                     elem_type = type(value[0]) if value else float

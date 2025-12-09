@@ -225,10 +225,12 @@ class DensityMLPDecoder(nn.Module):
         nn.init.xavier_uniform_(self.offset_head[0].weight)
         nn.init.zeros_(self.offset_head[0].bias)
 
-        # confidence_head 初始化为低值（避免初期过度调制）
-        # sigmoid(-1) ≈ 0.27，让网络从保守状态开始学习
+        # confidence_head 初始化（修复：提高初始值以加速收敛）
+        # 旧值 sigmoid(-1) ≈ 0.27 过于保守，需要较长 warmup 才能生效
+        # 新值 sigmoid(0) = 0.5，让网络从中性状态开始学习
+        # ADM 已有 warmup 机制保护，不需要 confidence 额外保守
         nn.init.normal_(self.confidence_head[0].weight, std=0.01)
-        nn.init.constant_(self.confidence_head[0].bias, -1.0)
+        nn.init.constant_(self.confidence_head[0].bias, 0.0)  # sigmoid(0) = 0.5
 
     def forward(self, kplanes_feat: torch.Tensor):
         """

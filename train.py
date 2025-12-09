@@ -26,12 +26,11 @@ from r2_gaussian.utils.general_utils import safe_state
 from r2_gaussian.utils.cfg_utils import load_config
 from r2_gaussian.utils.log_utils import prepare_output_and_logger
 from r2_gaussian.dataset import Scene
-from r2_gaussian.utils.loss_utils import l1_loss, ssim, tv_3d_loss, sparsity_loss_ct, sparsity_loss_density_weighted
+from r2_gaussian.utils.loss_utils import l1_loss, ssim, tv_3d_loss
 from r2_gaussian.utils.regulation import compute_plane_tv_loss
 from r2_gaussian.utils.image_utils import metric_vol, metric_proj
 from r2_gaussian.utils.plot_utils import show_two_slice
 from r2_gaussian.innovations.fsgs import ProximityGuidedDensifier
-from r2_gaussian.innovations.sagp import SAGPPruner
 import copy
 
 
@@ -110,6 +109,7 @@ def training(
     gar_final_strength = getattr(dataset, 'gar_final_strength', 0.3)
     gar_gradient_filter = getattr(dataset, 'gar_gradient_filter', False)
     gar_gradient_threshold = getattr(dataset, 'gar_gradient_threshold', 0.0002)
+    gar_max_candidates = getattr(dataset, 'gar_max_candidates', 5000)  # 每次密化最大候选点数
 
     if use_proximity:
         print("Use FSGS proximity-guided densification (GAR)")
@@ -139,41 +139,6 @@ def training(
             print(f"  - 🆕 progressive_decay: start={gar_decay_start_ratio}, final={gar_final_strength}")
         if gar_gradient_filter:
             print(f"  - 🆕 gradient_filter: threshold={gar_gradient_threshold}")
-
-    # ════════════════════════════════════════════════════════════════════
-    # [SAGP] Structure-Aware Gaussian Pruning 初始化
-    # ════════════════════════════════════════════════════════════════════
-    use_sagp = getattr(dataset, 'enable_sagp', False)
-    sagp_pruner = None
-
-    if use_sagp:
-        print("=" * 70)
-        print("✓ SAGP (Structure-Aware Gaussian Pruning) 已启用")
-        sagp_pruner = SAGPPruner(
-            spatial_k=getattr(dataset, 'sagp_spatial_k', 10),
-            spatial_scale=getattr(dataset, 'sagp_spatial_scale', 2.0),
-            min_cluster_size=getattr(dataset, 'sagp_min_cluster_size', 5),
-            visibility_threshold=getattr(dataset, 'sagp_visibility_threshold', 0.3),
-            min_views_visible=getattr(dataset, 'sagp_min_views', 2),
-        )
-        sagp_start_iter = getattr(dataset, 'sagp_start_iter', 5000)
-        sagp_interval = getattr(dataset, 'sagp_interval', 2000)
-        sagp_until_iter = getattr(dataset, 'sagp_until_iter', 25000)
-        sagp_use_spatial = getattr(dataset, 'sagp_use_spatial', True)
-        sagp_use_visibility = getattr(dataset, 'sagp_use_visibility', True)
-        print(f"  - 空间一致性: {'启用' if sagp_use_spatial else '禁用'}")
-        print(f"    - spatial_k: {sagp_pruner.spatial_k}")
-        print(f"    - spatial_scale: {sagp_pruner.spatial_scale}")
-        print(f"  - 可见性一致性: {'启用' if sagp_use_visibility else '禁用'}")
-        print(f"    - visibility_threshold: {sagp_pruner.visibility_threshold}")
-        print(f"  - 执行时间: iter {sagp_start_iter} ~ {sagp_until_iter}, interval={sagp_interval}")
-        print("=" * 70)
-    else:
-        sagp_start_iter = 0
-        sagp_interval = 0
-        sagp_until_iter = 0
-        sagp_use_spatial = False
-        sagp_use_visibility = False
 
     # 🎯 K-Planes 诊断信息
     if gaussians.enable_kplanes and gaussians.kplanes_encoder is not None:
@@ -213,6 +178,10 @@ def training(
     first_iter += 1
     for iteration in range(first_iter, opt.iterations + 1):
         iter_start.record()
+
+        # 初始化 GAR 诊断变量（用于 TensorBoard）
+        gar_diag = None
+        num_new = 0
 
         # 传递当前迭代次数给 ADM 调度
         gaussians.current_iteration = iteration
@@ -292,36 +261,6 @@ def training(
                 print(f"  - 🆕 视角自适应: view_scale={view_scale:.3f}, tv_scale={tv_scale:.3f}")
                 print(f"  - 🆕 有效 lambda_tv: {effective_lambda_tv:.6f} (base={opt.lambda_plane_tv:.6f})")
                 print(f"  - TV loss (weighted): {(effective_lambda_tv * tv_loss_planes).item():.6f}")
-
-        # ════════════════════════════════════════════════════════════════════
-        # [SPARSITY] Sparsity Loss - 稀疏损失（来自 SeCuRe 论文）
-        # 惩罚低密度区域和边界外区域的高斯
-        # ════════════════════════════════════════════════════════════════════
-        if opt.lambda_sparsity > 0 and iteration >= opt.sparsity_start_iter:
-            if opt.sparsity_type == "ct":
-                loss_sparsity = sparsity_loss_ct(
-                    densities=gaussians.get_density,
-                    positions=gaussians.get_xyz,
-                    bbox=bbox,
-                    air_threshold=opt.sparsity_air_threshold,
-                    delta=opt.sparsity_delta,
-                    boundary_weight=opt.sparsity_boundary_weight,
-                )
-            else:  # density_weighted（备选）
-                loss_sparsity = sparsity_loss_density_weighted(
-                    densities=gaussians.get_density,
-                    target_sparsity=opt.sparsity_target,
-                )
-
-            loss["sparsity"] = loss_sparsity
-            loss["total"] = loss["total"] + opt.lambda_sparsity * loss_sparsity
-
-            # 诊断输出（前几个迭代）
-            if iteration == opt.sparsity_start_iter or iteration <= 3:
-                print(f"[Iter {iteration}] Sparsity Loss 诊断:")
-                print(f"  - 类型: {opt.sparsity_type}")
-                print(f"  - 损失值: {loss_sparsity.item():.6f}")
-                print(f"  - 加权损失: {(opt.lambda_sparsity * loss_sparsity).item():.6f}")
 
         loss["total"].backward()
 
@@ -409,16 +348,23 @@ def training(
 
                     num_candidates = densify_mask.sum().item()
 
+                    # 获取 GAR 诊断信息（每次迭代都更新，用于 TensorBoard）
+                    gar_diag = proximity_densifier.get_diagnostics(
+                        proximity_scores, iteration, proximity_start_iter, proximity_until_iter
+                    )
+
                     if num_candidates > 0:
-                        # 限制每次最多密化的点数，避免内存爆炸
-                        if num_candidates > 5000:
+                        # 限制每次最多密化的点数，避免内存爆炸（使用参数化的上限）
+                        if num_candidates > gar_max_candidates:
                             # 随机选择一部分
                             candidate_indices = torch.where(densify_mask)[0]
-                            perm = torch.randperm(len(candidate_indices), device=candidate_indices.device)[:5000]
+                            perm = torch.randperm(len(candidate_indices), device=candidate_indices.device)[:gar_max_candidates]
                             selected_indices = candidate_indices[perm]
-                            densify_mask.fill_(False)  # 原地操作，减少内存分配
-                            densify_mask[selected_indices] = True
-                            num_candidates = 5000
+                            # 修复：使用新张量而非原地修改，避免潜在问题
+                            new_mask = torch.zeros_like(densify_mask)
+                            new_mask[selected_indices] = True
+                            densify_mask = new_mask
+                            num_candidates = gar_max_candidates
 
                         # 5. 获取需要密化的点及其邻居
                         source_positions = positions[densify_mask]
@@ -454,39 +400,21 @@ def training(
                                 new_max_radii2D=new_max_radii,
                             )
 
+                            # GAR 诊断日志（每1000次迭代）
                             if iteration % 1000 == 0:
-                                tqdm.write(f"[ITER {iteration}] Proximity densification: +{num_new} Gaussians "
-                                          f"(candidates: {num_candidates}, total: {gaussians.get_xyz.shape[0]})")
+                                gar_diag = proximity_densifier.get_diagnostics(
+                                    proximity_scores, iteration, proximity_start_iter, proximity_until_iter
+                                )
+                                tqdm.write(f"\n[ITER {iteration}] === GAR 诊断 ===")
+                                tqdm.write(f"  邻近分数: mean={gar_diag['score_mean']:.4f}, std={gar_diag['score_std']:.4f}, "
+                                          f"range=[{gar_diag['score_min']:.4f}, {gar_diag['score_max']:.4f}]")
+                                tqdm.write(f"  阈值: {gar_diag['threshold']:.4f} (衰减系数: {gar_diag['decay_mult']:.3f})")
+                                tqdm.write(f"  密化: +{num_new} (候选: {num_candidates}, 总数: {gaussians.get_xyz.shape[0]})")
 
             if gaussians.get_density.shape[0] == 0:
                 raise ValueError(
                     "No Gaussian left. Change adaptive control hyperparameters!"
                 )
-
-            # ════════════════════════════════════════════════════════════════════
-            # [SAGP] Structure-Aware Gaussian Pruning - 结构感知剪枝
-            # ════════════════════════════════════════════════════════════════════
-            if (use_sagp and sagp_pruner is not None and
-                iteration >= sagp_start_iter and
-                iteration <= sagp_until_iter and
-                iteration % sagp_interval == 0):
-
-                with torch.no_grad():
-                    prune_mask, stats = sagp_pruner.get_prune_mask(
-                        gaussians=gaussians,
-                        cameras=scene.getTrainCameras(),
-                        pipe=pipe,
-                        use_spatial=sagp_use_spatial,
-                        use_visibility=sagp_use_visibility,
-                    )
-
-                    if prune_mask.sum() > 0:
-                        gaussians.prune_points(prune_mask)
-                        tqdm.write(
-                            f"[ITER {iteration}] SAGP pruning: -{stats['total_pruned']} Gaussians "
-                            f"(spatial: {stats['spatial_outliers']}, visibility: {stats['visibility_outliers']}, "
-                            f"remaining: {gaussians.get_xyz.shape[0]})"
-                        )
 
             # Opacity Decay: 在密度控制开始后的每次迭代应用衰减，过滤低梯度的冗余Gaussians
             if iteration > opt.densify_from_iter and opt.enable_opacity_decay:
@@ -534,6 +462,23 @@ def training(
                 metrics["loss_" + l] = loss[l].item()
             for param_group in gaussians.optimizer.param_groups:
                 metrics[f"lr_{param_group['name']}"] = param_group["lr"]
+
+            # ADM TensorBoard 指标
+            if gaussians.enable_kplanes and gaussians.kplanes_encoder is not None:
+                adm_diag = gaussians.get_adm_diagnostics()
+                if adm_diag:
+                    metrics["adm/strength"] = adm_diag.get('adm_strength', 0.0)
+                    metrics["adm/modulation_std"] = adm_diag.get('modulation', {}).get('std', 0.0)
+                    metrics["adm/density_change_pct"] = adm_diag.get('density_change_pct', {}).get('mean', 0.0)
+
+            # GAR TensorBoard 指标
+            if use_proximity and gar_diag is not None:
+                metrics["gar/proximity_score_mean"] = gar_diag.get('score_mean', 0.0)
+                metrics["gar/threshold"] = gar_diag.get('threshold', 0.0)
+                metrics["gar/decay_mult"] = gar_diag.get('decay_mult', 1.0)
+                metrics["gar/new_gaussians"] = num_new
+                metrics["gar/total_gaussians"] = gaussians.get_xyz.shape[0]
+
             training_report(
                 tb_writer,
                 iteration,

@@ -1,7 +1,8 @@
 # CLAUDE.md
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-
+IMPORTANT
+启动训练必须调用run_spags_ablation.sh 脚本！！！不能额外写别的脚本来运行！！！
 IMPOERTANT
 neo4j 的mcp一定是在neo4j数据库里面的
 比较的都是2d情况下的psnr和ssim
@@ -85,9 +86,7 @@ IMPORTANT
 ./cc-agent/scripts/run_spags_ablation.sh baseline chest 6 1
 ./cc-agent/scripts/run_spags_ablation.sh sps_gar pancreas 9 0
 
-# 直接使用 train.py（不推荐，仅用于调试）
-python train.py -s data/369/foot_50_3views.pickle -m output/experiment_name
-```
+
 
 ### 初始化点云
 ```bash

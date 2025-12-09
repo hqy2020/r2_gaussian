@@ -105,9 +105,12 @@ def init_pcd(
         )
         vol = recon_volume(projs, angles, copy.deepcopy(geo), recon_method)
 
-        # [SPS] 降噪预处理（支持新旧参数名）
-        enable_denoise = getattr(args, 'sps_denoise', False) or getattr(args, 'enable_denoise', False)
-        denoise_sigma = getattr(args, 'sps_denoise_sigma', 3.0) or getattr(args, 'denoise_sigma', 3.0)
+        # [SPS] 降噪预处理（支持新旧参数名，修复 or 逻辑错误）
+        # 修复：使用 None 检查而非 or，避免值为 0/False 时错误回退
+        _sps_denoise = getattr(args, 'sps_denoise', None)
+        enable_denoise = _sps_denoise if _sps_denoise is not None else getattr(args, 'enable_denoise', False)
+        _sps_sigma = getattr(args, 'sps_denoise_sigma', None)
+        denoise_sigma = _sps_sigma if _sps_sigma is not None else getattr(args, 'denoise_sigma', 3.0)
         if enable_denoise:
             print(f"[SPS] Applying Gaussian filter for denoising (sigma={denoise_sigma})...")
             vol = gaussian_filter(vol, sigma=denoise_sigma)
@@ -118,6 +121,14 @@ def init_pcd(
         offOrigin = np.array(scanner_cfg["offOrigin"])
         dVoxel = np.array(scanner_cfg["dVoxel"])
         sVoxel = np.array(scanner_cfg["sVoxel"])
+
+        # [SPS] 输入体积统计（用于诊断和调参）
+        print(f"[SPS] 输入体积统计:")
+        print(f"  - 体积形状: {vol.shape}")
+        print(f"  - 密度范围: [{vol.min():.4f}, {vol.max():.4f}]")
+        print(f"  - 密度均值: {vol.mean():.4f}, 标准差: {vol.std():.4f}")
+        print(f"  - 有效体素数(>{args.density_thresh}): {valid_indices.shape[0]:,}")
+        print(f"  - 有效体素占比: {valid_indices.shape[0] / vol.size * 100:.2f}%")
 
         assert (
             valid_indices.shape[0] >= n_points
