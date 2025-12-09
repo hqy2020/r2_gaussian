@@ -140,6 +140,14 @@ def training(
         if gar_gradient_filter:
             print(f"  - 🆕 gradient_filter: threshold={gar_gradient_threshold}")
 
+    # 🆕 [SPS] 打印初始化点云信息
+    if dataset.ply_path:
+        print("=" * 70)
+        print(f"✓ [SPS] 使用预初始化点云")
+        print(f"  - 点云路径: {dataset.ply_path}")
+        print(f"  - 初始点数: {gaussians.get_xyz.shape[0]:,}")
+        print("=" * 70)
+
     # 🎯 K-Planes 诊断信息
     if gaussians.enable_kplanes and gaussians.kplanes_encoder is not None:
         print("=" * 70)
@@ -468,6 +476,7 @@ def training(
                 adm_diag = gaussians.get_adm_diagnostics()
                 if adm_diag:
                     metrics["adm/strength"] = adm_diag.get('adm_strength', 0.0)
+                    metrics["adm/view_scale"] = adm_diag.get('view_scale', 1.0)  # 🆕 视角自适应缩放因子
                     metrics["adm/modulation_std"] = adm_diag.get('modulation', {}).get('std', 0.0)
                     metrics["adm/density_change_pct"] = adm_diag.get('density_change_pct', {}).get('mean', 0.0)
 

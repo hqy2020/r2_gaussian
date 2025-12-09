@@ -94,10 +94,10 @@ class ModelParams(ParamGroup):
         # 🆕 GAR 优化参数（基于 good/bad case 分析）
         self.gar_adaptive_threshold = False  # [GAR] 启用自适应阈值（基于邻近分数分布）
         self.gar_adaptive_method = "percentile"  # [GAR] 自适应方法: percentile/std/iqr
-        self.gar_adaptive_percentile = 90.0  # [GAR] percentile 百分位（90=只密化最稀疏10%）
+        self.gar_adaptive_percentile = 85.0  # [GAR] percentile 百分位（85=只密化最稀疏15%）
         self.gar_progressive_decay = False  # [GAR] 启用渐进衰减（训练后期减少密化）
-        self.gar_decay_start_ratio = 0.5  # [GAR] 衰减开始进度（0.5=50%进度后开始）
-        self.gar_final_strength = 0.3  # [GAR] 最终强度（0.3=阈值提高~3.3倍）
+        self.gar_decay_start_ratio = 0.7  # [GAR] 衰减开始进度（0.7=70%进度后开始）
+        self.gar_final_strength = 0.5  # [GAR] 最终强度（0.5=阈值提高2倍）
         self.gar_gradient_filter = False  # [GAR] 启用梯度过滤（只密化高梯度点）
         self.gar_gradient_threshold = 0.0002  # [GAR] 梯度过滤阈值
         self.gar_max_candidates = 5000  # [GAR] 每次密化最大候选点数（避免 OOM）
