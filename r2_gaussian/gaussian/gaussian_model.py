@@ -298,6 +298,69 @@ class GaussianModel:
             progress = (it - decay_start) / (total - decay_start)
             return 1.0 - (1.0 - final) * min(1.0, progress)
 
+    def get_adm_diagnostics(self):
+        """
+        获取 ADM 诊断信息
+
+        返回: dict 包含 offset, confidence, modulation 等统计
+              如果 ADM 未启用，返回 None
+        """
+        if not self.enable_kplanes or self.kplanes_encoder is None or self.density_decoder is None:
+            return None
+
+        with torch.no_grad():
+            kplanes_feat = self.get_kplanes_features()
+            offset, confidence = self.density_decoder(kplanes_feat)
+
+            max_range = getattr(self, 'adm_max_range', 0.3)
+            strength = self._get_adm_strength()
+            view_scale = self.get_view_adaptive_scale()
+
+            effective_offset = offset * confidence * max_range * strength * view_scale
+            modulation = 1.0 + effective_offset
+
+            # 计算基础密度（用于对比）
+            base_density = self.density_activation(self._density)
+            modulated_density = base_density * modulation
+            density_change_pct = ((modulated_density - base_density) / (base_density + 1e-8) * 100)
+
+            return {
+                'offset': {
+                    'mean': offset.mean().item(),
+                    'std': offset.std().item(),
+                    'min': offset.min().item(),
+                    'max': offset.max().item()
+                },
+                'confidence': {
+                    'mean': confidence.mean().item(),
+                    'std': confidence.std().item(),
+                    'min': confidence.min().item(),
+                    'max': confidence.max().item()
+                },
+                'effective_offset': {
+                    'mean': effective_offset.mean().item(),
+                    'std': effective_offset.std().item(),
+                    'min': effective_offset.min().item(),
+                    'max': effective_offset.max().item()
+                },
+                'modulation': {
+                    'mean': modulation.mean().item(),
+                    'std': modulation.std().item(),
+                    'min': modulation.min().item(),
+                    'max': modulation.max().item()
+                },
+                'density_change_pct': {
+                    'mean': density_change_pct.mean().item(),
+                    'std': density_change_pct.std().item(),
+                    'min': density_change_pct.min().item(),
+                    'max': density_change_pct.max().item()
+                },
+                'adm_strength': strength,
+                'view_scale': view_scale,
+                'max_range': max_range,
+                'num_gaussians': len(self._xyz)
+            }
+
     def get_covariance(self, scaling_modifier=1):
         return self.covariance_activation(
             self.get_scaling, scaling_modifier, self._rotation

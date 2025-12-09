@@ -26,11 +26,12 @@ from r2_gaussian.utils.general_utils import safe_state
 from r2_gaussian.utils.cfg_utils import load_config
 from r2_gaussian.utils.log_utils import prepare_output_and_logger
 from r2_gaussian.dataset import Scene
-from r2_gaussian.utils.loss_utils import l1_loss, ssim, tv_3d_loss
+from r2_gaussian.utils.loss_utils import l1_loss, ssim, tv_3d_loss, sparsity_loss_ct, sparsity_loss_density_weighted
 from r2_gaussian.utils.regulation import compute_plane_tv_loss
 from r2_gaussian.utils.image_utils import metric_vol, metric_proj
 from r2_gaussian.utils.plot_utils import show_two_slice
 from r2_gaussian.innovations.fsgs import ProximityGuidedDensifier
+from r2_gaussian.innovations.sagp import SAGPPruner
 import copy
 
 
@@ -138,6 +139,41 @@ def training(
             print(f"  - 🆕 progressive_decay: start={gar_decay_start_ratio}, final={gar_final_strength}")
         if gar_gradient_filter:
             print(f"  - 🆕 gradient_filter: threshold={gar_gradient_threshold}")
+
+    # ════════════════════════════════════════════════════════════════════
+    # [SAGP] Structure-Aware Gaussian Pruning 初始化
+    # ════════════════════════════════════════════════════════════════════
+    use_sagp = getattr(dataset, 'enable_sagp', False)
+    sagp_pruner = None
+
+    if use_sagp:
+        print("=" * 70)
+        print("✓ SAGP (Structure-Aware Gaussian Pruning) 已启用")
+        sagp_pruner = SAGPPruner(
+            spatial_k=getattr(dataset, 'sagp_spatial_k', 10),
+            spatial_scale=getattr(dataset, 'sagp_spatial_scale', 2.0),
+            min_cluster_size=getattr(dataset, 'sagp_min_cluster_size', 5),
+            visibility_threshold=getattr(dataset, 'sagp_visibility_threshold', 0.3),
+            min_views_visible=getattr(dataset, 'sagp_min_views', 2),
+        )
+        sagp_start_iter = getattr(dataset, 'sagp_start_iter', 5000)
+        sagp_interval = getattr(dataset, 'sagp_interval', 2000)
+        sagp_until_iter = getattr(dataset, 'sagp_until_iter', 25000)
+        sagp_use_spatial = getattr(dataset, 'sagp_use_spatial', True)
+        sagp_use_visibility = getattr(dataset, 'sagp_use_visibility', True)
+        print(f"  - 空间一致性: {'启用' if sagp_use_spatial else '禁用'}")
+        print(f"    - spatial_k: {sagp_pruner.spatial_k}")
+        print(f"    - spatial_scale: {sagp_pruner.spatial_scale}")
+        print(f"  - 可见性一致性: {'启用' if sagp_use_visibility else '禁用'}")
+        print(f"    - visibility_threshold: {sagp_pruner.visibility_threshold}")
+        print(f"  - 执行时间: iter {sagp_start_iter} ~ {sagp_until_iter}, interval={sagp_interval}")
+        print("=" * 70)
+    else:
+        sagp_start_iter = 0
+        sagp_interval = 0
+        sagp_until_iter = 0
+        sagp_use_spatial = False
+        sagp_use_visibility = False
 
     # 🎯 K-Planes 诊断信息
     if gaussians.enable_kplanes and gaussians.kplanes_encoder is not None:
@@ -257,12 +293,55 @@ def training(
                 print(f"  - 🆕 有效 lambda_tv: {effective_lambda_tv:.6f} (base={opt.lambda_plane_tv:.6f})")
                 print(f"  - TV loss (weighted): {(effective_lambda_tv * tv_loss_planes).item():.6f}")
 
+        # ════════════════════════════════════════════════════════════════════
+        # [SPARSITY] Sparsity Loss - 稀疏损失（来自 SeCuRe 论文）
+        # 惩罚低密度区域和边界外区域的高斯
+        # ════════════════════════════════════════════════════════════════════
+        if opt.lambda_sparsity > 0 and iteration >= opt.sparsity_start_iter:
+            if opt.sparsity_type == "ct":
+                loss_sparsity = sparsity_loss_ct(
+                    densities=gaussians.get_density,
+                    positions=gaussians.get_xyz,
+                    bbox=bbox,
+                    air_threshold=opt.sparsity_air_threshold,
+                    delta=opt.sparsity_delta,
+                    boundary_weight=opt.sparsity_boundary_weight,
+                )
+            else:  # density_weighted（备选）
+                loss_sparsity = sparsity_loss_density_weighted(
+                    densities=gaussians.get_density,
+                    target_sparsity=opt.sparsity_target,
+                )
+
+            loss["sparsity"] = loss_sparsity
+            loss["total"] = loss["total"] + opt.lambda_sparsity * loss_sparsity
+
+            # 诊断输出（前几个迭代）
+            if iteration == opt.sparsity_start_iter or iteration <= 3:
+                print(f"[Iter {iteration}] Sparsity Loss 诊断:")
+                print(f"  - 类型: {opt.sparsity_type}")
+                print(f"  - 损失值: {loss_sparsity.item():.6f}")
+                print(f"  - 加权损失: {(opt.lambda_sparsity * loss_sparsity).item():.6f}")
+
         loss["total"].backward()
 
         iter_end.record()
         torch.cuda.synchronize()
 
         with torch.no_grad():
+            # [ADM] 诊断日志 - 每 1000 次迭代输出
+            if gaussians.enable_kplanes and iteration % 1000 == 0:
+                adm_diag = gaussians.get_adm_diagnostics()
+                if adm_diag:
+                    print(f"\n[Iter {iteration}] === ADM 诊断 ===")
+                    print(f"  调度参数: strength={adm_diag['adm_strength']:.3f}, view_scale={adm_diag['view_scale']:.3f}, max_range={adm_diag['max_range']:.3f}")
+                    print(f"  Gaussians数量: {adm_diag['num_gaussians']:,}")
+                    print(f"  offset:     mean={adm_diag['offset']['mean']:+.4f}, std={adm_diag['offset']['std']:.4f}, range=[{adm_diag['offset']['min']:.4f}, {adm_diag['offset']['max']:.4f}]")
+                    print(f"  confidence: mean={adm_diag['confidence']['mean']:.4f}, std={adm_diag['confidence']['std']:.4f}, range=[{adm_diag['confidence']['min']:.4f}, {adm_diag['confidence']['max']:.4f}]")
+                    print(f"  eff_offset: mean={adm_diag['effective_offset']['mean']:+.6f}, std={adm_diag['effective_offset']['std']:.6f}")
+                    print(f"  modulation: mean={adm_diag['modulation']['mean']:.4f}, std={adm_diag['modulation']['std']:.4f}, range=[{adm_diag['modulation']['min']:.4f}, {adm_diag['modulation']['max']:.4f}]")
+                    print(f"  密度变化%:  mean={adm_diag['density_change_pct']['mean']:+.2f}%, std={adm_diag['density_change_pct']['std']:.2f}%, range=[{adm_diag['density_change_pct']['min']:.2f}%, {adm_diag['density_change_pct']['max']:.2f}%]")
+
             # Adaptive control
             gaussians.max_radii2D[visibility_filter] = torch.max(
                 gaussians.max_radii2D[visibility_filter], radii[visibility_filter]
@@ -383,6 +462,31 @@ def training(
                 raise ValueError(
                     "No Gaussian left. Change adaptive control hyperparameters!"
                 )
+
+            # ════════════════════════════════════════════════════════════════════
+            # [SAGP] Structure-Aware Gaussian Pruning - 结构感知剪枝
+            # ════════════════════════════════════════════════════════════════════
+            if (use_sagp and sagp_pruner is not None and
+                iteration >= sagp_start_iter and
+                iteration <= sagp_until_iter and
+                iteration % sagp_interval == 0):
+
+                with torch.no_grad():
+                    prune_mask, stats = sagp_pruner.get_prune_mask(
+                        gaussians=gaussians,
+                        cameras=scene.getTrainCameras(),
+                        pipe=pipe,
+                        use_spatial=sagp_use_spatial,
+                        use_visibility=sagp_use_visibility,
+                    )
+
+                    if prune_mask.sum() > 0:
+                        gaussians.prune_points(prune_mask)
+                        tqdm.write(
+                            f"[ITER {iteration}] SAGP pruning: -{stats['total_pruned']} Gaussians "
+                            f"(spatial: {stats['spatial_outliers']}, visibility: {stats['visibility_outliers']}, "
+                            f"remaining: {gaussians.get_xyz.shape[0]})"
+                        )
 
             # Opacity Decay: 在密度控制开始后的每次迭代应用衰减，过滤低梯度的冗余Gaussians
             if iteration > opt.densify_from_iter and opt.enable_opacity_decay:
