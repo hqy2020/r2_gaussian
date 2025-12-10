@@ -1,4 +1,4 @@
-2·#!/bin/bash
+#!/bin/bash
 # ============================================================================
 # SPAGS 消融实验脚本
 # ============================================================================
@@ -36,6 +36,7 @@ CONFIG=$1    # baseline/sps/gar/adm/sps_gar/sps_adm/gar_adm/spags
 ORGAN=$2     # foot/chest/head/abdomen/pancreas
 VIEWS=$3     # 3/6/9
 GPU=${4:-0}  # 默认 GPU 0
+OUTPUT_PREFIX=${5:-}  # 可选的输出前缀（如 lucky_gar）
 
 if [ -z "$CONFIG" ] || [ -z "$ORGAN" ] || [ -z "$VIEWS" ]; then
     echo "============================================================================"
@@ -102,49 +103,41 @@ ADM_FLAGS_COMPAT="--enable_kplanes"
 case $CONFIG in
     baseline)
         echo "=== Baseline (无技术) ==="
-        OUTPUT="output/_${TIMESTAMP}_${ORGAN}_${VIEWS}views_baseline"
         CONFIG_FLAGS=""
         USE_SPS=false
         ;;
     sps)
         echo "=== SPS (空间先验播种) ==="
-        OUTPUT="output/_${TIMESTAMP}_${ORGAN}_${VIEWS}views_sps"
         CONFIG_FLAGS=""
         USE_SPS=true
         ;;
     gar)
         echo "=== GAR (几何感知细化) ==="
-        OUTPUT="output/_${TIMESTAMP}_${ORGAN}_${VIEWS}views_gar"
         CONFIG_FLAGS="$GAR_FLAGS_COMPAT"
         USE_SPS=false
         ;;
     adm)
         echo "=== ADM (自适应密度调制) ==="
-        OUTPUT="output/_${TIMESTAMP}_${ORGAN}_${VIEWS}views_adm"
         CONFIG_FLAGS="$ADM_FLAGS_COMPAT"
         USE_SPS=false
         ;;
     sps_gar)
         echo "=== SPS + GAR ==="
-        OUTPUT="output/_${TIMESTAMP}_${ORGAN}_${VIEWS}views_sps_gar"
         CONFIG_FLAGS="$GAR_FLAGS_COMPAT"
         USE_SPS=true
         ;;
     sps_adm)
         echo "=== SPS + ADM ==="
-        OUTPUT="output/_${TIMESTAMP}_${ORGAN}_${VIEWS}views_sps_adm"
         CONFIG_FLAGS="$ADM_FLAGS_COMPAT"
         USE_SPS=true
         ;;
     gar_adm)
         echo "=== GAR + ADM ==="
-        OUTPUT="output/_${TIMESTAMP}_${ORGAN}_${VIEWS}views_gar_adm"
         CONFIG_FLAGS="$GAR_FLAGS_COMPAT $ADM_FLAGS_COMPAT"
         USE_SPS=false
         ;;
     spags)
         echo "=== Full SPAGS (SPS + GAR + ADM) ==="
-        OUTPUT="output/_${TIMESTAMP}_${ORGAN}_${VIEWS}views_spags"
         CONFIG_FLAGS="$GAR_FLAGS_COMPAT $ADM_FLAGS_COMPAT"
         USE_SPS=true
         ;;
@@ -154,6 +147,13 @@ case $CONFIG in
         exit 1
         ;;
 esac
+
+# 生成输出目录（支持自定义前缀）
+if [ -n "$OUTPUT_PREFIX" ]; then
+    OUTPUT="output/${OUTPUT_PREFIX}_${ORGAN}_${VIEWS}views_${CONFIG}"
+else
+    OUTPUT="output/_${TIMESTAMP}_${ORGAN}_${VIEWS}views_${CONFIG}"
+fi
 
 # ============================================================================
 # SPS 点云检查（使用 density-369 目录已有的密度加权点云）
