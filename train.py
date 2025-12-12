@@ -113,9 +113,14 @@ def training(
 
     if use_proximity:
         print("Use FSGS proximity-guided densification (GAR)")
-        # 支持新参数名 gar_* 和旧参数名 proximity_*（优先使用新名）
-        k_neighbors = getattr(dataset, 'gar_proximity_k', None) or getattr(dataset, 'proximity_k_neighbors', 5)
-        proximity_threshold = getattr(dataset, 'gar_proximity_threshold', None) or getattr(dataset, 'proximity_threshold', 5.0)
+        # 🔧 修复：使用 None 检查而非 or，避免 falsy 值被错误覆盖
+        # 优先使用新参数名 gar_*，旧参数名 proximity_* 作为 fallback
+        _gar_k = getattr(dataset, 'gar_proximity_k', None)
+        k_neighbors = _gar_k if _gar_k is not None else getattr(dataset, 'proximity_k_neighbors', 5)
+
+        _gar_threshold = getattr(dataset, 'gar_proximity_threshold', None)
+        proximity_threshold = _gar_threshold if _gar_threshold is not None else getattr(dataset, 'proximity_threshold', 0.05)
+        # 🔴 注意：旧 fallback 值是 5.0（错误！），现在改为 0.05（与 arguments/__init__.py 一致）
         proximity_densifier = ProximityGuidedDensifier(
             k_neighbors=k_neighbors,
             proximity_threshold=proximity_threshold,
@@ -321,6 +326,16 @@ def training(
                         positions, return_neighbors=True
                     )
 
+                    # 🔧 诊断日志：输出邻近分数统计（帮助调试阈值设置）
+                    if iteration % 1000 == 0 or iteration == proximity_start_iter:
+                        print(f"\n[GAR 诊断] Iter {iteration}:")
+                        print(f"  - 邻近分数范围: [{proximity_scores.min():.4f}, {proximity_scores.max():.4f}]")
+                        print(f"  - 邻近分数均值: {proximity_scores.mean():.4f}, 标准差: {proximity_scores.std():.4f}")
+                        print(f"  - 百分位数: p25={torch.quantile(proximity_scores, 0.25):.4f}, "
+                              f"p50={torch.quantile(proximity_scores, 0.50):.4f}, "
+                              f"p75={torch.quantile(proximity_scores, 0.75):.4f}, "
+                              f"p90={torch.quantile(proximity_scores, 0.90):.4f}")
+
                     # 🆕 2. 计算有效阈值（自适应 + 渐进衰减）
                     effective_threshold = None
 
@@ -355,6 +370,14 @@ def training(
                         densify_mask = densify_mask & gradient_mask
 
                     num_candidates = densify_mask.sum().item()
+
+                    # 🔧 诊断日志：输出阈值和候选数
+                    if iteration % 1000 == 0 or iteration == proximity_start_iter:
+                        _used_threshold = effective_threshold if effective_threshold is not None else proximity_densifier.proximity_threshold
+                        print(f"  - 使用阈值: {_used_threshold:.4f}")
+                        print(f"  - 候选点数: {num_candidates} / {len(positions)} ({100*num_candidates/len(positions):.2f}%)")
+                        if num_candidates == 0:
+                            print(f"  - ⚠️ 警告: 候选点为 0！可能阈值设置不合理")
 
                     # 获取 GAR 诊断信息（每次迭代都更新，用于 TensorBoard）
                     gar_diag = proximity_densifier.get_diagnostics(
@@ -648,6 +671,12 @@ if __name__ == "__main__":
     # fmt: off
     # Set up command line argument parser
     parser = ArgumentParser(description="Training script parameters")
+
+    # 🆕 方法选择参数（必须在其他参数之前添加）
+    parser.add_argument("--method", type=str, default="r2_gaussian",
+                        choices=["r2_gaussian", "xgaussian", "naf", "tensorf", "saxnerf"],
+                        help="选择训练方法: r2_gaussian(默认), xgaussian, naf, tensorf, saxnerf")
+
     lp = ModelParams(parser)
     op = OptimizationParams(parser)
     pp = PipelineParams(parser)
@@ -679,19 +708,53 @@ if __name__ == "__main__":
     # Set up logging writer
     tb_writer = prepare_output_and_logger(args)
 
+    print(f"Method: {args.method}")
     print("Optimizing " + args.model_path)
 
     torch.autograd.set_detect_anomaly(args.detect_anomaly)
-    training(
-        lp.extract(args),
-        op.extract(args),
-        pp.extract(args),
-        tb_writer,
-        args.test_iterations,
-        args.save_iterations,
-        args.checkpoint_iterations,
-        args.start_checkpoint,
-    )
+
+    # 🆕 根据方法路由到不同的训练函数
+    if args.method == "r2_gaussian":
+        # 默认：R²-Gaussian + SPAGS 训练
+        training(
+            lp.extract(args),
+            op.extract(args),
+            pp.extract(args),
+            tb_writer,
+            args.test_iterations,
+            args.save_iterations,
+            args.checkpoint_iterations,
+            args.start_checkpoint,
+        )
+    elif args.method == "xgaussian":
+        # X-Gaussian baseline
+        from r2_gaussian.baselines.xgaussian import training_xgaussian
+        training_xgaussian(
+            lp.extract(args),
+            op.extract(args),
+            pp.extract(args),
+            tb_writer,
+            args.test_iterations,
+            args.save_iterations,
+            args.checkpoint_iterations,
+            args.start_checkpoint,
+        )
+    elif args.method in ["naf", "tensorf", "saxnerf"]:
+        # NeRF 系列 baseline
+        from r2_gaussian.baselines.nerf_base import training_nerf
+        training_nerf(
+            args.method,
+            lp.extract(args),
+            op.extract(args),
+            pp.extract(args),
+            tb_writer,
+            args.test_iterations,
+            args.save_iterations,
+            args.checkpoint_iterations,
+            args.start_checkpoint,
+        )
+    else:
+        raise ValueError(f"Unknown method: {args.method}")
 
     # All done
     print("Training complete.")

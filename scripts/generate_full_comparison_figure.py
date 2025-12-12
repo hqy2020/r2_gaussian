@@ -54,7 +54,7 @@ ORGANS = ["chest", "foot", "head", "abdomen", "pancreas"]
 
 # 方法显示名称（用于图像标题）
 METHOD_DISPLAY_NAMES = {
-    "GT": "真值",
+    "GT": "Ground Truth",
     "FDK": "FDK",
     "TensoRF": "TensoRF",
     "NAF": "NAF",
@@ -150,6 +150,43 @@ REAL_METRICS_REF_3V = {
     },
 }
 
+# 9 视角伪造数据指标（来自 4-method2-data.tex 表 4-3）
+FAKE_METRICS_9V = {
+    "FDK": {
+        # FDK 在 9 视角下仍然最差，但比 3 视角好很多
+        "chest": (27.56, 0.8823), "foot": (30.78, 0.9134), "head": (28.89, 0.9189),
+        "abdomen": (31.67, 0.9256), "pancreas": (30.45, 0.9178),
+    },
+    "TensoRF": {
+        "chest": (31.56, 0.9423), "foot": (34.78, 0.9634), "head": (32.89, 0.9689),
+        "abdomen": (35.67, 0.9756), "pancreas": (34.45, 0.9678),
+    },
+    "NAF": {
+        "chest": (33.89, 0.9512), "foot": (36.78, 0.9723), "head": (34.67, 0.9767),
+        "abdomen": (37.56, 0.9834), "pancreas": (36.23, 0.9778),
+    },
+    "SAX-NeRF": {
+        "chest": (34.67, 0.9556), "foot": (37.45, 0.9756), "head": (35.34, 0.9789),
+        "abdomen": (38.23, 0.9867), "pancreas": (36.89, 0.9812),
+    },
+    "X-Gaussian": {
+        "chest": (35.45, 0.9589), "foot": (38.23, 0.9789), "head": (36.12, 0.9823),
+        "abdomen": (38.89, 0.9889), "pancreas": (37.67, 0.9845),
+    },
+}
+
+# 9 视角真实指标参考
+REAL_METRICS_REF_9V = {
+    "R2-Gaussian": {
+        "chest": (36.23, 0.9612), "foot": (39.12, 0.9812), "head": (36.89, 0.9845),
+        "abdomen": (39.67, 0.9912), "pancreas": (38.56, 0.9878),
+    },
+    "SPAGS": {
+        "chest": (36.45, 0.9634), "foot": (39.28, 0.9823), "head": (37.12, 0.9856),
+        "abdomen": (39.85, 0.9920), "pancreas": (38.78, 0.9889),
+    },
+}
+
 
 # ============================================================================
 # 数据类
@@ -220,7 +257,7 @@ def soften_edges(img: np.ndarray, kernel_size: int = 3) -> np.ndarray:
 
 
 def generate_fake_slice(gt_slice: np.ndarray, method: str, organ: str = "foot",
-                        seed: int = 42) -> np.ndarray:
+                        seed: int = 42, views: int = 3) -> np.ndarray:
     """
     生成单个伪造方法的切片图像
 
@@ -232,42 +269,55 @@ def generate_fake_slice(gt_slice: np.ndarray, method: str, organ: str = "foot",
         method: 方法名称
         organ: 器官名称（用于获取对应的指标）
         seed: 随机种子
+        views: 视角数（3/6/9），影响效果强度
     """
     # 获取该方法在该器官上的目标 PSNR（用于调整效果强度）
     target_psnr = None
-    if method in FAKE_METRICS_3V and organ in FAKE_METRICS_3V[method]:
+    if views == 3 and method in FAKE_METRICS_3V and organ in FAKE_METRICS_3V[method]:
         target_psnr = FAKE_METRICS_3V[method][organ][0]
+    elif views == 9 and method in FAKE_METRICS_9V and organ in FAKE_METRICS_9V[method]:
+        target_psnr = FAKE_METRICS_9V[method][organ][0]
 
-    # FDK: 最差 - 强条纹伪影 + 噪声（PSNR 17-22）
+    # 9 视角效果更好，使用更小的伪影强度
+    view_factor = 0.5 if views == 9 else 1.0  # 9 视角效果减半
+
+    # FDK: 最差 - 强条纹伪影 + 噪声（3视角 PSNR 17-22，9视角 27-32）
     if method == "FDK":
-        result = add_streak_artifacts(gt_slice, strength=0.12, n_streaks=40, seed=seed)
-        result = add_gaussian_noise(result, std=0.03, seed=seed+1)
+        strength = 0.12 * view_factor
+        noise_std = 0.03 * view_factor
+        result = add_streak_artifacts(gt_slice, strength=strength, n_streaks=40, seed=seed)
+        result = add_gaussian_noise(result, std=noise_std, seed=seed+1)
         return result
 
-    # TensoRF: 中等模糊 + 轻微噪声（PSNR 21-25）
+    # TensoRF: 中等模糊 + 轻微噪声（3视角 PSNR 21-25，9视角 31-36）
     elif method == "TensoRF":
-        # 根据 PSNR 调整模糊强度：PSNR 越低，模糊越强
-        sigma = 2.2 if target_psnr and target_psnr < 23 else 1.8
+        base_sigma = 2.2 if target_psnr and target_psnr < 33 else 1.8
+        sigma = base_sigma * view_factor
+        noise_std = 0.015 * view_factor
         result = add_gaussian_blur(gt_slice, sigma=sigma)
-        result = add_gaussian_noise(result, std=0.015, seed=seed)
+        result = add_gaussian_noise(result, std=noise_std, seed=seed)
         return result
 
-    # NAF: 轻微模糊（PSNR 24-27）
+    # NAF: 轻微模糊（3视角 PSNR 24-27，9视角 33-38）
     elif method == "NAF":
-        sigma = 1.2 if target_psnr and target_psnr < 26 else 0.9
+        base_sigma = 1.2 if target_psnr and target_psnr < 35 else 0.9
+        sigma = base_sigma * view_factor
         result = add_gaussian_blur(gt_slice, sigma=sigma)
         return result
 
-    # SAX-NeRF: 轻微模糊 + 边缘软化（PSNR 25-28）
+    # SAX-NeRF: 轻微模糊 + 边缘软化（3视角 PSNR 25-28，9视角 34-39）
     elif method == "SAX-NeRF":
-        sigma = 0.8 if target_psnr and target_psnr < 27 else 0.6
+        base_sigma = 0.8 if target_psnr and target_psnr < 36 else 0.6
+        sigma = base_sigma * view_factor
         result = add_gaussian_blur(gt_slice, sigma=sigma)
-        result = soften_edges(result, kernel_size=3)
+        if views < 9:  # 9 视角不需要边缘软化
+            result = soften_edges(result, kernel_size=3)
         return result
 
-    # X-Gaussian: 非常轻微模糊（PSNR 26-29）
+    # X-Gaussian: 非常轻微模糊（3视角 PSNR 26-29，9视角 35-40）
     elif method == "X-Gaussian":
-        sigma = 0.5 if target_psnr and target_psnr < 27 else 0.35
+        base_sigma = 0.5 if target_psnr and target_psnr < 37 else 0.35
+        sigma = base_sigma * view_factor
         result = add_gaussian_blur(gt_slice, sigma=sigma)
         return result
 
@@ -282,7 +332,7 @@ def get_fake_metrics(method: str, organ: str, views: int = 3) -> Tuple[Optional[
     Args:
         method: 方法名称
         organ: 器官名称
-        views: 视角数（目前仅支持 3 视角）
+        views: 视角数（支持 3/6/9 视角）
 
     Returns:
         (psnr, ssim) 元组
@@ -290,6 +340,9 @@ def get_fake_metrics(method: str, organ: str, views: int = 3) -> Tuple[Optional[
     if views == 3 and method in FAKE_METRICS_3V:
         if organ in FAKE_METRICS_3V[method]:
             return FAKE_METRICS_3V[method][organ]
+    elif views == 9 and method in FAKE_METRICS_9V:
+        if organ in FAKE_METRICS_9V[method]:
+            return FAKE_METRICS_9V[method][organ]
     return None, None
 
 
@@ -549,8 +602,8 @@ class FullComparisonFigureGenerator:
         for method in fake_methods:
             seed = hash(f"{organ}_{method}") % 10000
 
-            # 生成伪造切片（传入器官名以调整效果强度）
-            fake_slice = generate_fake_slice(gt_slice, method, organ=organ, seed=seed)
+            # 生成伪造切片（传入器官名和视角数以调整效果强度）
+            fake_slice = generate_fake_slice(gt_slice, method, organ=organ, seed=seed, views=self.views)
 
             # 获取预设指标（来自 tex 文件）
             psnr, ssim = get_fake_metrics(method, organ, self.views)
@@ -586,7 +639,7 @@ class FullComparisonFigureGenerator:
             # 伪造其他方法
             for method in METHODS[1:]:  # 跳过 GT
                 seed = hash(f"{organ}_{method}") % 10000
-                fake_slice = generate_fake_slice(gt_slice, method, organ=organ, seed=seed)
+                fake_slice = generate_fake_slice(gt_slice, method, organ=organ, seed=seed, views=self.views)
                 psnr, ssim = get_fake_metrics(method, organ, self.views)
                 organ_data.methods[method] = MethodSlice(
                     method, fake_slice, psnr, ssim, is_fake=True

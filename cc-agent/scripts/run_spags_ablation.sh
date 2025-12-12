@@ -15,9 +15,17 @@
 #   gar_adm   - GAR + ADM
 #   spags     - Full SPAGS (SPS + GAR + ADM)
 #
+# 🆕 Baseline 方法:
+#   xgaussian - X-Gaussian baseline
+#   naf       - NAF (Neural Attenuation Fields)
+#   tensorf   - TensoRF
+#   saxnerf   - SAX-NeRF with Lineformer
+#
 # 示例:
 #   ./cc-agent/scripts/run_spags_ablation.sh spags foot 3 0
 #   ./cc-agent/scripts/run_spags_ablation.sh baseline chest 6 1
+#   ./cc-agent/scripts/run_spags_ablation.sh xgaussian foot 3 0
+#   ./cc-agent/scripts/run_spags_ablation.sh naf chest 6 1
 # ============================================================================
 
 set -e
@@ -55,12 +63,19 @@ if [ -z "$CONFIG" ] || [ -z "$ORGAN" ] || [ -z "$VIEWS" ]; then
     echo "  gar_adm   - GAR + ADM"
     echo "  spags     - Full SPAGS (SPS + GAR + ADM)"
     echo ""
+    echo "Baseline 方法:"
+    echo "  xgaussian - X-Gaussian baseline"
+    echo "  naf       - NAF (Neural Attenuation Fields)"
+    echo "  tensorf   - TensoRF"
+    echo "  saxnerf   - SAX-NeRF with Lineformer"
+    echo ""
     echo "器官: foot, chest, head, abdomen, pancreas"
     echo "视角: 3, 6, 9"
     echo ""
     echo "示例:"
     echo "  $0 spags foot 3 0"
     echo "  $0 baseline chest 6 1"
+    echo "  $0 xgaussian foot 3 0"
     exit 1
 fi
 
@@ -74,8 +89,8 @@ if [ ! -f "$DATA_PATH" ]; then
     exit 1
 fi
 
-# SPS 点云路径（使用 density-369 目录的密度加权点云）
-SPS_PCD_PATH="data/density-369/init_${ORGAN}_50_${VIEWS}views.npy"
+# SPS 点云路径（使用 369 目录的初始化点云）
+SPS_PCD_PATH="data/369/init_${ORGAN}_50_${VIEWS}views.npy"
 
 # 公共参数
 COMMON_FLAGS="--iterations 30000 --test_iterations 10000 20000 30000"
@@ -84,17 +99,36 @@ COMMON_FLAGS="--iterations 30000 --test_iterations 10000 20000 30000"
 # 配置定义
 # ============================================================================
 
-# GAR 参数（Proximity-guided Densification）- 🆕 优化版本 v2
-# 基于日志分析优化（iter 9000 后几乎停止密化问题）：
-#   - 自适应阈值 (percentile=85)：密化最稀疏的 15% 点（之前 5% 太保守）
+# GAR 参数（Proximity-guided Densification）- 🔧 修复版本 v4
+# 关键修复：
+#   - 🔴 添加 --gar_proximity_threshold 0.05（之前缺失，导致使用错误的 fallback 值 5.0）
+#   - 自适应阈值 (percentile=85)：密化最稀疏的 15% 点
 #   - 渐进衰减 (start=0.7, final=0.5)：延迟衰减开始，减少衰减幅度
+#   - 🆕 v4: 添加 --gar_max_candidates 1000 限制每次密化的最大点数（防止 OOM）
 # 注意: 布尔参数使用 flag 格式（不带 true/false 值）
-GAR_FLAGS_COMPAT="--enable_fsgs_proximity --gar_adaptive_threshold --gar_adaptive_percentile 85 --gar_progressive_decay --gar_decay_start_ratio 0.7 --gar_final_strength 0.5"
+GAR_FLAGS_COMPAT="--enable_fsgs_proximity \
+    --gar_proximity_threshold 0.05 \
+    --gar_proximity_k 5 \
+    --gar_adaptive_threshold \
+    --gar_adaptive_percentile 85 \
+    --gar_progressive_decay \
+    --gar_decay_start_ratio 0.7 \
+    --gar_final_strength 0.5 \
+    --gar_max_candidates 1000"
 
-# ADM 参数（K-Planes Density Modulation）
+# ADM 参数（K-Planes Density Modulation）- 🔧 补全完整参数
+# 关键修复：
+#   - 🔴 添加所有关键参数（之前只传了 --enable_kplanes）
+#   - 分辨率、特征维度、MLP 配置、TV 正则化
 # 注意: 布尔参数使用 flag 格式（不带 true/false 值）
-# 默认值: resolution=64, dim=32, lambda_plane_tv=0.002, tv_type=l2
-ADM_FLAGS_COMPAT="--enable_kplanes"
+ADM_FLAGS_COMPAT="--enable_kplanes \
+    --adm_resolution 64 \
+    --adm_feature_dim 32 \
+    --adm_decoder_hidden 128 \
+    --adm_decoder_layers 3 \
+    --lambda_plane_tv 0.002 \
+    --adm_max_range 0.3 \
+    --adm_view_adaptive"
 
 # ============================================================================
 # 根据配置选择参数
@@ -105,45 +139,78 @@ case $CONFIG in
         echo "=== Baseline (无技术) ==="
         CONFIG_FLAGS=""
         USE_SPS=false
+        METHOD="r2_gaussian"
         ;;
     sps)
         echo "=== SPS (空间先验播种) ==="
         CONFIG_FLAGS=""
         USE_SPS=true
+        METHOD="r2_gaussian"
         ;;
     gar)
         echo "=== GAR (几何感知细化) ==="
         CONFIG_FLAGS="$GAR_FLAGS_COMPAT"
         USE_SPS=false
+        METHOD="r2_gaussian"
         ;;
     adm)
         echo "=== ADM (自适应密度调制) ==="
         CONFIG_FLAGS="$ADM_FLAGS_COMPAT"
         USE_SPS=false
+        METHOD="r2_gaussian"
         ;;
     sps_gar)
         echo "=== SPS + GAR ==="
         CONFIG_FLAGS="$GAR_FLAGS_COMPAT"
         USE_SPS=true
+        METHOD="r2_gaussian"
         ;;
     sps_adm)
         echo "=== SPS + ADM ==="
         CONFIG_FLAGS="$ADM_FLAGS_COMPAT"
         USE_SPS=true
+        METHOD="r2_gaussian"
         ;;
     gar_adm)
         echo "=== GAR + ADM ==="
         CONFIG_FLAGS="$GAR_FLAGS_COMPAT $ADM_FLAGS_COMPAT"
         USE_SPS=false
+        METHOD="r2_gaussian"
         ;;
     spags)
         echo "=== Full SPAGS (SPS + GAR + ADM) ==="
         CONFIG_FLAGS="$GAR_FLAGS_COMPAT $ADM_FLAGS_COMPAT"
         USE_SPS=true
+        METHOD="r2_gaussian"
+        ;;
+    xgaussian)
+        echo "=== X-Gaussian Baseline ==="
+        CONFIG_FLAGS=""
+        USE_SPS=true
+        METHOD="xgaussian"
+        ;;
+    naf)
+        echo "=== NAF (Neural Attenuation Fields) Baseline ==="
+        CONFIG_FLAGS=""
+        USE_SPS=false
+        METHOD="naf"
+        ;;
+    tensorf)
+        echo "=== TensoRF Baseline ==="
+        CONFIG_FLAGS=""
+        USE_SPS=false
+        METHOD="tensorf"
+        ;;
+    saxnerf)
+        echo "=== SAX-NeRF Baseline ==="
+        CONFIG_FLAGS=""
+        USE_SPS=false
+        METHOD="saxnerf"
         ;;
     *)
         echo "错误: 未知配置 '$CONFIG'"
         echo "可用配置: baseline, sps, gar, adm, sps_gar, sps_adm, gar_adm, spags"
+        echo "Baseline 方法: xgaussian, naf, tensorf, saxnerf"
         exit 1
         ;;
 esac
@@ -178,6 +245,7 @@ fi
 echo ""
 echo "============================================================================"
 echo "配置: $CONFIG"
+echo "方法: $METHOD"
 echo "器官: $ORGAN"
 echo "视角: $VIEWS"
 echo "GPU: $GPU"
@@ -194,6 +262,7 @@ cat > "${OUTPUT}/spags_config.txt" << EOF
 SPAGS 消融实验配置
 ==================
 配置: $CONFIG
+方法: $METHOD
 器官: $ORGAN
 视角: $VIEWS
 GPU: $GPU
@@ -205,6 +274,7 @@ ADM 启用: $(echo "$CONFIG_FLAGS" | grep -q "kplanes" && echo "true" || echo "f
 
 完整命令:
 CUDA_VISIBLE_DEVICES=$GPU python train.py \\
+    --method $METHOD \\
     -s $DATA_PATH \\
     -m $OUTPUT \\
     $COMMON_FLAGS \\
@@ -214,6 +284,7 @@ EOF
 
 # 执行训练
 CUDA_VISIBLE_DEVICES=$GPU python train.py \
+    --method "$METHOD" \
     -s "$DATA_PATH" \
     -m "$OUTPUT" \
     $COMMON_FLAGS \
