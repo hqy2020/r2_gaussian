@@ -401,11 +401,11 @@ class ProximityGuidedDensifier:
         else:
             raise ValueError(f"Unknown adaptive method: {method}")
 
-        # 下限保护：使用分数分布的 P50（中位数）作为绝对下限
-        # 这确保了至少有一半的点不会被密化，避免过度密化
-        # 注意：旧版本使用 proximity_threshold * 0.5，但在归一化场景中阈值尺度不匹配
-        p50 = torch.quantile(proximity_scores, 0.5)
-        threshold = threshold.clamp(min=p50)
+        # [优化] 下限保护：使用 P25（第一四分位数）作为下限
+        # 允许密化最多 75% 的点，而非原来的 50%
+        # 原因：P50 下限过于保守，会阻止对中等稀疏区域的密化
+        p25 = torch.quantile(proximity_scores, 0.25)
+        threshold = threshold.clamp(min=p25)
 
         # 更新统计
         self.stats['adaptive_threshold_value'] = threshold.item()

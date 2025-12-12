@@ -70,22 +70,23 @@ COMMON_FLAGS="--iterations 30000 --test_iterations 10000 20000 30000"
 # 配置定义
 # ============================================================================
 
-# GAR 参数（Proximity-guided Densification）- 🔧 修复版本 v4
-# 关键修复：
-#   - 🔴 添加 --gar_proximity_threshold 0.05（之前缺失，导致使用错误的 fallback 值 5.0）
-#   - 自适应阈值 (percentile=85)：密化最稀疏的 15% 点
-#   - 渐进衰减 (start=0.7, final=0.5)：延迟衰减开始，减少衰减幅度
-#   - 🆕 v4: 添加 --gar_max_candidates 1000 限制每次密化的最大点数（防止 OOM）
+# GAR 参数（Proximity-guided Densification）- 🔧 优化版本 v5
+# 关键优化（基于诊断分析）：
+#   - 📊 percentile 85→90：只密化最稀疏的 10%（原来 15% 仍然偏多）
+#   - 📊 decay_start_ratio 0.7→0.6：更早开始衰减，给新点更多优化时间
+#   - 📊 max_candidates 1000→2000：增加每次密化的点数上限
+#   - 🔧 下限保护已在代码中从 P50→P25（允许密化更多点）
+#   - 🔧 候选选择已从随机改为按分数排序（优先最稀疏的点）
 # 注意: 布尔参数使用 flag 格式（不带 true/false 值）
 GAR_FLAGS_COMPAT="--enable_fsgs_proximity \
     --gar_proximity_threshold 0.05 \
     --gar_proximity_k 5 \
     --gar_adaptive_threshold \
-    --gar_adaptive_percentile 85 \
+    --gar_adaptive_percentile 90 \
     --gar_progressive_decay \
-    --gar_decay_start_ratio 0.7 \
+    --gar_decay_start_ratio 0.6 \
     --gar_final_strength 0.5 \
-    --gar_max_candidates 1000"
+    --gar_max_candidates 2000"
 
 # ADM 参数（K-Planes Density Modulation）- 🔧 补全完整参数
 # 关键修复：

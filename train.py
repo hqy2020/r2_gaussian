@@ -387,11 +387,13 @@ def training(
                     if num_candidates > 0:
                         # 限制每次最多密化的点数，避免内存爆炸（使用参数化的上限）
                         if num_candidates > gar_max_candidates:
-                            # 随机选择一部分
+                            # [优化] 按邻近分数排序选择，优先选择最稀疏（分数最高）的点
+                            # 而非随机选择，确保密化最需要的区域
                             candidate_indices = torch.where(densify_mask)[0]
-                            perm = torch.randperm(len(candidate_indices), device=candidate_indices.device)[:gar_max_candidates]
-                            selected_indices = candidate_indices[perm]
-                            # 修复：使用新张量而非原地修改，避免潜在问题
+                            candidate_scores = proximity_scores[candidate_indices]
+                            _, sorted_idx = torch.sort(candidate_scores, descending=True)
+                            selected_indices = candidate_indices[sorted_idx[:gar_max_candidates]]
+                            # 使用新张量而非原地修改，避免潜在问题
                             new_mask = torch.zeros_like(densify_mask)
                             new_mask[selected_indices] = True
                             densify_mask = new_mask

@@ -91,10 +91,10 @@ class ModelParams(ParamGroup):
         self.proximity_interval = 500  # [GAR] 邻近密化间隔
         self.proximity_until_iter = 15000  # [GAR] 邻近密化结束迭代
 
-        # 🆕 GAR 优化参数（基于 good/bad case 分析）
-        self.gar_adaptive_threshold = False  # [GAR] 启用自适应阈值（基于邻近分数分布）
+        # 🆕 GAR 优化参数（基于诊断分析优化，避免 77% 过度密化问题）
+        self.gar_adaptive_threshold = True  # [GAR] 启用自适应阈值（基于邻近分数分布）- 默认启用解决固定阈值0.05导致的过度密化
         self.gar_adaptive_method = "percentile"  # [GAR] 自适应方法: percentile/std/iqr
-        self.gar_adaptive_percentile = 85.0  # [GAR] percentile 百分位（85=只密化最稀疏15%）
+        self.gar_adaptive_percentile = 90.0  # [GAR] percentile 百分位（90=只密化最稀疏10%，理想范围5-15%）
         self.gar_progressive_decay = False  # [GAR] 启用渐进衰减（训练后期减少密化）
         self.gar_decay_start_ratio = 0.7  # [GAR] 衰减开始进度（0.7=70%进度后开始）
         self.gar_final_strength = 0.5  # [GAR] 最终强度（0.5=阈值提高2倍）
