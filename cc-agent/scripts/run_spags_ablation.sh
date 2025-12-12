@@ -1,32 +1,3 @@
-#!/bin/bash
-# ============================================================================
-# SPAGS 消融实验脚本
-# ============================================================================
-# 用法:
-#   ./cc-agent/scripts/run_spags_ablation.sh <配置> <器官> <视角数> [GPU]
-#
-# 配置选项:
-#   baseline  - Baseline (无任何技术)
-#   sps       - 仅 SPS (空间先验播种)
-#   gar       - 仅 GAR (几何感知细化)
-#   adm       - 仅 ADM (自适应密度调制)
-#   sps_gar   - SPS + GAR
-#   sps_adm   - SPS + ADM
-#   gar_adm   - GAR + ADM
-#   spags     - Full SPAGS (SPS + GAR + ADM)
-#
-# 🆕 Baseline 方法:
-#   xgaussian - X-Gaussian baseline
-#   naf       - NAF (Neural Attenuation Fields)
-#   tensorf   - TensoRF
-#   saxnerf   - SAX-NeRF with Lineformer
-#
-# 示例:
-#   ./cc-agent/scripts/run_spags_ablation.sh spags foot 3 0
-#   ./cc-agent/scripts/run_spags_ablation.sh baseline chest 6 1
-#   ./cc-agent/scripts/run_spags_ablation.sh xgaussian foot 3 0
-#   ./cc-agent/scripts/run_spags_ablation.sh naf chest 6 1
-# ============================================================================
 
 set -e
 

@@ -1,14 +1,12 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-IMPORTANT
-启动训练必须调用run_spags_ablation.sh 脚本！！！不能额外写别的脚本来运行！！！
-IMPOERTANT
-neo4j 的mcp一定是在neo4j数据库里面的
-比较的都是2d情况下的psnr和ssim
 ## 项目概述
 
 **SPAGS**: 基于 3D Gaussian Splatting 的 CT 断层扫描重建项目。核心目标是稀疏视角（3/6/9 views）新视角合成。
+
+项目集成了 **5 种新视角合成方法** 用于对比实验：
+- **2 种 3DGS 方法**: R²-Gaussian (主方法)、X-Gaussian
+- **3 种 NeRF 方法**: NAF、TensoRF、SAX-NeRF
 
 ## 重要约定
 
@@ -18,6 +16,34 @@ neo4j 的mcp一定是在neo4j数据库里面的
 - **数据集位置**: `data/369/`（3/6/9 稀疏视角数据）
 - **多使用 serena MCP 理解代码，修改代码**
 - **尽可能确保都是有专门的助手 agent 执行具体流程**
+
+## 集成方法概览
+
+### 3D Gaussian Splatting 方法
+
+| 方法 | 说明 | 核心文件 |
+|------|------|----------|
+| **R²-Gaussian** | 主方法，包含 SPAGS 三阶段优化 (SPS/GAR/ADM) | `r2_gaussian/gaussian/gaussian_model.py` |
+| **X-Gaussian** | 3DGS 基准，使用球谐特征和 opacity | `r2_gaussian/baselines/xgaussian/` |
+
+### NeRF 方法
+
+| 方法 | 说明 | 编码方式 | 核心文件 |
+|------|------|----------|----------|
+| **NAF** | Neural Attenuation Fields | Hash Grid (16 levels) | `r2_gaussian/baselines/naf/` |
+| **TensoRF** | 张量分解 VM 编码 | TensoRF VM | `r2_gaussian/baselines/tensorf/` |
+| **SAX-NeRF** | Lineformer Transformer 增强 | Hash Grid + Lineformer | `r2_gaussian/baselines/saxnerf/` |
+
+### 方法路由机制
+
+`train.py` 通过 `--method` 参数选择方法：
+```python
+--method r2_gaussian  # 默认，主方法
+--method xgaussian    # X-Gaussian
+--method naf          # NAF
+--method tensorf      # TensoRF
+--method saxnerf      # SAX-NeRF
+```
 
 ## R²-Gaussian 性能结果
 
@@ -54,39 +80,28 @@ neo4j 的mcp一定是在neo4j数据库里面的
 | Pancreas | 35.71 | 0.961 |
 | 平均 | 36.10 | 0.966 |
 
-
-
 ## 常用命令
 
 ### 环境激活
 ```bash
 conda activate r2_gaussian_new
 ```
-IMPORTANT
+
 ### 训练
-```bash
-# SPAGS 消融实验脚本（推荐）
-# 用法: ./cc-agent/scripts/run_spags_ablation.sh <配置> <器官> <视角数> [GPU]
-#
-# 配置选项:
-#   baseline  - Baseline (无任何技术)
-#   sps       - 仅 SPS (空间先验播种)
-#   gar       - 仅 GAR (几何感知细化)
-#   adm       - 仅 ADM (自适应密度调制)
-#   sps_gar   - SPS + GAR
-#   sps_adm   - SPS + ADM
-#   gar_adm   - GAR + ADM
-#   spags     - Full SPAGS (SPS + GAR + ADM)
-#
-# 器官: foot, chest, head, abdomen, pancreas
-# 视角: 3, 6, 9
-#
-# 示例:
+
+#### SPAGS 消融实验脚本（推荐）
+
+# SPAGS 方法示例
 ./cc-agent/scripts/run_spags_ablation.sh spags foot 3 0
 ./cc-agent/scripts/run_spags_ablation.sh baseline chest 6 1
 ./cc-agent/scripts/run_spags_ablation.sh sps_gar pancreas 9 0
 
-
+# 基准方法示例
+./cc-agent/scripts/run_spags_ablation.sh xgaussian foot 3 0
+./cc-agent/scripts/run_spags_ablation.sh naf chest 6 1
+./cc-agent/scripts/run_spags_ablation.sh tensorf head 9 0
+./cc-agent/scripts/run_spags_ablation.sh saxnerf abdomen 3 0
+```
 
 ### 初始化点云
 ```bash
@@ -94,49 +109,95 @@ python initialize_pcd.py --data <path_to_data>
 python initialize_pcd.py --data <path_to_data> --evaluate  # 评估初始化质量
 ```
 
-
 ## 代码架构
 
 ```
 r2_gaussian/
-├── train.py                    # 主训练入口
-├── test.py                     # 测试评估入口
-├── initialize_pcd.py           # 点云初始化（FDK 采样）
-├── r2_gaussian/                # 核心代码模块
-│   ├── gaussian/
-│   │   ├── gaussian_model.py   # GaussianModel 类：Gaussian 参数管理
-│   │   ├── render_query.py     # render() / query() 函数
-│   │   ├── kplanes.py          # K-Planes 编码器（可选特征增强）
-│   │   └── initialize.py       # 初始化逻辑
-│   ├── dataset/
-│   │   ├── dataset_readers.py  # NAF/NeRF 格式数据加载
-│   │   └── cameras.py          # Camera 类定义
-│   ├── utils/
-│   │   ├── loss_utils.py       # L1/SSIM/TV 损失函数
+├── train.py                      # 主训练入口（方法路由）
+├── test.py                       # 测试评估入口
+├── initialize_pcd.py             # 点云初始化（SPS 实现）
+├── r2_gaussian/                  # 核心代码模块
+│   ├── gaussian/                 # R²-Gaussian 核心
+│   │   ├── gaussian_model.py     # GaussianModel 类：Gaussian 参数管理
+│   │   ├── render_query.py       # render() / query() 函数
+│   │   ├── kplanes.py            # K-Planes 编码器（ADM 实现）
+│   │   └── initialize.py         # 初始化逻辑
+│   ├── baselines/                # 四种基准方法
+│   │   ├── registry.py           # 方法注册表（核心配置）
+│   │   ├── xgaussian/            # X-Gaussian (3DGS)
+│   │   │   ├── model.py          # XGaussianModel 类
+│   │   │   ├── renderer.py       # X 光渲染器
+│   │   │   ├── trainer.py        # 训练函数
+│   │   │   └── config.py         # 参数配置
+│   │   ├── naf/                  # NAF (NeRF)
+│   │   │   └── config.py         # Hash Grid 配置
+│   │   ├── tensorf/              # TensoRF (NeRF)
+│   │   │   └── config.py         # VM 编码配置
+│   │   ├── saxnerf/              # SAX-NeRF (NeRF + Transformer)
+│   │   │   └── config.py         # Lineformer 配置
+│   │   └── nerf_base/            # NeRF 共享基础代码
+│   │       ├── encoder/          # 位置编码器
+│   │       │   ├── hashgrid.py   # Hash Grid 编码
+│   │       │   └── tensorf.py    # TensoRF VM 编码
+│   │       ├── lineformer.py     # Lineformer 网络
+│   │       ├── network.py        # MLP 密度网络
+│   │       ├── render.py         # NeRF 渲染函数
+│   │       └── trainer.py        # 统一 NeRF 训练函数
+│   ├── innovations/              # 创新点模块
+│   │   └── fsgs/                 # FSGS 邻近密集化（GAR 实现）
+│   │       └── proximity_densifier.py
+│   ├── dataset/                  # 数据加载
+│   │   ├── dataset_readers.py    # NAF/NeRF 格式解析
+│   │   └── cameras.py            # Camera 类定义
+│   ├── utils/                    # 工具函数
+│   │   ├── loss_utils.py         # L1/SSIM/TV 损失函数
 │   │   └── ...
-│   ├── arguments/              # 命令行参数定义（ModelParams/OptimizationParams）
-│   ├── innovations/fsgs/       # FSGS 邻近密集化模块
-│   └── submodules/             # CUDA 扩展
+│   ├── arguments/                # 命令行参数定义
+│   └── submodules/               # CUDA 扩展
 │       ├── xray-gaussian-rasterization-voxelization/  # X 射线光栅化
-│       └── simple-knn/         # KNN 搜索
-├── cc-agent/                   # AI 科研助手系统
-├── data/369/                   # 稀疏视角数据集
-└── output/                     # 训练输出
+│       └── simple-knn/           # KNN 搜索
+├── cc-agent/                     # AI 科研助手系统
+├── data/369/                     # 稀疏视角数据集
+└── output/                       # 训练输出
 ```
 
-### 关键数据流
+## 关键数据流
 
+### R²-Gaussian 训练流程
 1. **数据加载**: `Scene` → `dataset_readers.py` → NAF/NeRF 格式解析
-2. **初始化**: `initialize_pcd.py` → FDK 重建 → 点云采样 → `init_*.npy`
-3. **训练循环**: `train.py` → `GaussianModel` → `render()` → 投影 → 损失计算 → 优化
+2. **初始化**: `initialize_pcd.py` → FDK 重建 → 密度加权采样 (SPS) → `init_*.npy`
+3. **训练循环**:
+   - GAR 邻近密化 (每 N 次迭代)
+   - ADM 密度调制 (K-Planes)
+   - 渲染投影 → 损失计算 → 优化
 4. **体积查询**: `query()` → 体素化 Gaussian → 3D 体积重建
 
-### GaussianModel 核心属性
+### NeRF 基准训练流程
+1. **数据加载**: 相同的数据接口
+2. **编码**: Hash Grid (NAF/SAX-NeRF) 或 TensoRF VM
+3. **网络**: MLP (NAF/TensoRF) 或 Lineformer (SAX-NeRF)
+4. **渲染**: 体积渲染管线
+
+## GaussianModel 核心属性
 
 - `_xyz`: 高斯中心位置 (world coordinates)
 - `_scaling`: 3D 尺度参数
 - `_rotation`: 旋转四元数
 - `_density`: 密度参数（Softplus 激活）
+
+## 关键文件速查表
+
+| 功能 | 文件路径 |
+|------|---------|
+| 方法注册表 | `r2_gaussian/baselines/registry.py` |
+| R²-Gaussian 模型 | `r2_gaussian/gaussian/gaussian_model.py` |
+| X-Gaussian 模型 | `r2_gaussian/baselines/xgaussian/model.py` |
+| NeRF 统一训练器 | `r2_gaussian/baselines/nerf_base/trainer.py` |
+| Lineformer 网络 | `r2_gaussian/baselines/nerf_base/lineformer.py` |
+| K-Planes (ADM) | `r2_gaussian/gaussian/kplanes.py` |
+| FSGS 密化器 (GAR) | `r2_gaussian/innovations/fsgs/proximity_densifier.py` |
+| 点云初始化 (SPS) | `initialize_pcd.py` |
+| 消融实验脚本 | `cc-agent/scripts/run_spags_ablation.sh` |
 
 ## 技术栈
 
@@ -144,59 +205,3 @@ r2_gaussian/
 - **TIGRE 2.3**: CT 数据生成和 FDK 重建
 - **Open3D**: 3D 数据处理
 - **TensorBoard**: 训练可视化
-
-### CUDA 扩展编译
-```bash
-pip install -e r2_gaussian/submodules/xray-gaussian-rasterization-voxelization
-pip install -e r2_gaussian/submodules/simple-knn
-```
-
-## Memory 工具使用
-
-- 使用 Neo4j 数据库存储项目记忆
-- 每次会话开始时：(1) 切换到 neo4j 数据库 (2) 搜索相关记忆
-
-### 记忆存储规范
-- 单个 observation < 150 字
-- 每个 memory ≤ 3 个 observations
-- 保持类型纯度（不混合 issue/decision/implementation）
-- 详细指南见 `cc-agent/MCP工具使用指南.md` 和 `cc-agent/记忆模板.md`
-
-## 三阶段工作流
-
-### 阶段一：分析问题
-**声明格式**: `【分析问题】`
-- 使用 `memory_find` 查找相关记忆
-- 使用 serena MCP 的 `find_symbol` / `find_referencing_symbols` 分析代码
-- **禁止**：修改代码、急于给方案
-
-### 阶段二：制定方案
-**声明格式**: `【制定方案】`
-- 使用 `memory_store` 存储新发现的知识/决策
-- 列出变更文件和描述
-- 需要决策时向用户提问
-
-### 阶段三：执行方案
-**声明格式**: `【执行方案】`
-- 严格按方案实现
-- 执行后记录实现结果为 `implementation` 类型记忆
-- **禁止**：自动提交代码
-
-## 科研助手团队
-
-```
-cc-agent/
-├── medical_expert/     # 医学 CT 影像专家
-├── 3dgs_expert/        # 3D Gaussian Splatting 专家
-├── code/               # PyTorch/CUDA 编程专家
-├── experiments/        # 深度学习调参专家
-├── records/            # 进度跟踪（progress.md）
-└── 论文/               # 论文库
-```
-
-## 详细指南
-
-- **完整工作流**: `cc-agent/工作流详细指南.md`
-- **MCP 工具使用**: `cc-agent/MCP工具使用指南.md`
-- **代码结构**: `.serena/memories/codebase_structure.md`
-- **常用命令**: `.serena/memories/suggested_commands.md`
