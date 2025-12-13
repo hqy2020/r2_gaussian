@@ -16,6 +16,9 @@ def generate_rays_from_camera(
     """
     从 R²-Gaussian 相机生成射线
 
+    R²-Gaussian 已对场景进行归一化 (sVoxel=[2,2,2], 场景在 [-1,1] 范围)
+    相机位于 DSO 距离处 (如 7.8125)，看向原点
+
     Args:
         viewpoint_camera: R²-Gaussian Camera 对象
         scanner_cfg: 扫描仪配置
@@ -30,9 +33,23 @@ def generate_rays_from_camera(
     mode = viewpoint_camera.mode
     device = "cuda"
 
-    # 从 scanner_cfg 获取 near/far
+    # 从 scanner_cfg 获取几何参数
+    # R²-Gaussian 已经归一化场景: sVoxel=[2,2,2], 场景在 [-1,1] 范围
     sVoxel = scanner_cfg["sVoxel"]
-    bound = max(sVoxel) / 2  # 场景边界
+    DSO = scanner_cfg["DSO"]  # 源到原点距离 (已归一化)
+    offOrigin = scanner_cfg.get("offOrigin", [0.0, 0.0, 0.0])
+
+    # 使用原始 SAX-NeRF 的 near/far 计算方式
+    # 计算场景在 xy 平面上的最大距离
+    tolerance = 0.005
+    dist1 = math.sqrt((offOrigin[0] - sVoxel[0] / 2)**2 + (offOrigin[1] - sVoxel[1] / 2)**2)
+    dist2 = math.sqrt((offOrigin[0] - sVoxel[0] / 2)**2 + (offOrigin[1] + sVoxel[1] / 2)**2)
+    dist3 = math.sqrt((offOrigin[0] + sVoxel[0] / 2)**2 + (offOrigin[1] - sVoxel[1] / 2)**2)
+    dist4 = math.sqrt((offOrigin[0] + sVoxel[0] / 2)**2 + (offOrigin[1] + sVoxel[1] / 2)**2)
+    dist_max = max(dist1, dist2, dist3, dist4)
+
+    near_dist = max(0.0, DSO - dist_max - tolerance)
+    far_dist = min(DSO * 2, DSO + dist_max + tolerance)
 
     # 生成像素网格
     i, j = torch.meshgrid(
@@ -42,71 +59,74 @@ def generate_rays_from_camera(
     )
 
     if mode == 0:
-        # 平行投影
-        # 对于平行投影，rays_d 都相同，rays_o 随像素变化
-        # R²-Gaussian 使用 tanfov=1.0 表示平行投影
-
+        # 平行投影 (parallel beam CT)
         # 像素坐标归一化到 [-1, 1]
         u = (j - W / 2) / W * 2
         v = (i - H / 2) / H * 2
 
         # 获取相机参数
-        R = viewpoint_camera.world_view_transform[:3, :3].T  # 世界到相机旋转
+        R = viewpoint_camera.world_view_transform[:3, :3].T  # 相机到世界旋转
         camera_center = viewpoint_camera.camera_center
 
-        # 平行投影的射线方向是相机的 z 轴方向
-        rays_d = R[2:3, :].expand(H * W, -1)  # [H*W, 3]
+        # 平行投影的射线方向是相机的 z 轴方向 (看向原点)
+        # 对于平行投影，所有射线方向相同
+        forward = -camera_center / torch.norm(camera_center)  # 指向原点
+        rays_d = forward.unsqueeze(0).expand(H * W, -1)  # [H*W, 3]
 
         # 射线起点随像素位置变化
-        # 需要根据 FoV 缩放
-        fovx = viewpoint_camera.FoVx
-        fovy = viewpoint_camera.FoVy
-        scale_x = math.tan(fovx / 2) * 2 if fovx > 0 else 1.0
-        scale_y = math.tan(fovy / 2) * 2 if fovy > 0 else 1.0
+        # 需要根据探测器尺寸缩放
+        dDetector = scanner_cfg.get("dDetector", [1.0, 1.0])
+        sDetector = scanner_cfg.get("sDetector", [2.0, 2.0])
 
-        # 在相机坐标系中的偏移
-        offset_x = u.reshape(-1, 1) * scale_x * bound
-        offset_y = v.reshape(-1, 1) * scale_y * bound
+        # 在探测器平面上的偏移
+        offset_x = u.reshape(-1, 1) * sDetector[0] / 2
+        offset_y = v.reshape(-1, 1) * sDetector[1] / 2
 
-        # 转换到世界坐标
-        local_offset = torch.cat([offset_x, offset_y, torch.zeros_like(offset_x)], dim=-1)
-        world_offset = torch.matmul(local_offset, R.T)
+        # 获取相机坐标系的 right 和 up 向量
+        right = R[0:1, :]  # x 轴
+        up = R[1:2, :]     # y 轴
 
-        # 射线起点 = 相机中心 + 偏移
-        rays_o = camera_center.unsqueeze(0) + world_offset
+        # 射线起点 = 相机位置 + 探测器平面偏移
+        rays_o = camera_center.unsqueeze(0) + offset_x * right + offset_y * up
 
-        # near/far 基于场景边界
-        near = torch.ones(H * W, 1, device=device) * (-bound * 2)
-        far = torch.ones(H * W, 1, device=device) * (bound * 2)
+        # near/far 设置
+        near = torch.ones(H * W, 1, device=device) * near_dist
+        far = torch.ones(H * W, 1, device=device) * far_dist
 
     elif mode == 1:
-        # 透视投影
-        tanfovx = math.tan(viewpoint_camera.FoVx * 0.5)
-        tanfovy = math.tan(viewpoint_camera.FoVy * 0.5)
+        # 透视/锥形投影 (cone beam CT)
+        # 使用原始 SAX-NeRF 的射线生成方式
+        DSD = scanner_cfg.get("DSD", DSO * 1.5)  # 源到探测器距离
+        dDetector = scanner_cfg.get("dDetector", [1.0, 1.0])
+        offDetector = scanner_cfg.get("offDetector", [0.0, 0.0])
 
-        # 像素坐标转相机坐标
-        u = (j - W / 2) / W * 2 * tanfovx
-        v = (i - H / 2) / H * 2 * tanfovy
+        # 像素坐标转探测器坐标 (与 SAX-NeRF tigre.py 一致)
+        # uu, vv 是探测器平面上相对于中心的偏移
+        uu = (j + 0.5 - W / 2) * dDetector[0] + offDetector[0]
+        vv = (i + 0.5 - H / 2) * dDetector[1] + offDetector[1]
 
-        # 射线方向（相机坐标系）
-        dirs = torch.stack([u, v, torch.ones_like(u)], dim=-1)  # [H, W, 3]
-        dirs = dirs / torch.norm(dirs, dim=-1, keepdim=True)
+        # 射线方向（相机坐标系，z 轴指向前方）
+        # dirs = [uu/DSD, vv/DSD, 1] 然后归一化
+        dirs = torch.stack([uu / DSD, vv / DSD, torch.ones_like(uu)], dim=-1)  # [H, W, 3]
 
-        # 转换到世界坐标系
-        R = viewpoint_camera.world_view_transform[:3, :3].T
-        rays_d = torch.matmul(dirs.reshape(-1, 3), R.T)  # [H*W, 3]
+        # c2w 旋转矩阵: world_view_transform[:3, :3] 就是 c2w 旋转
+        # 注意: R²-Gaussian 存储方式使得 W2C[:3, :3] = c2w[:3, :3]
+        c2w_rot = viewpoint_camera.world_view_transform[:3, :3]  # [3, 3]
 
-        # 射线起点
+        # 转换到世界坐标系: rays_d = c2w_rot @ dirs
+        rays_d = torch.matmul(dirs.reshape(-1, 3), c2w_rot.T)  # [H*W, 3]
+
+        # 射线起点 = 相机中心 (所有射线从同一点出发)
         rays_o = viewpoint_camera.camera_center.unsqueeze(0).expand(H * W, -1)
 
-        # near/far
-        near = torch.ones(H * W, 1, device=device) * 0.1
-        far = torch.ones(H * W, 1, device=device) * (bound * 4)
+        # near/far 基于相机到场景的距离
+        near = torch.ones(H * W, 1, device=device) * near_dist
+        far = torch.ones(H * W, 1, device=device) * far_dist
 
     else:
         raise ValueError(f"Unsupported camera mode: {mode}")
 
-    # 组合射线
+    # 组合射线 (坐标已归一化)
     rays = torch.cat([rays_o, rays_d, near, far], dim=-1)  # [H*W, 8]
     indices = torch.stack([i.reshape(-1), j.reshape(-1)], dim=-1).long()  # [H*W, 2]
 
@@ -253,7 +273,7 @@ def raw2outputs(
     """
     # 计算采样间隔
     dists = z_vals[..., 1:] - z_vals[..., :-1]
-    dists = torch.cat([dists, torch.full_like(dists[..., :1], 1e10)], dim=-1)
+    dists = torch.cat([dists, dists[..., -1:]], dim=-1)
 
     # 考虑射线方向长度
     dists = dists * torch.norm(rays_d[..., None, :], dim=-1)

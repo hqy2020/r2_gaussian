@@ -24,7 +24,7 @@ class SAXNeRFConfig:
     skips: tuple = (2,)
     out_dim: int = 1
     last_activation: str = "sigmoid"
-    bound: float = 0.3
+    bound: float = 1.0  # 场景归一化到 [-1, 1]^3
 
     # Lineformer 特有参数
     line_size: int = 2

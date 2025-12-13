@@ -284,19 +284,27 @@ class GaussianModel:
         if not hasattr(self, 'current_iteration'):
             return 1.0
 
-        it = self.current_iteration
-        warmup = getattr(self, 'adm_warmup_iters', 3000)
-        decay_start = getattr(self, 'adm_decay_start', 20000)
-        final = getattr(self, 'adm_final_strength', 0.5)
-        total = 30000
+        it = int(self.current_iteration)
+        warmup = int(getattr(self, 'adm_warmup_iters', 3000))
+        decay_start = int(getattr(self, 'adm_decay_start', 20000))
+        final = float(getattr(self, 'adm_final_strength', 0.5))
+        total = int(getattr(self, 'adm_total_iters', 30000))
 
-        if it < warmup:
-            return it / warmup
-        elif it < decay_start:
+        if total <= 0:
             return 1.0
-        else:
-            progress = (it - decay_start) / (total - decay_start)
-            return 1.0 - (1.0 - final) * min(1.0, progress)
+
+        if warmup > 0 and it < warmup:
+            return it / float(warmup)
+
+        if decay_start <= 0 or it < decay_start or decay_start >= total:
+            return 1.0
+
+        denom = float(total - decay_start)
+        if denom <= 0:
+            return 1.0
+        progress = (it - decay_start) / denom
+        progress = min(1.0, max(0.0, progress))
+        return 1.0 - (1.0 - final) * progress
 
     def get_adm_diagnostics(self):
         """
@@ -524,6 +532,7 @@ class GaussianModel:
             self.adm_warmup_iters = getattr(training_args, 'adm_warmup_iters', 3000)
             self.adm_decay_start = getattr(training_args, 'adm_decay_start', 20000)
             self.adm_final_strength = getattr(training_args, 'adm_final_strength', 0.5)
+            self.adm_total_iters = getattr(training_args, 'iterations', 30000)
 
     def update_learning_rate(self, iteration):
         """Learning rate scheduling per step"""
@@ -577,6 +586,14 @@ class GaussianModel:
             "rotation": rotation,
             "scale_bound": self.scale_bound,
         }
+
+        # 🎯 保存 K-Planes 和 Decoder 状态（ADM 模块）
+        if self.enable_kplanes:
+            if self.kplanes_encoder is not None:
+                out["kplanes_state"] = {k: v.cpu() for k, v in self.kplanes_encoder.state_dict().items()}
+            if self.density_decoder is not None:
+                out["decoder_state"] = {k: v.cpu() for k, v in self.density_decoder.state_dict().items()}
+
         with open(path, "wb") as f:
             pickle.dump(out, f, pickle.HIGHEST_PROTOCOL)
 
@@ -616,6 +633,15 @@ class GaussianModel:
         )
         self.scale_bound = data["scale_bound"]
         self.setup_functions()  # Reset activation functions
+
+        # 🎯 加载 K-Planes 和 Decoder 状态（ADM 模块）
+        if self.enable_kplanes:
+            if "kplanes_state" in data and self.kplanes_encoder is not None:
+                self.kplanes_encoder.load_state_dict(data["kplanes_state"])
+                print("✓ K-Planes encoder 状态已从 pickle 恢复")
+            if "decoder_state" in data and self.density_decoder is not None:
+                self.density_decoder.load_state_dict(data["decoder_state"])
+                print("✓ K-Planes decoder 状态已从 pickle 恢复")
 
     def replace_tensor_to_optimizer(self, tensor, name):
         optimizable_tensors = {}

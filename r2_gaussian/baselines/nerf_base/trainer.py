@@ -145,13 +145,7 @@ def training_nerf(
     model = NeRFModel(config).cuda()
 
     # 优化器
-    grad_vars = list(model.net.parameters())
-    if model.encoder is not None:
-        grad_vars += list(model.encoder.parameters())
-    if model.net_fine is not None:
-        grad_vars += list(model.net_fine.parameters())
-
-    optimizer = torch.optim.Adam(grad_vars, lr=config.lrate, betas=(0.9, 0.999))
+    optimizer = torch.optim.Adam(model.parameters(), lr=config.lrate, betas=(0.9, 0.999))
     lr_scheduler = torch.optim.lr_scheduler.StepLR(
         optimizer, step_size=config.lrate_step, gamma=config.lrate_gamma
     )
@@ -177,13 +171,18 @@ def training_nerf(
     nVoxel = scanner_cfg["nVoxel"]
     sVoxel = scanner_cfg["sVoxel"]
     offOrigin = scanner_cfg["offOrigin"]
+    scene_bound = max(sVoxel) / 2  # 场景边界用于归一化
 
-    # 创建体素坐标
-    x = torch.linspace(-sVoxel[0]/2, sVoxel[0]/2, int(nVoxel[0]))
-    y = torch.linspace(-sVoxel[1]/2, sVoxel[1]/2, int(nVoxel[1]))
-    z = torch.linspace(-sVoxel[2]/2, sVoxel[2]/2, int(nVoxel[2]))
+    # 创建体素坐标 (归一化到 [-1, 1])
+    # 原始范围: [-sVoxel/2, sVoxel/2]
+    # 归一化: [-1, 1]
+    x = torch.linspace(-sVoxel[0]/2, sVoxel[0]/2, int(nVoxel[0])) / scene_bound
+    y = torch.linspace(-sVoxel[1]/2, sVoxel[1]/2, int(nVoxel[1])) / scene_bound
+    z = torch.linspace(-sVoxel[2]/2, sVoxel[2]/2, int(nVoxel[2])) / scene_bound
     xx, yy, zz = torch.meshgrid(x, y, z, indexing='ij')
     voxels = torch.stack([xx, yy, zz], dim=-1).cuda()
+
+    print(f"[NeRF Training] Voxel coords normalized to [{voxels.min():.2f}, {voxels.max():.2f}]")
 
     print(f"[NeRF Training] Total iterations: {opt.iterations}")
     print(f"[NeRF Training] Training views: {len(train_cameras)}")
@@ -292,8 +291,9 @@ def training_nerf(
             torch.save(save_dict, ckpt_path)
             print(f"\n[{method}] Saved checkpoint to {ckpt_path}")
 
-        # 学习率调度
-        if iteration % len(train_cameras) == 0:
+        # 学习率调度 - 基于固定迭代次数，而非视角循环
+        # 每 5000 次迭代衰减一次学习率，确保 3/6/9 视角训练有一致的学习率行为
+        if iteration % 5000 == 0:
             lr_scheduler.step()
 
     print(f"\n[{method}] Training complete!")

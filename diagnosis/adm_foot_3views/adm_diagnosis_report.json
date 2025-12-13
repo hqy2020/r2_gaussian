@@ -1,0 +1,21 @@
+{
+  "summary": {
+    "kplanes_status": "NOT_FOUND"
+  },
+  "kplanes_statistics": {},
+  "decoder_info": {
+    "status": "NOT_FOUND"
+  },
+  "adm_analysis": {},
+  "config": {
+    "checkpoint": "output/_2025_12_12_23_44_foot_3views_adm/point_cloud/iteration_30000/point_cloud.pickle"
+  },
+  "diagnosis": [
+    {
+      "level": "WARNING",
+      "issue": "Decoder参数未找到",
+      "detail": "checkpoint中没有density_decoder相关参数",
+      "suggestion": "检查模型保存是否包含decoder参数"
+    }
+  ]
+}

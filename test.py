@@ -50,9 +50,15 @@ def testing(
     )
 
     # Set up Gaussians
-    gaussians = GaussianModel(None)  # scale_bound will be loaded later
+    # scale_bound will be loaded later; pass dataset so ADM(K-Planes) can be enabled during eval
+    gaussians = GaussianModel(None, args=dataset)
     loaded_iter = initialize_gaussian(gaussians, dataset, iteration)
     scene.gaussians = gaussians
+
+    # 🆕 Keep ADM view-adaptive scaling consistent with training
+    num_train_views = len(scene.getTrainCameras())
+    if num_train_views > 0:
+        gaussians.set_num_train_views(num_train_views)
 
     save_path = osp.join(
         dataset.model_path,

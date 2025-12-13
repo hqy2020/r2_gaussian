@@ -194,6 +194,9 @@ class DensityMLPDecoder(nn.Module):
         self.hidden_dim = hidden_dim
         self.num_layers = num_layers
 
+        # 🔧 输入归一化层（防止 K-Planes 特征过大导致 tanh/sigmoid 饱和）
+        self.input_norm = nn.LayerNorm(input_dim)
+
         # 共享 backbone
         backbone_layers = []
         backbone_layers.append(nn.Linear(input_dim, hidden_dim))
@@ -221,14 +224,11 @@ class DensityMLPDecoder(nn.Module):
                 nn.init.xavier_uniform_(m.weight)
                 nn.init.zeros_(m.bias)
 
-        # offset_head 正常初始化
-        nn.init.xavier_uniform_(self.offset_head[0].weight)
+        # 🔧 offset_head 小初始化（确保初始输出接近 0，tanh(0) = 0）
+        nn.init.normal_(self.offset_head[0].weight, std=0.01)
         nn.init.zeros_(self.offset_head[0].bias)
 
-        # confidence_head 初始化（修复：提高初始值以加速收敛）
-        # 旧值 sigmoid(-1) ≈ 0.27 过于保守，需要较长 warmup 才能生效
-        # 新值 sigmoid(0) = 0.5，让网络从中性状态开始学习
-        # ADM 已有 warmup 机制保护，不需要 confidence 额外保守
+        # 🔧 confidence_head 小初始化（确保初始输出接近 0.5）
         nn.init.normal_(self.confidence_head[0].weight, std=0.01)
         nn.init.constant_(self.confidence_head[0].bias, 0.0)  # sigmoid(0) = 0.5
 
@@ -243,6 +243,8 @@ class DensityMLPDecoder(nn.Module):
             offset (torch.Tensor): density 调制方向，形状 [N, 1]，范围 [-1, 1]
             confidence (torch.Tensor): 调制置信度，形状 [N, 1]，范围 [0, 1]
         """
+        # 🔧 先归一化输入特征
+        kplanes_feat = self.input_norm(kplanes_feat)
         features = self.backbone(kplanes_feat)
         offset = self.offset_head(features)
         confidence = self.confidence_head(features)

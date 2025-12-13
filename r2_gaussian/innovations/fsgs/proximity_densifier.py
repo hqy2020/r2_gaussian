@@ -380,8 +380,8 @@ class ProximityGuidedDensifier:
             >>> adaptive_thresh = densifier.compute_adaptive_threshold_value(scores)
             >>> # adaptive_thresh 会根据点云密度自动调整
         """
-        method = method or self.adaptive_method
-        percentile = percentile or self.adaptive_percentile
+        method = self.adaptive_method if method is None else method
+        percentile = self.adaptive_percentile if percentile is None else percentile
 
         if method == "percentile":
             # 使用百分位数：只密化邻近分数高于该百分位的点
@@ -441,8 +441,8 @@ class ProximityGuidedDensifier:
             >>> # 如果 progress > 0.5，mult > 1.0（阈值提高）
             >>> effective_threshold = base_threshold * mult
         """
-        decay_start_ratio = decay_start_ratio or self.decay_start_ratio
-        final_strength = final_strength or self.final_strength
+        decay_start_ratio = self.decay_start_ratio if decay_start_ratio is None else decay_start_ratio
+        final_strength = self.final_strength if final_strength is None else final_strength
 
         # 计算进度 [0, 1]
         total_iters = until_iter - start_iter

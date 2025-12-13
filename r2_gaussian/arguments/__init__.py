@@ -125,7 +125,75 @@ class ModelParams(ParamGroup):
 
     def extract(self, args):
         g = super().extract(args)
-        g.source_path = osp.abspath(g.source_path)
+
+        # Normalize paths
+        if hasattr(g, "source_path") and g.source_path:
+            g.source_path = osp.abspath(g.source_path)
+
+        # ---------------------------------------------------------------------
+        # Backward/forward compatibility: sync alias parameters
+        # ---------------------------------------------------------------------
+        # NOTE: We keep both "new" (spags) and "old" names in the CLI for
+        #       compatibility. Here we sync them so downstream code can safely
+        #       read either one.
+
+        # GAR enable flags: any alias enables GAR
+        enable_gar = bool(
+            getattr(g, "enable_gar", False)
+            or getattr(g, "enable_gar_proximity", False)
+            or getattr(g, "enable_fsgs_proximity", False)
+        )
+        g.enable_gar = enable_gar
+        g.enable_gar_proximity = enable_gar
+        g.enable_fsgs_proximity = enable_gar
+
+        # ADM enable flags: any alias enables ADM
+        enable_adm = bool(
+            getattr(g, "enable_adm", False) or getattr(g, "enable_kplanes", False)
+        )
+        g.enable_adm = enable_adm
+        g.enable_kplanes = enable_adm
+
+        def _sync_scalar_alias(new_name: str, old_name: str):
+            new_default = getattr(self, new_name)
+            old_default = getattr(self, old_name)
+            new_val = getattr(g, new_name, new_default)
+            old_val = getattr(g, old_name, old_default)
+
+            # Sentinel mode may omit keys; treat None as "unset"
+            new_set = new_val is not None and new_val != new_default
+            old_set = old_val is not None and old_val != old_default
+
+            if new_set and old_set and new_val != old_val:
+                raise ValueError(
+                    f"Conflicting args: --{new_name}={new_val} vs --{old_name}={old_val}. "
+                    f"Please set only one."
+                )
+
+            if new_set and not old_set:
+                old_val = new_val
+            elif old_set and not new_set:
+                new_val = old_val
+            elif new_val is None and old_val is None:
+                new_val, old_val = new_default, old_default
+            elif new_val is None:
+                new_val = old_val
+            elif old_val is None:
+                old_val = new_val
+
+            setattr(g, new_name, new_val)
+            setattr(g, old_name, old_val)
+
+        # GAR scalar aliases
+        _sync_scalar_alias("gar_proximity_threshold", "proximity_threshold")
+        _sync_scalar_alias("gar_proximity_k", "proximity_k_neighbors")
+
+        # ADM scalar aliases (ModelParams part)
+        _sync_scalar_alias("adm_resolution", "kplanes_resolution")
+        _sync_scalar_alias("adm_feature_dim", "kplanes_dim")
+        _sync_scalar_alias("adm_decoder_hidden", "kplanes_decoder_hidden")
+        _sync_scalar_alias("adm_decoder_layers", "kplanes_decoder_layers")
+
         return g
 
 
@@ -199,6 +267,48 @@ class OptimizationParams(ParamGroup):
         self.tv_loss_type = "l2"  # [兼容] 旧名
 
         super().__init__(parser, "Optimization Parameters")
+
+    def extract(self, args):
+        g = super().extract(args)
+
+        def _sync_scalar_alias(new_name: str, old_name: str):
+            new_default = getattr(self, new_name)
+            old_default = getattr(self, old_name)
+            new_val = getattr(g, new_name, new_default)
+            old_val = getattr(g, old_name, old_default)
+
+            # Treat None as "unset" (for sentinel parsing)
+            new_set = new_val is not None and new_val != new_default
+            old_set = old_val is not None and old_val != old_default
+
+            if new_set and old_set and new_val != old_val:
+                raise ValueError(
+                    f"Conflicting args: --{new_name}={new_val} vs --{old_name}={old_val}. "
+                    f"Please set only one."
+                )
+
+            if new_set and not old_set:
+                old_val = new_val
+            elif old_set and not new_set:
+                new_val = old_val
+            elif new_val is None and old_val is None:
+                new_val, old_val = new_default, old_default
+            elif new_val is None:
+                new_val = old_val
+            elif old_val is None:
+                old_val = new_val
+
+            setattr(g, new_name, new_val)
+            setattr(g, old_name, old_val)
+
+        # ADM optimizer aliases
+        _sync_scalar_alias("adm_lr_init", "kplanes_lr_init")
+        _sync_scalar_alias("adm_lr_final", "kplanes_lr_final")
+        _sync_scalar_alias("adm_lr_max_steps", "kplanes_lr_max_steps")
+        _sync_scalar_alias("adm_lambda_tv", "lambda_plane_tv")
+        _sync_scalar_alias("adm_tv_type", "tv_loss_type")
+
+        return g
 
 
 def get_combined_args(parser: ArgumentParser):

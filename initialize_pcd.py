@@ -74,6 +74,47 @@ class InitParams(ParamGroup):
 
         super().__init__(parser, "Initialization Parameters")
 
+    def extract(self, args):
+        g = super().extract(args)
+
+        # ---------------------------------------------------------------------
+        # Backward/forward compatibility: sync alias parameters
+        # ---------------------------------------------------------------------
+        # Denoise flags: either alias enables denoise
+        enable_denoise = bool(
+            getattr(g, "sps_denoise", False) or getattr(g, "enable_denoise", False)
+        )
+        g.sps_denoise = enable_denoise
+        g.enable_denoise = enable_denoise
+
+        def _sync_scalar_alias(new_name: str, old_name: str):
+            new_default = getattr(self, new_name)
+            old_default = getattr(self, old_name)
+            new_val = getattr(g, new_name, new_default)
+            old_val = getattr(g, old_name, old_default)
+
+            new_set = new_val != new_default
+            old_set = old_val != old_default
+
+            if new_set and old_set and new_val != old_val:
+                raise ValueError(
+                    f"Conflicting args: --{new_name}={new_val} vs --{old_name}={old_val}. "
+                    f"Please set only one."
+                )
+
+            if new_set and not old_set:
+                old_val = new_val
+            elif old_set and not new_set:
+                new_val = old_val
+
+            setattr(g, new_name, new_val)
+            setattr(g, old_name, old_val)
+
+        _sync_scalar_alias("sps_denoise_sigma", "denoise_sigma")
+        _sync_scalar_alias("sps_strategy", "sampling_strategy")
+
+        return g
+
 
 def init_pcd(
     projs,
@@ -105,13 +146,9 @@ def init_pcd(
         )
         vol = recon_volume(projs, angles, copy.deepcopy(geo), recon_method)
 
-        # [SPS] 降噪预处理（支持新旧参数名，修复 or 逻辑错误）
-        # 修复：使用 None 检查而非 or，避免值为 0/False 时错误回退
-        _sps_denoise = getattr(args, 'sps_denoise', None)
-        enable_denoise = _sps_denoise if _sps_denoise is not None else getattr(args, 'enable_denoise', False)
-        _sps_sigma = getattr(args, 'sps_denoise_sigma', None)
-        denoise_sigma = _sps_sigma if _sps_sigma is not None else getattr(args, 'denoise_sigma', 3.0)
-        if enable_denoise:
+        # [SPS] 降噪预处理（兼容旧参数名 enable_denoise / denoise_sigma）
+        if getattr(args, "sps_denoise", False):
+            denoise_sigma = getattr(args, "sps_denoise_sigma", 3.0)
             print(f"[SPS] Applying Gaussian filter for denoising (sigma={denoise_sigma})...")
             vol = gaussian_filter(vol, sigma=denoise_sigma)
             print(f"[SPS] Denoising complete.")

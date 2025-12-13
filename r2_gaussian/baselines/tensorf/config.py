@@ -21,8 +21,8 @@ class TensoRFConfig:
     hidden_dim: int = 64
     skips: tuple = (2,)
     out_dim: int = 1
-    last_activation: str = "relu"
-    bound: float = 0.3
+    last_activation: str = "sigmoid"  # X-ray CT 需要 sigmoid 将输出限制在 [0,1]
+    bound: float = 1.0  # 场景归一化到 [-1, 1]^3
 
     # 渲染
     n_samples: int = 192

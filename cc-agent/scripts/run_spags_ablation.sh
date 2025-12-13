@@ -60,8 +60,12 @@ if [ ! -f "$DATA_PATH" ]; then
     exit 1
 fi
 
-# SPS 点云路径（使用 369 目录的初始化点云）
-SPS_PCD_PATH="data/369/init_${ORGAN}_50_${VIEWS}views.npy"
+# 初始化点云路径
+# - baseline / gar / adm / gar_adm: 使用 data/369 下的 init_*.npy（与数据同目录，作为 baseline init）
+# - sps / sps_* / spags / xgaussian: 使用 data/369-sps 下的 init_*.npy（SPS 生成，避免覆盖 baseline init）
+BASE_INIT_PCD_PATH="data/369/init_${ORGAN}_50_${VIEWS}views.npy"
+SPS_INIT_PCD_DIR="data/369-sps"
+SPS_INIT_PCD_PATH="${SPS_INIT_PCD_DIR}/init_${ORGAN}_50_${VIEWS}views.npy"
 
 # 公共参数
 COMMON_FLAGS="--iterations 30000 --test_iterations 10000 20000 30000"
@@ -195,19 +199,32 @@ else
 fi
 
 # ============================================================================
-# SPS 点云检查（使用 density-369 目录已有的密度加权点云）
+# 初始化点云检查
+# - SPS: data/369-sps（由 generate_sps_init_369.sh 生成）
+# - 非 SPS: data/369（baseline init，与数据同目录）
 # ============================================================================
 
 if [ "$USE_SPS" = true ]; then
-    if [ ! -f "$SPS_PCD_PATH" ]; then
-        echo "错误: SPS 点云不存在: $SPS_PCD_PATH"
-        echo "请先在 data/density-369/ 目录生成密度加权点云"
+    if [ ! -f "$SPS_INIT_PCD_PATH" ]; then
+        echo "错误: SPS 初始化点云不存在: $SPS_INIT_PCD_PATH"
+        echo "请先生成 SPS init（推荐一次性生成 15 个场景）:"
+        echo "  bash ./cc-agent/scripts/generate_sps_init_369.sh $GPU"
         exit 1
     fi
-    echo ">>> 使用 SPS 点云: $SPS_PCD_PATH"
-    PLY_FLAG="--ply_path $SPS_PCD_PATH"
+    echo ">>> 使用 SPS 点云: $SPS_INIT_PCD_PATH"
+    PLY_FLAG="--ply_path $SPS_INIT_PCD_PATH"
 else
     PLY_FLAG=""
+    # R²-Gaussian 系列（含 baseline/gar/adm/gar_adm）需要 init_*.npy
+    if [ "$METHOD" = "r2_gaussian" ]; then
+        if [ ! -f "$BASE_INIT_PCD_PATH" ]; then
+            echo "错误: Baseline 初始化点云不存在: $BASE_INIT_PCD_PATH"
+            echo "请先生成 baseline init（不要加 --enable_sps）:"
+            echo "  python initialize_pcd.py --data $DATA_PATH --output $BASE_INIT_PCD_PATH"
+            exit 1
+        fi
+        echo ">>> 使用 Baseline 点云: $BASE_INIT_PCD_PATH (自动加载；等价于不传 --ply_path)"
+    fi
 fi
 
 # ============================================================================
@@ -241,6 +258,8 @@ GPU: $GPU
 时间: $(date)
 
 SPS 启用: $USE_SPS
+Baseline init: $BASE_INIT_PCD_PATH
+SPS init: $SPS_INIT_PCD_PATH
 GAR 启用: $(echo "$CONFIG_FLAGS" | grep -q "proximity" && echo "true" || echo "false")
 ADM 启用: $(echo "$CONFIG_FLAGS" | grep -q "kplanes" && echo "true" || echo "false")
 
