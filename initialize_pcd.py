@@ -85,6 +85,14 @@ class InitParams(ParamGroup):
         self.sps_uniform_ratio_max = 0.6  # [SPS][adaptive] 均匀占比上限（防止过度退化为随机）
         self.sps_density_gamma_min = 0.5  # [SPS][adaptive] γ 下限（防止过度拉平）
         self.sps_num_strata = 5  # [SPS][stratified] 分层数量
+        # [SPS] 初始化密度值处理（位置采样与密度初始化解耦，提升跨器官/视角稳定性）
+        # - raw: 直接使用 FDK 体素密度（与旧版一致，但容易导致 SPS 样本均值偏高 -> 初始过密/过暗）
+        # - match_valid_mean: 将采样点的密度整体缩放到与“有效体素(>density_thresh)”均值一致
+        # - match_valid_median: 将采样点的密度整体缩放到与“有效体素(>density_thresh)”中位数一致
+        self.sps_density_init_mode = "raw"
+        # 缩放因子裁剪（防止极端场景把密度缩放到过小/过大）
+        self.sps_density_scale_min = 0.25
+        self.sps_density_scale_max = 4.0
 
         # 向下兼容旧参数名
         self.enable_denoise = False  # [兼容] 旧名，映射到 sps_denoise
@@ -220,6 +228,11 @@ def init_pcd(
             # 使用旧参数或默认随机
             strategy = getattr(args, 'sampling_strategy', 'random')
 
+        # 采样/统计变量（避免分支未定义导致的 UnboundLocalError）
+        densities_flat = None
+        densities_for_sampling = None
+        clip_val = None
+
         if strategy == "random":
             # Baseline: 随机采样
             print(f"[Baseline] Using random sampling strategy.")
@@ -238,6 +251,8 @@ def init_pcd(
                 clip_val = np.percentile(densities_for_sampling, clip_p)
                 if np.isfinite(clip_val):
                     densities_for_sampling = np.clip(densities_for_sampling, None, clip_val)
+                else:
+                    clip_val = None
 
             # 统一处理 gamma（density_weighted / mixed / adaptive 可用）
             gamma = float(getattr(args, "sps_density_gamma", 1.0))
@@ -357,6 +372,58 @@ def init_pcd(
             sampled_indices[:, 1],
             sampled_indices[:, 2],
         ]
+        sampled_densities = sampled_densities.astype(np.float64)
+
+        # [SPS] 初始化密度：裁剪 + 归一化（可选）
+        # - 采样权重的裁剪不一定等价于密度初始化裁剪，这里复用 clip_val（同一分位点），避免极端高密度点初始过亮/过暗
+        if enable_sps:
+            if densities_for_sampling is None:
+                densities_for_sampling = densities_flat
+            if densities_for_sampling is None:
+                # 理论上不会发生（SPS 通常不会用 random），但为鲁棒性做兜底
+                densities_for_sampling = vol[density_mask].astype(np.float64)
+
+            if clip_val is not None and np.isfinite(clip_val):
+                sampled_densities = np.clip(sampled_densities, None, clip_val)
+
+            init_mode = str(getattr(args, "sps_density_init_mode", "raw")).lower()
+            if init_mode not in ["raw", "match_valid_mean", "match_valid_median"]:
+                raise ValueError(
+                    f"[SPS] Unknown sps_density_init_mode: {init_mode}. "
+                    f"Supported: raw|match_valid_mean|match_valid_median"
+                )
+
+            if init_mode != "raw":
+                # 参考分布：有效体素密度（与 baseline 随机采样的期望一致）
+                ref = densities_for_sampling
+                eps = 1e-12
+                if init_mode == "match_valid_mean":
+                    target = float(ref.mean())
+                    src = float(sampled_densities.mean())
+                else:
+                    target = float(np.median(ref))
+                    src = float(np.median(sampled_densities))
+
+                if not np.isfinite(target) or not np.isfinite(src) or src <= eps:
+                    print(
+                        f"[SPS] Warning: invalid density stats for normalization "
+                        f"(target={target}, src={src}); skip density scaling."
+                    )
+                else:
+                    scale = target / max(src, eps)
+                    scale_min = float(getattr(args, "sps_density_scale_min", 0.25))
+                    scale_max = float(getattr(args, "sps_density_scale_max", 4.0))
+                    if np.isfinite(scale_min) and scale_min > 0:
+                        scale = max(scale, scale_min)
+                    if np.isfinite(scale_max) and scale_max > 0:
+                        scale = min(scale, scale_max)
+
+                    sampled_densities = sampled_densities * scale
+                    print(
+                        f"[SPS] Density init mode: {init_mode}, "
+                        f"scale={scale:.3f}, target={target:.4f}, src={src:.4f}"
+                    )
+
         sampled_densities = sampled_densities * args.density_rescale
 
     out = np.concatenate([sampled_positions, sampled_densities[:, None]], axis=-1)

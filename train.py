@@ -11,6 +11,7 @@
 
 import os
 import os.path as osp
+import math
 import torch
 from random import randint
 import sys
@@ -79,6 +80,9 @@ def training(
     # 🆕 设置训练视角数（用于视角自适应的 ADM 调制）
     num_train_views = len(scene.getTrainCameras())
     gaussians.set_num_train_views(num_train_views)
+    # 🆕 GAR 视角自适应缩放因子（与 ADM 解耦：即使不启用 ADM 也生效）
+    gar_view_scale = 1.0 / math.sqrt(max(float(num_train_views), 1.0) / 3.0)
+    gar_view_scale = max(gar_view_scale, 0.3)
 
     if checkpoint is not None:
         (model_params, first_iter) = torch.load(checkpoint)
@@ -115,6 +119,11 @@ def training(
     gar_max_candidates = getattr(dataset, 'gar_max_candidates', 5000)  # 每次密化最大候选点数
     gar_candidate_ratio_cap = getattr(dataset, 'gar_candidate_ratio_cap', 0.15)  # 每次密化候选占比上限（0 表示不限制）
     gar_new_per_source = getattr(dataset, 'gar_new_per_source', 1)  # 每个候选点最多生成的新点数（<=0 表示使用全部K）
+    # 🆕 GAR 稳定性选项
+    gar_view_adaptive = getattr(dataset, 'gar_view_adaptive', True)
+    gar_mass_preserve = getattr(dataset, 'gar_mass_preserve', True)
+    gar_scale_shrink = getattr(dataset, 'gar_scale_shrink', True)
+    gar_scale_shrink_factor = getattr(dataset, 'gar_scale_shrink_factor', 0.8)
 
     if use_proximity:
         print("Use FSGS proximity-guided densification (GAR)")
@@ -142,6 +151,20 @@ def training(
         print(f"  - k_neighbors: {proximity_densifier.k_neighbors}")
         print(f"  - proximity_threshold: {proximity_densifier.proximity_threshold}")
         print(f"  - start_iter: {proximity_start_iter}, interval: {proximity_interval}, until: {proximity_until_iter}")
+
+        # 🆕 视角自适应：views 越多越保守（减少密化次数/每次密化预算）
+        effective_proximity_until_iter = int(proximity_until_iter)
+        effective_gar_max_candidates = int(gar_max_candidates)
+        effective_gar_candidate_ratio_cap = float(gar_candidate_ratio_cap) if gar_candidate_ratio_cap is not None else None
+        if gar_view_adaptive:
+            effective_proximity_until_iter = int(round(
+                proximity_start_iter + (proximity_until_iter - proximity_start_iter) * gar_view_scale
+            ))
+            effective_proximity_until_iter = max(int(proximity_start_iter), int(effective_proximity_until_iter))
+            effective_gar_max_candidates = max(1, int(round(effective_gar_max_candidates * gar_view_scale)))
+            if effective_gar_candidate_ratio_cap is not None and effective_gar_candidate_ratio_cap > 0:
+                effective_gar_candidate_ratio_cap = float(effective_gar_candidate_ratio_cap) * float(gar_view_scale)
+
         # 🆕 打印优化参数
         if gar_adaptive_threshold:
             print(f"  - 🆕 adaptive_threshold: {gar_adaptive_method} (p={gar_adaptive_percentile})")
@@ -152,11 +175,17 @@ def training(
         if gar_gradient_filter:
             print(f"  - 🆕 gradient_filter: threshold={gar_gradient_threshold}")
         if gar_candidate_ratio_cap and gar_candidate_ratio_cap > 0:
-            print(f"  - 🆕 candidate_ratio_cap: {gar_candidate_ratio_cap}")
+            print(f"  - 🆕 candidate_ratio_cap: {gar_candidate_ratio_cap} (effective≈{effective_gar_candidate_ratio_cap:.4f})")
         if gar_new_per_source <= 0:
             print(f"  - 🆕 new_per_source: all (K={proximity_densifier.k_neighbors})")
         else:
             print(f"  - 🆕 new_per_source: {gar_new_per_source}")
+        print(f"  - 🆕 view_adaptive: {bool(gar_view_adaptive)} (views={num_train_views}, scale={gar_view_scale:.3f}, until={effective_proximity_until_iter}, max_candidates={effective_gar_max_candidates})")
+        print(f"  - 🆕 mass_preserve: {bool(gar_mass_preserve)}")
+        if gar_scale_shrink:
+            print(f"  - 🆕 scale_shrink: True (factor={float(gar_scale_shrink_factor):.3f})")
+        else:
+            print(f"  - 🆕 scale_shrink: False")
 
     # 🆕 [SPS] 打印初始化点云信息
     if dataset.ply_path:
@@ -330,7 +359,7 @@ def training(
             # 🆕 FSGS Proximity-Guided Densification (GAR核心组件) - 优化版
             if use_proximity and proximity_densifier is not None:
                 if (iteration >= proximity_start_iter and
-                    iteration <= proximity_until_iter and
+                    iteration <= effective_proximity_until_iter and
                     iteration % proximity_interval == 0):
 
                     # 1. 计算邻近分数
@@ -375,7 +404,7 @@ def training(
                     decay_mult = 1.0
                     if gar_progressive_decay:
                         decay_mult = proximity_densifier.get_decay_multiplier(
-                            iteration, proximity_start_iter, proximity_until_iter
+                            iteration, proximity_start_iter, effective_proximity_until_iter
                         )
                         effective_threshold = effective_threshold * decay_mult
 
@@ -437,13 +466,13 @@ def training(
                         else:
                             budget_max_candidates = None
 
-                        effective_max_candidates = int(gar_max_candidates)
+                        effective_max_candidates = int(effective_gar_max_candidates)
                         if budget_max_candidates is not None:
                             effective_max_candidates = min(effective_max_candidates, int(budget_max_candidates))
 
                         # 占比上限：避免小点云一次性密化过多
-                        if gar_candidate_ratio_cap and gar_candidate_ratio_cap > 0:
-                            ratio = float(gar_candidate_ratio_cap)
+                        if effective_gar_candidate_ratio_cap and effective_gar_candidate_ratio_cap > 0:
+                            ratio = float(effective_gar_candidate_ratio_cap)
                             ratio = min(max(ratio, 0.0), 1.0)
                             ratio_cap_candidates = max(1, int(ratio * positions.shape[0]))
                             effective_max_candidates = min(effective_max_candidates, int(ratio_cap_candidates))
@@ -467,27 +496,52 @@ def training(
 
                             # 5. 获取需要密化的点及其邻居
                             source_positions = positions[densify_mask]
-                            source_neighbor_indices = neighbor_indices[densify_mask]
+                            source_indices = torch.where(densify_mask)[0]
+                            source_neighbor_indices = neighbor_indices[densify_mask][:, :new_per_source]
 
-                            # 6. 准备属性字典
-                            all_attributes = {
-                                'scales': gaussians._scaling,
-                                'opacities': gaussians._density,
-                                'rotations': gaussians._rotation,
+                            # ------------------------------------------------------------------
+                            # 6. 生成新点位置：source-Neighbor 边中点（FSGS）
+                            # ------------------------------------------------------------------
+                            neighbor_positions = positions[source_neighbor_indices]  # (M, new_per_source, 3)
+                            new_positions = (source_positions.unsqueeze(1) + neighbor_positions) / 2.0
+                            new_positions = new_positions.reshape(-1, 3)  # (M*new_per_source, 3)
+
+                            # ------------------------------------------------------------------
+                            # 7. CT 稳定初始化（关键改动）
+                            # - 默认对齐 3DGS split 的“质量守恒”思想：把 source density 分摊到 (1+new_per_source) 个点
+                            # - 新点可选收缩尺度（更利于细节表达，且减少新点对投影的剧烈扰动）
+                            # ------------------------------------------------------------------
+                            # 7.1 rotation：继承 source（与 densify_and_split/clone 一致）
+                            new_rotations = gaussians._rotation[source_indices].repeat_interleave(new_per_source, dim=0)
+
+                            # 7.2 scaling：新点可选收缩（不改动 source 自身的 scaling）
+                            if gar_scale_shrink:
+                                denom = max(float(gar_scale_shrink_factor), 1e-6) * float(new_per_source + 1)
+                                src_scaling = gaussians.get_scaling[source_indices]
+                                new_scaling = gaussians.scaling_inverse_activation(src_scaling / denom)
+                            else:
+                                new_scaling = gaussians._scaling[source_indices]
+                            new_scaling = new_scaling.repeat_interleave(new_per_source, dim=0)
+
+                            # 7.3 density：质量守恒分摊（同时把 source 自身 density 调低，避免“凭空加密度”导致噪声/过拟合）
+                            if gar_mass_preserve:
+                                split = 1.0 / float(new_per_source + 1)
+                                src_base_density = gaussians.get_base_density[source_indices]
+                                new_base_density = src_base_density * split
+                                new_densities_src = gaussians.density_inverse_activation(new_base_density)
+                                gaussians._density[source_indices] = new_densities_src
+                            else:
+                                new_densities_src = gaussians._density[source_indices]
+                            new_densities = new_densities_src.repeat_interleave(new_per_source, dim=0)
+
+                            new_gaussians = {
+                                'positions': new_positions,
+                                'scales': new_scaling,
+                                'rotations': new_rotations,
+                                'opacities': new_densities,
                             }
 
-                            # 7. 生成新的 Gaussians
-                            new_gaussians = proximity_densifier.generate_new_gaussians(
-                                source_positions,
-                                source_neighbor_indices,
-                                positions,
-                                all_attributes,
-                                # - 1: 只沿最近邻生成 1 个新点（更保守）
-                                # - <=0: 使用全部 K 个邻居（更贴近 FSGS）
-                                max_new_per_source=None if gar_new_per_source <= 0 else int(gar_new_per_source)
-                            )
-
-                            num_new = new_gaussians['positions'].shape[0]
+                            num_new = int(new_positions.shape[0])
 
                         if num_new > 0:
                             # 8. 添加到 GaussianModel
@@ -504,7 +558,7 @@ def training(
                             # GAR 诊断日志（每1000次迭代）
                             if iteration % 1000 == 0:
                                 gar_diag = proximity_densifier.get_diagnostics(
-                                    proximity_scores, iteration, proximity_start_iter, proximity_until_iter
+                                    proximity_scores, iteration, proximity_start_iter, effective_proximity_until_iter
                                 )
                                 tqdm.write(f"\n[ITER {iteration}] === GAR 诊断 ===")
                                 tqdm.write(f"  邻近分数: mean={gar_diag['score_mean']:.4f}, std={gar_diag['score_std']:.4f}, "

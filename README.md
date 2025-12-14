@@ -93,7 +93,8 @@ data/
 
 ```sh
 # 生成 SPS 初始化点云（推荐：adaptive，随视角数自动减弱先验，避免高视角过度集中）
-python initialize_pcd.py --data <path_to_data> --enable_sps --sps_strategy adaptive --n_points 50000
+python initialize_pcd.py --data <path_to_data> --enable_sps --sps_strategy adaptive --n_points 50000 \
+    --sps_density_init_mode match_valid_mean --sps_uniform_ratio 0.3 --sps_density_gamma 0.8
 ```
 
 ### 3.2 训练
@@ -137,11 +138,15 @@ python test.py -m <path_to_trained_model>
 - `--sps_uniform_ratio`: mixed/adaptive 中均匀采样占比（其余为密度加权）
 - `--sps_density_gamma`: 密度权重幂指数 γ（`<1` 更平滑，`>1` 更尖锐）
 - `--n_points`: 初始化点云数量（默认 50000）
+- `--sps_density_init_mode`: 初始化密度模式（`raw|match_valid_mean|match_valid_median`，推荐 `match_valid_mean`）
 
 ### GAR (几何感知细化)
 - `--enable_fsgs_proximity`: 启用邻近感知密化
 - `--gar_proximity_threshold`: 邻近密化阈值（默认 0.05，场景归一化到 [-1,1]^3 后邻近分数典型范围约 0.01~0.5）
 - `--gar_new_per_source`: 每个候选点最多生成的新点数（默认 1；<=0 表示使用全部 K 个邻居，更贴近 FSGS）
+- `--gar_view_adaptive`: 视角自适应密化强度（默认开启；views 越多越保守）
+- `--gar_mass_preserve`: 质量守恒初始化（默认开启；避免“凭空加密度”导致噪声/过拟合）
+- `--gar_scale_shrink`: 新点尺度收缩（默认开启；类似 densify_and_split，更利于细节表达）
 
 ### ADM (自适应密度调制)
 - `--enable_kplanes`: 启用 K-Planes 编码器

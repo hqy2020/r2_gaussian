@@ -113,6 +113,11 @@ class ModelParams(ParamGroup):
         # - 1: 只沿最近邻生成 1 个新点（更保守，默认）
         # - <=0: 使用全部 K 个邻居（更贴近 FSGS，但更激进）
         self.gar_new_per_source = 1  # [GAR] 每个候选点最多生成的新点数
+        # 🆕 稳定性选项（CT 更推荐开启）
+        self.gar_view_adaptive = True  # [GAR] 🆕 按训练视角数自适应密化强度（views 越多越保守）
+        self.gar_mass_preserve = True  # [GAR] 🆕 密化时对 source density 做质量守恒分配（降低噪声/过拟合）
+        self.gar_scale_shrink = True  # [GAR] 🆕 新点尺度收缩（类似 densify_and_split，更利于细节建模）
+        self.gar_scale_shrink_factor = 0.8  # [GAR] 🆕 尺度收缩系数（与 3DGS split 的 0.8 对齐）
 
         # ════════════════════════════════════════════════════════════════════
         # [ADM] Adaptive Density Modulation - K-Planes 空间调制参数
@@ -127,6 +132,12 @@ class ModelParams(ParamGroup):
         self.adm_max_range = 0.3  # [ADM] 最大调制范围 (±30%)
         self.adm_view_adaptive = True  # [ADM] 🆕 视角自适应：自动根据训练视角数调整调制强度与TV正则化
         self.adm_zero_mean = True  # [ADM] 🆕 零均值调制：去除全局密度缩放偏置，提升跨视角稳定性
+        # 零均值模式：
+        # - unweighted: 对所有高斯等权去均值
+        # - confidence: 按 confidence 加权去均值（更关注被认为需要调制的区域）
+        # - density: 按 base_density 加权去均值（更关注对投影贡献大的点）
+        # - density_confidence: density*confidence 联合加权（默认推荐，最贴近“有效贡献”）
+        self.adm_zero_mean_mode = "density_confidence"  # [ADM] 🆕 零均值模式
         # 向下兼容旧参数名
         self.enable_kplanes = False  # [兼容] 旧名，映射到 enable_adm
         self.kplanes_resolution = 64  # [兼容] 旧名

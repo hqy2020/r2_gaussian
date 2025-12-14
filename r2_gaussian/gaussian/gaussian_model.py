@@ -50,9 +50,12 @@ class GaussianModel:
                 lambda x: torch.sigmoid(x) * (scale_max_bound - scale_min_bound)
                 + scale_min_bound
             )
-            self.scaling_inverse_activation = lambda x: inverse_sigmoid(
-                torch.relu((x - scale_min_bound) / (scale_max_bound - scale_min_bound))
-            )
+            def _scaling_inverse_activation(y):
+                normalized = (y - scale_min_bound) / (scale_max_bound - scale_min_bound)
+                normalized = normalized.clamp(min=EPS, max=1.0 - EPS)
+                return inverse_sigmoid(normalized)
+
+            self.scaling_inverse_activation = _scaling_inverse_activation
         else:
             self.scaling_activation = torch.exp
             self.scaling_inverse_activation = torch.log
@@ -109,7 +112,23 @@ class GaussianModel:
 
         # 存储 ADM 调度参数（用于 _get_adm_strength）
         if self.enable_kplanes:
+            # ADM 调制幅度
             self.adm_max_range = getattr(args, 'adm_max_range', 0.3) if args else 0.3
+
+            # ADM 调度参数：训练侧会在 training_setup 中覆盖；评估侧没有 optimizer 时也需要可用
+            def _get_or(name: str, default, cast):
+                if args is None:
+                    return cast(default)
+                v = getattr(args, name, None)
+                if v is None:
+                    return cast(default)
+                return cast(v)
+
+            self.adm_warmup_iters = _get_or('adm_warmup_iters', 1000, int)
+            self.adm_decay_start = _get_or('adm_decay_start', 20000, int)
+            self.adm_final_strength = _get_or('adm_final_strength', 0.5, float)
+            # total iters 优先从 cfg_args 中的 iterations 读取
+            self.adm_total_iters = _get_or('iterations', 30000, int)
 
         # 🆕 视角数感知的自适应约束
         # 训练视角数，用于自动缩放 ADM 调制强度
@@ -119,6 +138,35 @@ class GaussianModel:
         self.adm_view_adaptive = getattr(args, 'adm_view_adaptive', True) if args else True
         # 🆕 X2GS 风格稳定性：去除全局密度缩放偏置（零均值调制）
         self.adm_zero_mean = getattr(args, 'adm_zero_mean', True) if args else True
+        # 零均值模式（见 arguments/ 说明）
+        self.adm_zero_mean_mode = getattr(args, 'adm_zero_mean_mode', 'density_confidence') if args else 'density_confidence'
+
+    def _adm_apply_zero_mean(self, effective_offset: torch.Tensor, base_density: torch.Tensor, confidence: torch.Tensor) -> torch.Tensor:
+        """
+        去除 ADM 的全局偏置（避免学成“整体系数缩放”）
+
+        effective_offset: [N, 1]
+        base_density:     [N, 1]
+        confidence:       [N, 1]
+        """
+        mode = getattr(self, 'adm_zero_mean_mode', 'density_confidence') or 'density_confidence'
+
+        if mode == 'unweighted':
+            mean = effective_offset.mean()
+        else:
+            if mode == 'confidence':
+                w = confidence.detach()
+            elif mode == 'density':
+                w = base_density.detach()
+            elif mode == 'density_confidence':
+                w = (base_density.detach() * confidence.detach())
+            else:
+                raise ValueError(f"Unknown adm_zero_mean_mode: {mode}")
+
+            denom = w.sum().clamp_min(1e-8)
+            mean = (effective_offset * w).sum() / denom
+
+        return effective_offset - mean
 
     def capture(self):
         # K-Planes 状态（如果启用）
@@ -277,7 +325,11 @@ class GaussianModel:
             effective_offset = offset * confidence * max_range * strength * view_scale
             # 🆕 去除全局偏置：避免 ADM 学成“整体系数缩放”，导致 densify/prune 不稳定
             if getattr(self, 'adm_zero_mean', False):
-                effective_offset = effective_offset - effective_offset.mean()
+                effective_offset = self._adm_apply_zero_mean(
+                    effective_offset,
+                    base_density=base_density,
+                    confidence=confidence,
+                )
                 # 零均值后可能轻微越界，做一次安全裁剪（保持最大调制范围）
                 max_abs = float(max_range) * float(strength) * float(view_scale)
                 if max_abs > 0:
@@ -300,10 +352,21 @@ class GaussianModel:
             return 1.0
 
         it = int(self.current_iteration)
-        warmup = int(getattr(self, 'adm_warmup_iters', 3000))
+        warmup = int(getattr(self, 'adm_warmup_iters', 1000))
         decay_start = int(getattr(self, 'adm_decay_start', 20000))
         final = float(getattr(self, 'adm_final_strength', 0.5))
         total = int(getattr(self, 'adm_total_iters', 30000))
+
+        # 🆕 视角自适应：视角越多，ADM 越保守（更长 warmup、更低最终强度）
+        if getattr(self, 'adm_view_adaptive', False):
+            try:
+                warmup = int(round(warmup * (float(self.num_train_views) / 3.0)))
+            except Exception:
+                pass
+            try:
+                final = float(final) * float(self.get_view_adaptive_scale())
+            except Exception:
+                pass
 
         if total <= 0:
             return 1.0
@@ -339,16 +402,21 @@ class GaussianModel:
             strength = self._get_adm_strength()
             view_scale = self.get_view_adaptive_scale()
 
+            # 计算基础密度（用于零均值加权与对比）
+            base_density = self.get_base_density
+
             effective_offset = offset * confidence * max_range * strength * view_scale
             if getattr(self, 'adm_zero_mean', False):
-                effective_offset = effective_offset - effective_offset.mean()
+                effective_offset = self._adm_apply_zero_mean(
+                    effective_offset,
+                    base_density=base_density,
+                    confidence=confidence,
+                )
                 max_abs = float(max_range) * float(strength) * float(view_scale)
                 if max_abs > 0:
                     effective_offset = torch.clamp(effective_offset, -max_abs, max_abs)
             modulation = 1.0 + effective_offset
 
-            # 计算基础密度（用于对比）
-            base_density = self.get_base_density
             modulated_density = base_density * modulation
             density_change_pct = ((modulated_density - base_density) / (base_density + 1e-8) * 100)
 

@@ -109,7 +109,7 @@ GAR_FLAGS_COMPAT="--enable_fsgs_proximity \
     --gar_proximity_k 5 \
     --no_gar_adaptive_threshold \
     --no_gar_progressive_decay \
-    --gar_new_per_source -1 \
+    --gar_new_per_source 1 \
     --gar_max_candidates 2000"
 
 # ADM 参数（K-Planes Density Modulation）- 🔧 补全完整参数
@@ -127,7 +127,8 @@ ADM_FLAGS_COMPAT="--enable_kplanes \
     --adm_warmup_iters 1000 \
     --adm_max_range 0.3 \
     --adm_view_adaptive \
-    --adm_zero_mean"
+    --adm_zero_mean \
+    --adm_zero_mean_mode density_confidence"
 
 # ============================================================================
 # 根据配置选择参数

@@ -4,8 +4,65 @@
 
 import torch
 import torch.nn as nn
-import math
 from typing import Dict, Optional, Tuple
+
+
+def _get_volume_aabb(scanner_cfg: dict, device, dtype=None, expand: float = 0.0):
+    """从 scanner_cfg 获取体素包围盒（AABB）。
+
+    注意：Scene 读取阶段已将 scanner_cfg 缩放到归一化坐标系，因此这里的 AABB
+    与 R²-Gaussian Camera 的 world 坐标系一致。
+    """
+    off_origin = torch.tensor(
+        scanner_cfg.get("offOrigin", [0.0, 0.0, 0.0]),
+        device=device,
+        dtype=dtype,
+    )
+    s_voxel = torch.tensor(scanner_cfg["sVoxel"], device=device, dtype=dtype)
+    half = s_voxel / 2
+    bbox_min = off_origin - half
+    bbox_max = off_origin + half
+    if expand and expand > 0:
+        bbox_min = bbox_min - expand
+        bbox_max = bbox_max + expand
+    return bbox_min, bbox_max
+
+
+def _ray_aabb_intersection(
+    rays_o: torch.Tensor,
+    rays_d: torch.Tensor,
+    bbox_min: torch.Tensor,
+    bbox_max: torch.Tensor,
+    eps: float = 1e-6,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """计算 rays 与 AABB 的相交 near/far（以距离为单位，要求 rays_d 已归一化）。"""
+    d = rays_d
+    o = rays_o
+
+    parallel = d.abs() < eps
+    inv_d = 1.0 / torch.where(parallel, torch.ones_like(d), d)
+
+    t0 = (bbox_min - o) * inv_d
+    t1 = (bbox_max - o) * inv_d
+    tmin = torch.minimum(t0, t1)
+    tmax = torch.maximum(t0, t1)
+
+    # 对于平行轴：若起点在 slab 内，t 范围设为 (-inf, +inf)；否则该射线无交
+    outside = parallel & ((o < bbox_min) | (o > bbox_max))
+    tmin = torch.where(parallel, torch.full_like(tmin, -float("inf")), tmin)
+    tmax = torch.where(parallel, torch.full_like(tmax, float("inf")), tmax)
+
+    near = tmin.max(dim=-1, keepdim=True).values
+    far = tmax.min(dim=-1, keepdim=True).values
+
+    valid = (~outside.any(dim=-1, keepdim=True)) & (far > near)
+    near = torch.where(valid, near, torch.zeros_like(near))
+    far = torch.where(valid, far, near)
+
+    # 射线起点可能在盒内，near 会为负；裁到 0 表示从起点开始积分
+    near = torch.clamp(near, min=0.0)
+    far = torch.maximum(far, near)
+    return near, far
 
 
 def generate_rays_from_camera(
@@ -31,110 +88,99 @@ def generate_rays_from_camera(
     H = viewpoint_camera.image_height
     W = viewpoint_camera.image_width
     mode = viewpoint_camera.mode
-    device = "cuda"
+    device = viewpoint_camera.camera_center.device
 
     # 从 scanner_cfg 获取几何参数
-    # R²-Gaussian 已经归一化场景: sVoxel=[2,2,2], 场景在 [-1,1] 范围
-    sVoxel = scanner_cfg["sVoxel"]
     DSO = scanner_cfg["DSO"]  # 源到原点距离 (已归一化)
-    offOrigin = scanner_cfg.get("offOrigin", [0.0, 0.0, 0.0])
 
-    # 使用原始 SAX-NeRF 的 near/far 计算方式
-    # 计算场景在 xy 平面上的最大距离
-    tolerance = 0.005
-    dist1 = math.sqrt((offOrigin[0] - sVoxel[0] / 2)**2 + (offOrigin[1] - sVoxel[1] / 2)**2)
-    dist2 = math.sqrt((offOrigin[0] - sVoxel[0] / 2)**2 + (offOrigin[1] + sVoxel[1] / 2)**2)
-    dist3 = math.sqrt((offOrigin[0] + sVoxel[0] / 2)**2 + (offOrigin[1] - sVoxel[1] / 2)**2)
-    dist4 = math.sqrt((offOrigin[0] + sVoxel[0] / 2)**2 + (offOrigin[1] + sVoxel[1] / 2)**2)
-    dist_max = max(dist1, dist2, dist3, dist4)
-
-    near_dist = max(0.0, DSO - dist_max - tolerance)
-    far_dist = min(DSO * 2, DSO + dist_max + tolerance)
-
-    # 生成像素网格
-    i, j = torch.meshgrid(
-        torch.linspace(0, H - 1, H, device=device),
-        torch.linspace(0, W - 1, W, device=device),
-        indexing='ij'
-    )
+    # 采样像素索引（避免 on-the-fly 时构造整张像素网格）
+    if n_rays is None or n_rays >= H * W:
+        ii, jj = torch.meshgrid(
+            torch.arange(H, device=device),
+            torch.arange(W, device=device),
+            indexing="ij",
+        )
+        i = ii.reshape(-1).float()
+        j = jj.reshape(-1).float()
+        indices = torch.stack([ii.reshape(-1), jj.reshape(-1)], dim=-1).long()
+    else:
+        select = torch.randperm(H * W, device=device)[:n_rays]
+        i = (select // W).float()
+        j = (select % W).float()
+        indices = torch.stack([i.long(), j.long()], dim=-1)
 
     if mode == 0:
         # 平行投影 (parallel beam CT)
         # 像素坐标归一化到 [-1, 1]
-        u = (j - W / 2) / W * 2
-        v = (i - H / 2) / H * 2
+        u = (j + 0.5 - W / 2) / W * 2
+        v = (i + 0.5 - H / 2) / H * 2
 
         # 获取相机参数
-        R = viewpoint_camera.world_view_transform[:3, :3].T  # 相机到世界旋转
         camera_center = viewpoint_camera.camera_center
 
         # 平行投影的射线方向是相机的 z 轴方向 (看向原点)
         # 对于平行投影，所有射线方向相同
         forward = -camera_center / torch.norm(camera_center)  # 指向原点
-        rays_d = forward.unsqueeze(0).expand(H * W, -1)  # [H*W, 3]
+        rays_d = forward.unsqueeze(0).expand(i.shape[0], -1)  # [N, 3]
 
         # 射线起点随像素位置变化
         # 需要根据探测器尺寸缩放
-        dDetector = scanner_cfg.get("dDetector", [1.0, 1.0])
         sDetector = scanner_cfg.get("sDetector", [2.0, 2.0])
 
         # 在探测器平面上的偏移
-        offset_x = u.reshape(-1, 1) * sDetector[0] / 2
-        offset_y = v.reshape(-1, 1) * sDetector[1] / 2
+        # 注意：sDetector 在数据中通常是 [v, u]（先 v 后 u）
+        offset_x = u.reshape(-1, 1) * (sDetector[1] / 2)
+        offset_y = v.reshape(-1, 1) * (sDetector[0] / 2)
 
         # 获取相机坐标系的 right 和 up 向量
-        right = R[0:1, :]  # x 轴
-        up = R[1:2, :]     # y 轴
+        # world_view_transform 是 w2c 的转置；其 [:3,:3] 等价于 c2w 旋转
+        c2w_rot = viewpoint_camera.world_view_transform[:3, :3]
+        right = c2w_rot[:, 0].unsqueeze(0)  # x 轴（世界坐标）
+        up = c2w_rot[:, 1].unsqueeze(0)     # y 轴（世界坐标）
 
         # 射线起点 = 相机位置 + 探测器平面偏移
         rays_o = camera_center.unsqueeze(0) + offset_x * right + offset_y * up
 
-        # near/far 设置
-        near = torch.ones(H * W, 1, device=device) * near_dist
-        far = torch.ones(H * W, 1, device=device) * far_dist
-
     elif mode == 1:
         # 透视/锥形投影 (cone beam CT)
-        # 使用原始 SAX-NeRF 的射线生成方式
         DSD = scanner_cfg.get("DSD", DSO * 1.5)  # 源到探测器距离
         dDetector = scanner_cfg.get("dDetector", [1.0, 1.0])
         offDetector = scanner_cfg.get("offDetector", [0.0, 0.0])
 
-        # 像素坐标转探测器坐标 (与 SAX-NeRF tigre.py 一致)
-        # uu, vv 是探测器平面上相对于中心的偏移
-        uu = (j + 0.5 - W / 2) * dDetector[0] + offDetector[0]
-        vv = (i + 0.5 - H / 2) * dDetector[1] + offDetector[1]
+        # 注意：dDetector/offDetector 在数据中通常是 [v, u]（先 v 后 u）
+        du = dDetector[1]
+        dv = dDetector[0]
+        off_u = offDetector[1]
+        off_v = offDetector[0]
 
-        # 射线方向（相机坐标系，z 轴指向前方）
-        # dirs = [uu/DSD, vv/DSD, 1] 然后归一化
-        dirs = torch.stack([uu / DSD, vv / DSD, torch.ones_like(uu)], dim=-1)  # [H, W, 3]
+        # 像素坐标转探测器坐标：相对于中心的物理偏移（单位与 DSD/DSO 一致）
+        uu = (j + 0.5 - W / 2) * du + off_u
+        vv = (i + 0.5 - H / 2) * dv + off_v
 
-        # c2w 旋转矩阵: world_view_transform[:3, :3] 就是 c2w 旋转
-        # 注意: R²-Gaussian 存储方式使得 W2C[:3, :3] = c2w[:3, :3]
+        # 相机坐标系方向：与 [uu, vv, DSD] 成比例即可
+        dirs = torch.stack([uu / DSD, vv / DSD, torch.ones_like(uu)], dim=-1)  # [N, 3]
+
+        # world_view_transform 是 w2c 的转置；其 [:3,:3] 等价于 c2w 旋转
         c2w_rot = viewpoint_camera.world_view_transform[:3, :3]  # [3, 3]
 
-        # 转换到世界坐标系: rays_d = c2w_rot @ dirs
-        rays_d = torch.matmul(dirs.reshape(-1, 3), c2w_rot.T)  # [H*W, 3]
-
-        # 射线起点 = 相机中心 (所有射线从同一点出发)
-        rays_o = viewpoint_camera.camera_center.unsqueeze(0).expand(H * W, -1)
-
-        # near/far 基于相机到场景的距离
-        near = torch.ones(H * W, 1, device=device) * near_dist
-        far = torch.ones(H * W, 1, device=device) * far_dist
+        # 转换到世界坐标系（行向量右乘）
+        rays_d = torch.matmul(dirs, c2w_rot.T)  # [N, 3]
+        rays_o = viewpoint_camera.camera_center.unsqueeze(0).expand(i.shape[0], -1)
 
     else:
         raise ValueError(f"Unsupported camera mode: {mode}")
 
-    # 组合射线 (坐标已归一化)
-    rays = torch.cat([rays_o, rays_d, near, far], dim=-1)  # [H*W, 8]
-    indices = torch.stack([i.reshape(-1), j.reshape(-1)], dim=-1).long()  # [H*W, 2]
+    # 归一化方向，并用 AABB 精确计算 near/far（避免不同器官体素尺寸导致尺度/裁剪错误）
+    rays_d = rays_d / torch.norm(rays_d, dim=-1, keepdim=True).clamp(min=1e-8)
+    bbox_min, bbox_max = _get_volume_aabb(
+        scanner_cfg,
+        device=device,
+        dtype=rays_o.dtype,
+        expand=1e-4,
+    )
+    near, far = _ray_aabb_intersection(rays_o, rays_d, bbox_min, bbox_max)
 
-    # 随机采样
-    if n_rays is not None and n_rays < H * W:
-        select_inds = torch.randperm(H * W, device=device)[:n_rays]
-        rays = rays[select_inds]
-        indices = indices[select_inds]
+    rays = torch.cat([rays_o, rays_d, near, far], dim=-1)  # [N, 8]
 
     return rays, indices
 
@@ -176,6 +222,9 @@ def render_rays(
     near = rays[..., 6:7]
     far = rays[..., 7:]
 
+    # 对无交射线：令 far==near，使得 dists 全 0 -> acc=0（避免额外分支）
+    far = torch.maximum(far, near)
+
     # 粗采样
     t_vals = torch.linspace(0.0, 1.0, steps=n_samples, device=rays.device)
     z_vals = near * (1.0 - t_vals) + far * t_vals
@@ -199,7 +248,7 @@ def render_rays(
     acc, weights = raw2outputs(raw, z_vals, rays_d, raw_noise_std)
 
     # 精细采样
-    if net_fine is not None and n_fine > 0:
+    if n_fine > 0:
         acc_0 = acc
         pts_0 = pts
 
@@ -212,7 +261,8 @@ def render_rays(
         pts = rays_o[..., None, :] + rays_d[..., None, :] * z_vals[..., :, None]
         pts = pts.clamp(-bound, bound)
 
-        raw = run_network(pts, net_fine, netchunk)
+        fine_net = net_fine if net_fine is not None else net
+        raw = run_network(pts, fine_net, netchunk)
         acc, _ = raw2outputs(raw, z_vals, rays_d, raw_noise_std)
 
     return {

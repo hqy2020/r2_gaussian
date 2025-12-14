@@ -172,6 +172,7 @@ sampled_densities = vol[sampled_indices] * density_rescale
 | `n_points` | 50000 | 初始化点数 | 与 GPU 内存相关，通常 50k 足够 |
 | `sps_denoise` | False | 是否启用高斯滤波 | 稀疏视角建议开启 |
 | `sps_denoise_sigma` | 3.0 | 高斯滤波标准差 | 去噪强度，3.0 通常足够 |
+| `sps_density_init_mode` | raw | 初始化密度模式 | 推荐 `match_valid_mean`（避免 SPS 采样导致整体初始密度偏高，提升跨器官/视角稳定性） |
 
 ### 4.2 采样策略
 
@@ -187,20 +188,32 @@ sampled_densities = vol[sampled_indices] * density_rescale
 ### 5.1 生成 SPS 点云
 
 ```bash
-# 基础用法
-python initialize_pcd.py -s data/369/foot_50_3views.pickle --enable_sps
+# 推荐：用脚本一次性生成 15 个场景（输出到 data/369-sps，避免覆盖 baseline init）
+bash ./cc-agent/scripts/generate_sps_init_369.sh <gpu_id> 50000 1
+
+# 或单个场景手动生成（输出到 data/369-sps）
+python initialize_pcd.py \
+    --data data/369/foot_50_3views.pickle \
+    --output data/369-sps/init_foot_50_3views.npy \
+    --enable_sps \
+    --sps_strategy adaptive \
+    --sps_uniform_ratio 0.3 \
+    --sps_density_gamma 0.8 \
+    --sps_density_clip_percentile 99.5 \
+    --sps_density_init_mode match_valid_mean \
+    --n_points 50000
 
 # 完整参数
 python initialize_pcd.py \
-    -s data/369/foot_50_3views.pickle \
+    --data data/369/foot_50_3views.pickle \
     --enable_sps \
     --sps_denoise \
     --sps_denoise_sigma 3.0 \
     --density_thresh 0.05 \
     --n_points 50000
 
-# 输出位置
-# → data/density-369/init_foot_50_3views.npy
+# 输出位置（不指定 --output 时默认与数据同目录）
+# → data/369/init_foot_50_3views.npy
 ```
 
 ### 5.2 在训练中使用 SPS
@@ -209,7 +222,7 @@ python initialize_pcd.py \
 # 方法 1：直接指定点云路径
 python train.py \
     -s data/369/foot_50_3views.pickle \
-    --ply_path data/density-369/init_foot_50_3views.npy
+    --ply_path data/369-sps/init_foot_50_3views.npy
 
 # 方法 2：使用消融脚本（推荐）
 ./cc-agent/scripts/run_spags_ablation.sh sps foot 3 0
@@ -221,7 +234,7 @@ python train.py \
 
 ```bash
 # SPS 点云路径
-SPS_PCD_PATH="data/density-369/init_${ORGAN}_50_${VIEWS}views.npy"
+SPS_PCD_PATH="data/369-sps/init_${ORGAN}_50_${VIEWS}views.npy"
 
 # 当配置包含 SPS 时
 if [ "$USE_SPS" = true ]; then

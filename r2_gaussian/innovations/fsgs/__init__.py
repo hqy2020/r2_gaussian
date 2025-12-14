@@ -18,7 +18,7 @@ Usage:
     from r2_gaussian.innovations.fsgs import ProximityGuidedDensifier
 
     # Initialize
-    densifier = ProximityGuidedDensifier(k_neighbors=5, proximity_threshold=5.0)
+    densifier = ProximityGuidedDensifier(k_neighbors=5, proximity_threshold=0.05)
 
     # Compute proximity scores
     scores, neighbor_indices, _ = densifier.compute_proximity_scores(positions, return_neighbors=True)

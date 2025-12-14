@@ -42,6 +42,7 @@ def testing(
     skip_render_train: bool,
     skip_render_test: bool,
     skip_recon: bool,
+    full_args=None,
 ):
     # Set up dataset
     scene = Scene(
@@ -50,8 +51,9 @@ def testing(
     )
 
     # Set up Gaussians
-    # scale_bound will be loaded later; pass dataset so ADM(K-Planes) can be enabled during eval
-    gaussians = GaussianModel(None, args=dataset)
+    # 评估侧需要同时对齐 ADM 的调度参数（warmup/decay/total_iters 等），这些通常来自 cfg_args
+    # 因此优先传入 full_args（get_combined_args 的完整 Namespace），否则退化为 dataset
+    gaussians = GaussianModel(None, args=full_args if full_args is not None else dataset)
     loaded_iter = initialize_gaussian(gaussians, dataset, iteration)
     scene.gaussians = gaussians
 
@@ -59,6 +61,8 @@ def testing(
     num_train_views = len(scene.getTrainCameras())
     if num_train_views > 0:
         gaussians.set_num_train_views(num_train_views)
+    # 🆕 Keep ADM schedule consistent with the loaded checkpoint iteration
+    gaussians.current_iteration = loaded_iter
 
     save_path = osp.join(
         dataset.model_path,
@@ -241,4 +245,5 @@ if __name__ == "__main__":
             args.skip_render_train,
             args.skip_render_test,
             args.skip_recon,
+            full_args=args,
         )

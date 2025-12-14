@@ -92,9 +92,10 @@ for ORGAN in "${ORGANS[@]}"; do
       --output "$OUT_PATH" \
       --enable_sps \
       --sps_strategy adaptive \
-      --sps_uniform_ratio 0.2 \
-      --sps_density_gamma 1.0 \
+      --sps_uniform_ratio 0.3 \
+      --sps_density_gamma 0.8 \
       --sps_density_clip_percentile 99.5 \
+      --sps_density_init_mode match_valid_mean \
       --n_points "$N_POINTS"
   done
 done

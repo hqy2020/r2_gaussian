@@ -230,7 +230,8 @@ class DensityMLPDecoder(nn.Module):
 
         # 🔧 confidence_head 小初始化（确保初始输出接近 0.5）
         nn.init.normal_(self.confidence_head[0].weight, std=0.01)
-        nn.init.constant_(self.confidence_head[0].bias, 0.0)  # sigmoid(0) = 0.5
+        # 默认让初始 confidence 更保守，避免 ADM 早期直接“全场 1.0”饱和
+        nn.init.constant_(self.confidence_head[0].bias, -2.0)  # sigmoid(-2) ≈ 0.119
 
     def forward(self, kplanes_feat: torch.Tensor):
         """

@@ -153,7 +153,7 @@ class NeRFModel(nn.Module):
         super().__init__()
         self.config = config
 
-        # 创建编码器
+        # 创建编码器（注意：不要在多个子模块中重复注册同一个 encoder，否则优化器会出现重复参数）
         encoder_kwargs = {
             'num_levels': getattr(config, 'num_levels', 16),
             'level_dim': getattr(config, 'level_dim', 2),
@@ -167,7 +167,7 @@ class NeRFModel(nn.Module):
             encoder_kwargs['density_n_comp'] = getattr(config, 'density_n_comp', 8)
             encoder_kwargs['app_dim'] = getattr(config, 'app_dim', 32)
 
-        self.encoder = get_encoder(config.encoding, **encoder_kwargs)
+        encoder = get_encoder(config.encoding, **encoder_kwargs)
 
         # 获取网络类型
         net_type = getattr(config, 'net_type', 'mlp')
@@ -176,7 +176,7 @@ class NeRFModel(nn.Module):
         if net_type == 'lineformer':
             from .lineformer import Lineformer
             self.net = Lineformer(
-                encoder=self.encoder,
+                encoder=encoder,
                 bound=config.bound,
                 num_layers=config.num_layers,
                 hidden_dim=config.hidden_dim,
@@ -190,7 +190,7 @@ class NeRFModel(nn.Module):
             )
         else:
             self.net = DensityNetwork(
-                encoder=self.encoder,
+                encoder=encoder,
                 bound=config.bound,
                 num_layers=config.num_layers,
                 hidden_dim=config.hidden_dim,
@@ -201,9 +201,14 @@ class NeRFModel(nn.Module):
 
         # 精细网络 (Lineformer 通常不使用精细网络)
         self.net_fine = None
-        if config.n_fine > 0 and net_type != 'lineformer':
+        # 说明：
+        # - 当前 render_rays 已支持 n_fine>0 且 net_fine=None 时复用 coarse net 做 fine 采样，
+        #   默认不开启独立的 fine network（避免重复参数/训练不稳定）。
+        use_fine_network = bool(getattr(config, 'use_fine_network', False))
+        if use_fine_network and config.n_fine > 0 and net_type != 'lineformer':
+            fine_encoder = get_encoder(config.encoding, **encoder_kwargs)
             self.net_fine = DensityNetwork(
-                encoder=self.encoder,
+                encoder=fine_encoder,
                 bound=config.bound,
                 num_layers=config.num_layers,
                 hidden_dim=config.hidden_dim,
@@ -255,7 +260,19 @@ def training_nerf(
     model = NeRFModel(config).cuda()
 
     # 优化器
-    optimizer = torch.optim.Adam(model.parameters(), lr=config.lrate, betas=(0.9, 0.999))
+    params = list(model.parameters())
+    unique_params = []
+    seen = set()
+    for p in params:
+        pid = id(p)
+        if pid in seen:
+            continue
+        unique_params.append(p)
+        seen.add(pid)
+    if len(unique_params) != len(params):
+        print(f"[NeRF Training] Deduplicate optimizer params: {len(params)} -> {len(unique_params)}")
+
+    optimizer = torch.optim.Adam(unique_params, lr=config.lrate, betas=(0.9, 0.999))
     lr_scheduler = torch.optim.lr_scheduler.StepLR(
         optimizer, step_size=config.lrate_step, gamma=config.lrate_gamma
     )
@@ -268,8 +285,12 @@ def training_nerf(
         model.net.load_state_dict(ckpt["network"])
         if model.net_fine is not None and ckpt.get("network_fine"):
             model.net_fine.load_state_dict(ckpt["network_fine"])
-        if "encoder" in ckpt and model.encoder is not None:
-            model.encoder.load_state_dict(ckpt["encoder"])
+        # 兼容旧 checkpoint：encoder 可能被单独保存
+        if "encoder" in ckpt:
+            try:
+                model.net.encoder.load_state_dict(ckpt["encoder"])
+            except Exception as e:
+                print(f"[NeRF Training] Warning: failed to load legacy encoder state: {e}")
         optimizer.load_state_dict(ckpt["optimizer"])
         print(f"Loaded checkpoint from {checkpoint}, iteration {first_iter}")
 
@@ -293,6 +314,19 @@ def training_nerf(
                 weights = cam.original_image[0].detach().clamp(min=0).flatten()
                 weights = (weights + importance_eps) ** importance_power
                 weight_cache[cam.uid] = weights
+
+        # 简单 sanity：打印第一张训练视角的 ray-AABB 命中率
+        if len(train_cameras) > 0:
+            cam0 = train_cameras[0]
+            rays0 = ray_cache[cam0.uid][0]
+            valid0 = (rays0[:, 7] > rays0[:, 6] + 1e-6).float().mean().item()
+            near0 = rays0[:, 6]
+            far0 = rays0[:, 7]
+            print(
+                f"[NeRF Training] Ray-AABB hit ratio (cam0 uid={cam0.uid}): {valid0:.3f}, "
+                f"near[min,max]=({near0.min().item():.3f},{near0.max().item():.3f}), "
+                f"far[min,max]=({far0.min().item():.3f},{far0.max().item():.3f})"
+            )
 
     print(f"[NeRF Training] Total iterations: {opt.iterations}")
     print(f"[NeRF Training] Training views: {len(train_cameras)}")
@@ -383,8 +417,6 @@ def training_nerf(
             }
             if model.net_fine is not None:
                 save_dict["network_fine"] = model.net_fine.state_dict()
-            if model.encoder is not None:
-                save_dict["encoder"] = model.encoder.state_dict()
             torch.save(save_dict, save_path)
             print(f"\n[{method}] Saved model to {save_path}")
 
@@ -398,8 +430,6 @@ def training_nerf(
             }
             if model.net_fine is not None:
                 save_dict["network_fine"] = model.net_fine.state_dict()
-            if model.encoder is not None:
-                save_dict["encoder"] = model.encoder.state_dict()
             torch.save(save_dict, ckpt_path)
             print(f"\n[{method}] Saved checkpoint to {ckpt_path}")
 
