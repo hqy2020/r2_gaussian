@@ -455,6 +455,8 @@ class Lineformer(nn.Module):
         """
         # 编码
         x = self.encoder(x, self.bound)
+        # HashGrid 编码默认会输出 fp16；Lineformer 含 LayerNorm/Attention，使用 fp32 更稳定
+        x = x.float()
 
         input_pts = x[..., :self.in_dim]
 

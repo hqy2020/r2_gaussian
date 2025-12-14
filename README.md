@@ -92,8 +92,8 @@ data/
 ### 3.1 初始化点云（SPS）
 
 ```sh
-# 生成密度加权初始化点云
-python initialize_pcd.py --data <path_to_data> --enable_sps --n_points 50000
+# 生成 SPS 初始化点云（推荐：adaptive，随视角数自动减弱先验，避免高视角过度集中）
+python initialize_pcd.py --data <path_to_data> --enable_sps --sps_strategy adaptive --n_points 50000
 ```
 
 ### 3.2 训练
@@ -132,12 +132,16 @@ python test.py -m <path_to_trained_model>
 ## 4. SPAGS 核心参数
 
 ### SPS (空间先验播种)
-- `--enable_sps`: 启用密度加权采样（需在 `initialize_pcd.py` 中设置）
+- `--enable_sps`: 启用 SPS 初始化（需在 `initialize_pcd.py` 中生成 init_*.npy）
+- `--sps_strategy`: 采样策略（`adaptive|mixed|density_weighted|stratified`，推荐 `adaptive`）
+- `--sps_uniform_ratio`: mixed/adaptive 中均匀采样占比（其余为密度加权）
+- `--sps_density_gamma`: 密度权重幂指数 γ（`<1` 更平滑，`>1` 更尖锐）
 - `--n_points`: 初始化点云数量（默认 50000）
 
 ### GAR (几何感知细化)
 - `--enable_fsgs_proximity`: 启用邻近感知密化
-- `--proximity_threshold`: 邻近密化阈值（默认 5.0）
+- `--gar_proximity_threshold`: 邻近密化阈值（默认 0.05，场景归一化到 [-1,1]^3 后邻近分数典型范围约 0.01~0.5）
+- `--gar_new_per_source`: 每个候选点最多生成的新点数（默认 1；<=0 表示使用全部 K 个邻居，更贴近 FSGS）
 
 ### ADM (自适应密度调制)
 - `--enable_kplanes`: 启用 K-Planes 编码器

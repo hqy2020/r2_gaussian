@@ -102,6 +102,9 @@ def training(
     proximity_until_iter = dataset.proximity_until_iter
     # 🆕 GAR 优化参数
     gar_adaptive_threshold = getattr(dataset, 'gar_adaptive_threshold', False)
+    gar_auto_threshold = getattr(dataset, 'gar_auto_threshold', True)
+    gar_auto_min_ratio = getattr(dataset, 'gar_auto_min_ratio', 0.01)
+    gar_auto_max_ratio = getattr(dataset, 'gar_auto_max_ratio', 0.30)
     gar_adaptive_method = getattr(dataset, 'gar_adaptive_method', 'percentile')
     gar_adaptive_percentile = getattr(dataset, 'gar_adaptive_percentile', 90.0)
     gar_progressive_decay = getattr(dataset, 'gar_progressive_decay', False)
@@ -110,6 +113,8 @@ def training(
     gar_gradient_filter = getattr(dataset, 'gar_gradient_filter', False)
     gar_gradient_threshold = getattr(dataset, 'gar_gradient_threshold', 0.0002)
     gar_max_candidates = getattr(dataset, 'gar_max_candidates', 5000)  # 每次密化最大候选点数
+    gar_candidate_ratio_cap = getattr(dataset, 'gar_candidate_ratio_cap', 0.15)  # 每次密化候选占比上限（0 表示不限制）
+    gar_new_per_source = getattr(dataset, 'gar_new_per_source', 1)  # 每个候选点最多生成的新点数（<=0 表示使用全部K）
 
     if use_proximity:
         print("Use FSGS proximity-guided densification (GAR)")
@@ -140,10 +145,18 @@ def training(
         # 🆕 打印优化参数
         if gar_adaptive_threshold:
             print(f"  - 🆕 adaptive_threshold: {gar_adaptive_method} (p={gar_adaptive_percentile})")
+        if (not gar_adaptive_threshold) and gar_auto_threshold:
+            print(f"  - 🆕 auto_threshold: ratio∈[{gar_auto_min_ratio:.3f},{gar_auto_max_ratio:.3f}] -> {gar_adaptive_method}(p={gar_adaptive_percentile})")
         if gar_progressive_decay:
             print(f"  - 🆕 progressive_decay: start={gar_decay_start_ratio}, final={gar_final_strength}")
         if gar_gradient_filter:
             print(f"  - 🆕 gradient_filter: threshold={gar_gradient_threshold}")
+        if gar_candidate_ratio_cap and gar_candidate_ratio_cap > 0:
+            print(f"  - 🆕 candidate_ratio_cap: {gar_candidate_ratio_cap}")
+        if gar_new_per_source <= 0:
+            print(f"  - 🆕 new_per_source: all (K={proximity_densifier.k_neighbors})")
+        else:
+            print(f"  - 🆕 new_per_source: {gar_new_per_source}")
 
     # 🆕 [SPS] 打印初始化点云信息
     if dataset.ply_path:
@@ -244,7 +257,9 @@ def training(
             loss["total"] = loss["total"] + opt.lambda_tv * loss_tv
 
         # K-Planes TV 正则化损失（X²-Gaussian）
-        # 🆕 视角自适应：视角越多，TV 正则化越强（避免过拟合）
+        # 🆕 视角自适应（可选）：与 ADM 调制同向缩放
+        # - 视角越少（欠约束）→ TV 更强（更平滑，防止过拟合）
+        # - 视角越多（数据更充分）→ TV 更弱（保留细节）
         if opt.lambda_plane_tv > 0 and gaussians.enable_kplanes and gaussians.kplanes_encoder is not None:
             planes = gaussians.kplanes_encoder.get_plane_params()
             tv_loss_planes = compute_plane_tv_loss(
@@ -255,11 +270,9 @@ def training(
             loss["plane_tv"] = tv_loss_planes
 
             # 🆕 视角自适应 TV 正则化权重
-            # view_scale 是 ADM 的缩放因子（视角越多越小）
-            # TV 权重应该是反向的：视角越多，TV 权重越大
-            # tv_scale = 1 / view_scale = sqrt(num_views / 3)
+            # view_scale: 3v=1.0, 6v≈0.71, 9v≈0.58（adm_view_adaptive 关闭时恒为 1.0）
             view_scale = gaussians.get_view_adaptive_scale()
-            tv_scale = 1.0 / view_scale if view_scale > 0 else 1.0
+            tv_scale = view_scale
             effective_lambda_tv = opt.lambda_plane_tv * tv_scale
 
             loss["total"] = loss["total"] + effective_lambda_tv * tv_loss_planes
@@ -337,23 +350,34 @@ def training(
                               f"p90={torch.quantile(proximity_scores, 0.90):.4f}")
 
                     # 🆕 2. 计算有效阈值（自适应 + 渐进衰减）
-                    effective_threshold = None
+                    base_threshold = float(proximity_densifier.proximity_threshold)
+                    effective_threshold = base_threshold  # float or tensor
+                    threshold_mode = "fixed"
+                    fixed_ratio = None
+                    auto_triggered = False
 
-                    # 2a. 自适应阈值
+                    # 2a. 自适应阈值（强制）
                     if gar_adaptive_threshold:
-                        effective_threshold = proximity_densifier.compute_adaptive_threshold_value(
-                            proximity_scores
-                        )
+                        effective_threshold = proximity_densifier.compute_adaptive_threshold_value(proximity_scores)
+                        threshold_mode = f"adaptive:{gar_adaptive_method}(p={gar_adaptive_percentile})"
 
-                    # 2b. 渐进衰减
+                    # 2a'. 自动阈值保护：固定阈值太松/太严时，自动切到自适应阈值
+                    if (not gar_adaptive_threshold) and gar_auto_threshold:
+                        fixed_ratio = (proximity_scores > base_threshold).float().mean().item()
+                        if (fixed_ratio < float(gar_auto_min_ratio)) or (fixed_ratio > float(gar_auto_max_ratio)):
+                            effective_threshold = proximity_densifier.compute_adaptive_threshold_value(proximity_scores)
+                            threshold_mode = f"auto->adaptive:{gar_adaptive_method}(p={gar_adaptive_percentile})"
+                            auto_triggered = True
+                        else:
+                            threshold_mode = "auto->fixed"
+
+                    # 2b. 渐进衰减（对最终阈值做乘法放大）
+                    decay_mult = 1.0
                     if gar_progressive_decay:
                         decay_mult = proximity_densifier.get_decay_multiplier(
                             iteration, proximity_start_iter, proximity_until_iter
                         )
-                        if effective_threshold is not None:
-                            effective_threshold = effective_threshold * decay_mult
-                        else:
-                            effective_threshold = proximity_densifier.proximity_threshold * decay_mult
+                        effective_threshold = effective_threshold * decay_mult
 
                     # 3. 识别需要密化的候选点
                     densify_mask = proximity_densifier.identify_densify_candidates(
@@ -373,53 +397,97 @@ def training(
 
                     # 🔧 诊断日志：输出阈值和候选数
                     if iteration % 1000 == 0 or iteration == proximity_start_iter:
-                        _used_threshold = effective_threshold if effective_threshold is not None else proximity_densifier.proximity_threshold
-                        print(f"  - 使用阈值: {_used_threshold:.4f}")
+                        used_threshold_value = float(effective_threshold.item()) if torch.is_tensor(effective_threshold) else float(effective_threshold)
+                        print(f"  - 使用阈值: {used_threshold_value:.4f} ({threshold_mode})")
+                        if fixed_ratio is not None:
+                            print(f"  - 固定阈值({base_threshold:.4f})候选比例: {fixed_ratio * 100:.2f}%")
                         print(f"  - 候选点数: {num_candidates} / {len(positions)} ({100*num_candidates/len(positions):.2f}%)")
                         if num_candidates == 0:
                             print(f"  - ⚠️ 警告: 候选点为 0！可能阈值设置不合理")
 
-                    # 获取 GAR 诊断信息（每次迭代都更新，用于 TensorBoard）
-                    gar_diag = proximity_densifier.get_diagnostics(
-                        proximity_scores, iteration, proximity_start_iter, proximity_until_iter
-                    )
+                    # 获取 GAR 诊断信息（用于 TensorBoard；需反映实际使用的阈值）
+                    gar_diag = {
+                        'score_mean': float(proximity_scores.mean().item()),
+                        'threshold': float(effective_threshold.item()) if torch.is_tensor(effective_threshold) else float(effective_threshold),
+                        'decay_mult': float(decay_mult),
+                        'auto_threshold_used': float(1.0 if auto_triggered else 0.0),
+                    }
 
                     if num_candidates > 0:
-                        # 限制每次最多密化的点数，避免内存爆炸（使用参数化的上限）
-                        if num_candidates > gar_max_candidates:
-                            # [优化] 按邻近分数排序选择，优先选择最稀疏（分数最高）的点
-                            # 而非随机选择，确保密化最需要的区域
-                            candidate_indices = torch.where(densify_mask)[0]
-                            candidate_scores = proximity_scores[candidate_indices]
-                            _, sorted_idx = torch.sort(candidate_scores, descending=True)
-                            selected_indices = candidate_indices[sorted_idx[:gar_max_candidates]]
-                            # 使用新张量而非原地修改，避免潜在问题
-                            new_mask = torch.zeros_like(densify_mask)
-                            new_mask[selected_indices] = True
-                            densify_mask = new_mask
-                            num_candidates = gar_max_candidates
-
-                        # 5. 获取需要密化的点及其邻居
-                        source_positions = positions[densify_mask]
-                        source_neighbor_indices = neighbor_indices[densify_mask]
-
-                        # 6. 准备属性字典
-                        all_attributes = {
-                            'scales': gaussians._scaling,
-                            'opacities': gaussians._density,
-                            'rotations': gaussians._rotation,
-                        }
-
-                        # 7. 生成新的 Gaussians
-                        new_gaussians = proximity_densifier.generate_new_gaussians(
-                            source_positions,
-                            source_neighbor_indices,
-                            positions,
-                            all_attributes,
-                            max_new_per_source=1  # 每个源点只生成1个新点（最近邻中点）
+                        # ------------------------------------------------------------------
+                        # FSGS 对齐：每个候选点可沿 KNN 的多条边生成新点（gar_new_per_source）
+                        # 同时需要遵守全局点数预算（opt.max_num_gaussians），避免与 baseline densify 叠加后爆点
+                        # ------------------------------------------------------------------
+                        k_neighbors = proximity_densifier.k_neighbors
+                        new_per_source = (
+                            k_neighbors if gar_new_per_source <= 0
+                            else min(int(gar_new_per_source), k_neighbors)
                         )
 
-                        num_new = new_gaussians['positions'].shape[0]
+                        # 全局点数预算：与 baseline densify_and_prune 的 max_num_gaussians 保持一致
+                        max_num_gaussians = getattr(opt, "max_num_gaussians", None)
+                        if max_num_gaussians is not None and max_num_gaussians > 0:
+                            remaining_budget = int(max_num_gaussians - positions.shape[0])
+                            if remaining_budget <= 0:
+                                # 无预算，跳过本次 GAR 密化（但不影响本次迭代的反传与优化）
+                                budget_max_candidates = 0
+                                num_candidates = 0
+                            else:
+                                budget_max_candidates = remaining_budget // max(new_per_source, 1)
+                        else:
+                            budget_max_candidates = None
+
+                        effective_max_candidates = int(gar_max_candidates)
+                        if budget_max_candidates is not None:
+                            effective_max_candidates = min(effective_max_candidates, int(budget_max_candidates))
+
+                        # 占比上限：避免小点云一次性密化过多
+                        if gar_candidate_ratio_cap and gar_candidate_ratio_cap > 0:
+                            ratio = float(gar_candidate_ratio_cap)
+                            ratio = min(max(ratio, 0.0), 1.0)
+                            ratio_cap_candidates = max(1, int(ratio * positions.shape[0]))
+                            effective_max_candidates = min(effective_max_candidates, int(ratio_cap_candidates))
+
+                        if effective_max_candidates <= 0:
+                            num_candidates = 0
+
+                        if num_candidates > 0:
+                            # 限制每次最多密化的候选点数（同时考虑预算上限）
+                            if num_candidates > effective_max_candidates:
+                                # [优化] 按邻近分数排序选择，优先选择最稀疏（分数最高）的点
+                                candidate_indices = torch.where(densify_mask)[0]
+                                candidate_scores = proximity_scores[candidate_indices]
+                                _, sorted_idx = torch.sort(candidate_scores, descending=True)
+                                selected_indices = candidate_indices[sorted_idx[:effective_max_candidates]]
+
+                                new_mask = torch.zeros_like(densify_mask)
+                                new_mask[selected_indices] = True
+                                densify_mask = new_mask
+                                num_candidates = effective_max_candidates
+
+                            # 5. 获取需要密化的点及其邻居
+                            source_positions = positions[densify_mask]
+                            source_neighbor_indices = neighbor_indices[densify_mask]
+
+                            # 6. 准备属性字典
+                            all_attributes = {
+                                'scales': gaussians._scaling,
+                                'opacities': gaussians._density,
+                                'rotations': gaussians._rotation,
+                            }
+
+                            # 7. 生成新的 Gaussians
+                            new_gaussians = proximity_densifier.generate_new_gaussians(
+                                source_positions,
+                                source_neighbor_indices,
+                                positions,
+                                all_attributes,
+                                # - 1: 只沿最近邻生成 1 个新点（更保守）
+                                # - <=0: 使用全部 K 个邻居（更贴近 FSGS）
+                                max_new_per_source=None if gar_new_per_source <= 0 else int(gar_new_per_source)
+                            )
+
+                            num_new = new_gaussians['positions'].shape[0]
 
                         if num_new > 0:
                             # 8. 添加到 GaussianModel
@@ -510,6 +578,7 @@ def training(
                 metrics["gar/proximity_score_mean"] = gar_diag.get('score_mean', 0.0)
                 metrics["gar/threshold"] = gar_diag.get('threshold', 0.0)
                 metrics["gar/decay_mult"] = gar_diag.get('decay_mult', 1.0)
+                metrics["gar/auto_threshold_used"] = gar_diag.get('auto_threshold_used', 0.0)
                 metrics["gar/new_gaussians"] = num_new
                 metrics["gar/total_gaussians"] = gaussians.get_xyz.shape[0]
 
@@ -693,7 +762,9 @@ if __name__ == "__main__":
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
     args.test_iterations.append(args.iterations)
-    args.test_iterations.append(1)
+    # 仅对高斯系方法保留 iter=1 的快速 sanity check，避免 NeRF 系 baseline 误读“随机初始化”的极差指标
+    if args.method in ["r2_gaussian", "xgaussian"]:
+        args.test_iterations.append(1)
     # fmt: on
 
     # Initialize system state (RNG)

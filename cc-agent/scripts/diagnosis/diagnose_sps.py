@@ -14,7 +14,7 @@ SPS (Spatial Prior Seeding) 诊断工具
     # 对比随机 vs SPS 初始化
     python diagnose_sps.py \
         --baseline_init data/369/init_foot_50_3views.npy \
-        --sps_init data/density-369/init_foot_50_3views.npy \
+        --sps_init data/369-sps/init_foot_50_3views.npy \
         --output_dir diagnosis/sps/
 """
 
@@ -23,6 +23,9 @@ import sys
 import argparse
 import json
 import numpy as np
+import matplotlib
+# 兼容无显示/无 X server 环境（如 SSH/容器）
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from pathlib import Path
 from typing import Optional, Dict
@@ -73,16 +76,29 @@ def compute_spatial_statistics(positions: np.ndarray) -> dict:
     # 各轴标准差
     std = positions.std(axis=0)
 
-    # 点间距统计（采样计算，避免O(N²)）
-    n_samples = min(1000, len(positions))
+    # 点间距统计（采样计算，避免 O(N²)）
+    # 优先使用 SciPy KDTree；若环境缺少 SciPy，则退化为小样本 brute-force（仍可用于诊断趋势）
+    try:
+        from scipy.spatial import cKDTree  # type: ignore
+        use_kdtree = True
+    except Exception:
+        use_kdtree = False
+
+    n_samples = min(1000, len(positions)) if use_kdtree else min(200, len(positions))
     sample_idx = np.random.choice(len(positions), n_samples, replace=False)
     sample_positions = positions[sample_idx]
 
-    # 计算采样点的最近邻距离
-    from scipy.spatial import cKDTree
-    tree = cKDTree(positions)
-    distances, _ = tree.query(sample_positions, k=2)  # k=2 因为第一个是自己
-    nn_distances = distances[:, 1]  # 最近邻距离
+    if use_kdtree:
+        tree = cKDTree(positions)
+        distances, _ = tree.query(sample_positions, k=2)  # k=2：第 1 个为自己
+        nn_distances = distances[:, 1]
+    else:
+        nn_distances = []
+        for p in sample_positions:
+            d2 = np.sum((positions - p[None, :]) ** 2, axis=1)
+            d2 = d2[d2 > 0]  # 排除自身
+            nn_distances.append(np.sqrt(np.min(d2)) if d2.size > 0 else 0.0)
+        nn_distances = np.asarray(nn_distances, dtype=np.float64)
 
     return {
         'count': len(positions),
@@ -226,7 +242,9 @@ def plot_spatial_distribution(positions: np.ndarray, densities: np.ndarray,
     print(f"✓ 保存空间分布图: {output_path}")
 
 
-def plot_comparison(baseline_data: dict, sps_data: dict, output_dir: Path):
+def plot_comparison(baseline_data: dict, sps_data: dict,
+                    baseline_stats: dict, sps_stats: dict,
+                    output_dir: Path):
     """
     生成 Baseline vs SPS 对比图
     """
@@ -286,17 +304,40 @@ def plot_comparison(baseline_data: dict, sps_data: dict, output_dir: Path):
     ax = axes[1, 2]
     ax.axis('off')
 
+    # 统计信息（尽量用已计算的 stats，避免重复计算且保持一致）
+    baseline_occ = baseline_stats['uniformity']['occupancy_ratio']
+    sps_occ = sps_stats['uniformity']['occupancy_ratio']
+    baseline_cv = baseline_stats['uniformity']['cv']
+    sps_cv = sps_stats['uniformity']['cv']
+    baseline_mean = baseline_stats['density']['mean']
+    sps_mean = sps_stats['density']['mean']
+
+    baseline_center = np.asarray(baseline_stats['spatial']['center'], dtype=np.float64)
+    sps_center = np.asarray(sps_stats['spatial']['center'], dtype=np.float64)
+    center_shift = float(np.linalg.norm(sps_center - baseline_center))
+
     stats_text = "统计对比:\n\n"
-    stats_text += f"Baseline:\n"
+    stats_text += "Baseline:\n"
     stats_text += f"  - 点数: {len(baseline_pos)}\n"
-    stats_text += f"  - 密度均值: {np.mean(baseline_den):.4f}\n"
-    stats_text += f"  - 密度标准差: {np.std(baseline_den):.4f}\n\n"
-    stats_text += f"SPS:\n"
+    stats_text += f"  - 密度均值: {baseline_mean:.4f}\n"
+    stats_text += f"  - 密度标准差: {baseline_stats['density']['std']:.4f}\n"
+    stats_text += f"  - 占用率: {baseline_occ*100:.1f}%\n"
+    stats_text += f"  - CV: {baseline_cv:.2f}\n\n"
+
+    stats_text += "SPS:\n"
     stats_text += f"  - 点数: {len(sps_pos)}\n"
-    stats_text += f"  - 密度均值: {np.mean(sps_den):.4f}\n"
-    stats_text += f"  - 密度标准差: {np.std(sps_den):.4f}\n\n"
-    stats_text += f"差异:\n"
-    stats_text += f"  - 密度均值变化: {(np.mean(sps_den)/np.mean(baseline_den)-1)*100:+.1f}%\n"
+    stats_text += f"  - 密度均值: {sps_mean:.4f}\n"
+    stats_text += f"  - 密度标准差: {sps_stats['density']['std']:.4f}\n"
+    stats_text += f"  - 占用率: {sps_occ*100:.1f}%\n"
+    stats_text += f"  - CV: {sps_cv:.2f}\n\n"
+
+    stats_text += "差异:\n"
+    if baseline_mean > 0:
+        stats_text += f"  - 密度均值变化: {(sps_mean / baseline_mean - 1) * 100:+.1f}%\n"
+    stats_text += f"  - 占用率变化: {(sps_occ - baseline_occ) * 100:+.1f}pp\n"
+    if baseline_cv > 0:
+        stats_text += f"  - CV变化: {(sps_cv / baseline_cv - 1) * 100:+.1f}%\n"
+    stats_text += f"  - 中心偏移(L2): {center_shift:.3f}\n"
 
     ax.text(0.1, 0.9, stats_text, transform=ax.transAxes, fontsize=11,
             verticalalignment='top', fontfamily='monospace',
@@ -342,13 +383,13 @@ def generate_diagnosis_report(data: dict, stats: dict, output_path: str, name: s
             'suggestion': '检查是否使用了密度加权采样'
         })
 
-    # 诊断3：空间分布均匀性
-    if stats['uniformity']['cv'] > 1.5:
+    # 诊断3：空间分布均匀性（过度集中可能导致初始化覆盖不足）
+    if stats['uniformity']['cv'] > 1.0:
         diagnosis.append({
             'level': 'INFO',
             'issue': '空间分布不均匀',
             'detail': f"变异系数 CV = {stats['uniformity']['cv']:.2f}",
-            'suggestion': '这可能是密度加权采样的预期行为（高密度区域更多点）'
+            'suggestion': '若后续训练效果不佳，可尝试 mixed/adaptive、降低 gamma、或启用 sps_denoise / density_clip'
         })
 
     # 诊断4：零密度比例
@@ -389,6 +430,85 @@ def generate_diagnosis_report(data: dict, stats: dict, output_path: str, name: s
         print(f"         {d['detail']}")
     print("="*60)
 
+    return report
+
+
+def generate_comparison_report(baseline_stats: dict, sps_stats: dict, output_path: str):
+    """
+    生成 Baseline vs SPS 的对比诊断报告（用于解释 SPS 不及预期的潜在原因）
+    """
+    baseline_center = np.asarray(baseline_stats['spatial']['center'], dtype=np.float64)
+    sps_center = np.asarray(sps_stats['spatial']['center'], dtype=np.float64)
+
+    baseline_mean = float(baseline_stats['density']['mean'])
+    sps_mean = float(sps_stats['density']['mean'])
+    baseline_cv = float(baseline_stats['uniformity']['cv'])
+    sps_cv = float(sps_stats['uniformity']['cv'])
+    baseline_occ = float(baseline_stats['uniformity']['occupancy_ratio'])
+    sps_occ = float(sps_stats['uniformity']['occupancy_ratio'])
+    center_shift = float(np.linalg.norm(sps_center - baseline_center))
+
+    report = {
+        "name": "Baseline_vs_SPS",
+        "metrics": {
+            "density_mean_ratio": (sps_mean / baseline_mean) if baseline_mean > 0 else None,
+            "cv_ratio": (sps_cv / baseline_cv) if baseline_cv > 0 else None,
+            "occupancy_delta": sps_occ - baseline_occ,
+            "center_shift_l2": center_shift,
+        },
+        "diagnosis": []
+    }
+
+    diag = report["diagnosis"]
+
+    # 1) 空间覆盖不足
+    if sps_occ < 0.90:
+        diag.append({
+            "level": "WARNING",
+            "issue": "SPS 覆盖率偏低",
+            "detail": f"occupancy_ratio={sps_occ:.3f} (<0.90)",
+            "suggestion": "提高 mixed/adaptive 的均匀占比，或降低 density_thresh"
+        })
+
+    # 2) 过度集中（相对 baseline 明显更不均匀）
+    if baseline_cv > 0 and (sps_cv / baseline_cv) > 1.4 and sps_cv > 0.8:
+        diag.append({
+            "level": "INFO",
+            "issue": "SPS 分布更集中/不均匀",
+            "detail": f"CV: {baseline_cv:.2f} -> {sps_cv:.2f}",
+            "suggestion": "尝试增大 sps_uniform_ratio、减小 sps_density_gamma、启用 sps_denoise 或 density_clip"
+        })
+
+    # 3) 密度均值显著抬高（可能放大 FDK 伪影/高密度尖峰）
+    if baseline_mean > 0 and (sps_mean / baseline_mean) > 1.8:
+        diag.append({
+            "level": "INFO",
+            "issue": "SPS 采样偏向更高密度区域",
+            "detail": f"density_mean: {baseline_mean:.4f} -> {sps_mean:.4f}",
+            "suggestion": "若出现条纹伪影或训练不稳定，尝试启用 density_clip（如 99-99.5）或 sps_denoise"
+        })
+
+    # 4) 初始化中心偏移
+    if center_shift > 0.20:
+        diag.append({
+            "level": "INFO",
+            "issue": "SPS 初始化中心偏移较大",
+            "detail": f"center_shift(L2)={center_shift:.3f}",
+            "suggestion": "检查 FDK 伪影/阈值设置；可尝试 sps_denoise、降低 gamma 或提高均匀占比"
+        })
+
+    if not diag:
+        diag.append({
+            "level": "OK",
+            "issue": "SPS 与 Baseline 差异在可控范围",
+            "detail": "未检测到明显的覆盖不足或过度集中",
+            "suggestion": "若效果仍不佳，优先从 denoise/clip/gamma/均匀占比四个方向调参"
+        })
+
+    with open(output_path, "w", encoding="utf-8") as f:
+        json.dump(report, f, indent=2, ensure_ascii=False)
+
+    print(f"✓ 保存对比诊断报告: {output_path}")
     return report
 
 
@@ -465,7 +585,9 @@ def main():
                                   output_dir, prefix='baseline_')
         plot_spatial_distribution(sps_data['positions'], sps_data['densities'],
                                   output_dir, prefix='sps_')
-        plot_comparison(baseline_data, sps_data, output_dir)
+        plot_comparison(baseline_data, sps_data, baseline_stats, sps_stats, output_dir)
+        generate_comparison_report(baseline_stats, sps_stats,
+                                   str(output_dir / 'sps_comparison_report.json'))
 
         # 生成报告
         print("\n生成诊断报告...")

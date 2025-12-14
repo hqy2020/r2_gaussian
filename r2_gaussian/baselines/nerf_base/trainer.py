@@ -6,6 +6,7 @@ import os
 import os.path as osp
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import numpy as np
 import yaml
 from tqdm import tqdm
@@ -34,6 +35,115 @@ def get_method_config(method: str):
         return SAXNeRFConfig()
     else:
         raise ValueError(f"Unknown NeRF method: {method}")
+
+
+def _safe_multinomial(weights: torch.Tensor, num_samples: int) -> torch.Tensor:
+    """torch.multinomial 的安全封装：全 0 时退化到均匀采样；非零数量不足时自动 replacement=True。"""
+    if num_samples <= 0:
+        return torch.empty((0,), device=weights.device, dtype=torch.long)
+
+    weights = weights.float()
+    if torch.all(weights <= 0):
+        return torch.randint(0, weights.numel(), (num_samples,), device=weights.device)
+
+    nonzero = int((weights > 0).sum().item())
+    replacement = nonzero < num_samples
+    return torch.multinomial(weights, num_samples, replacement=replacement)
+
+
+def _get_training_rays(
+    viewpoint,
+    scanner_cfg: dict,
+    config,
+    ray_cache: dict,
+    weight_cache: dict,
+):
+    """获取训练 rays：优先使用 cache + 重要性采样，避免每次迭代构造整张像素网格。"""
+    n_rays = int(getattr(config, "n_rays", 1024))
+    sampling = getattr(config, "ray_sampling", "uniform")
+    importance_ratio = float(getattr(config, "importance_ratio", 0.0))
+
+    if sampling == "on_the_fly" or viewpoint.uid not in ray_cache:
+        return generate_rays_from_camera(viewpoint, scanner_cfg, n_rays=n_rays)
+
+    rays_all, indices_all = ray_cache[viewpoint.uid]
+    n_total = rays_all.shape[0]
+
+    if sampling == "uniform" or importance_ratio <= 0 or viewpoint.uid not in weight_cache:
+        select = torch.randperm(n_total, device=rays_all.device)[:n_rays]
+        return rays_all[select], indices_all[select]
+
+    weights = weight_cache[viewpoint.uid]
+    n_imp = max(1, int(round(n_rays * importance_ratio)))
+    n_uni = n_rays - n_imp
+
+    imp_idx = _safe_multinomial(weights, n_imp)
+    if n_uni > 0:
+        uni_idx = torch.randperm(n_total, device=rays_all.device)[:n_uni]
+        select = torch.cat([imp_idx, uni_idx], dim=0)
+        select = select[torch.randperm(select.shape[0], device=rays_all.device)]
+    else:
+        select = imp_idx
+
+    return rays_all[select], indices_all[select]
+
+
+@torch.no_grad()
+def _render_full_image(
+    viewpoint,
+    scanner_cfg: dict,
+    model,
+    config,
+    chunk_rays: int,
+) -> torch.Tensor:
+    """按 rays 分块渲染整张投影图，避免一次性 H*W 渲染触发 OOM。"""
+    rays, _ = generate_rays_from_camera(viewpoint, scanner_cfg, n_rays=None)
+
+    preds = []
+    for start in range(0, rays.shape[0], chunk_rays):
+        render_result = render_rays(
+            rays[start:start + chunk_rays],
+            model.net,
+            model.net_fine,
+            n_samples=config.n_samples,
+            n_fine=config.n_fine,
+            perturb=False,
+            netchunk=config.netchunk,
+            raw_noise_std=0.0,
+        )
+        preds.append(render_result["acc"])
+
+    pred = torch.cat(preds, dim=0)  # [H*W, 1]
+    H, W = viewpoint.image_height, viewpoint.image_width
+    return pred.reshape(H, W, 1).permute(2, 0, 1)  # [1, H, W]
+
+
+@torch.no_grad()
+def _query_volume_by_slices(model, config, scanner_cfg: dict) -> np.ndarray:
+    """逐 z-slice 查询 3D 体素，避免一次性构造/查询超大网格导致 OOM。"""
+    device = next(model.parameters()).device
+    nVoxel = scanner_cfg["nVoxel"]
+    sVoxel = scanner_cfg["sVoxel"]
+    offOrigin = scanner_cfg.get("offOrigin", [0.0, 0.0, 0.0])
+
+    nx, ny, nz = int(nVoxel[0]), int(nVoxel[1]), int(nVoxel[2])
+    x = torch.linspace(offOrigin[0] - sVoxel[0] / 2, offOrigin[0] + sVoxel[0] / 2, nx, device=device)
+    y = torch.linspace(offOrigin[1] - sVoxel[1] / 2, offOrigin[1] + sVoxel[1] / 2, ny, device=device)
+    z = torch.linspace(offOrigin[2] - sVoxel[2] / 2, offOrigin[2] + sVoxel[2] / 2, nz, device=device)
+
+    xx, yy = torch.meshgrid(x, y, indexing="ij")
+    xy = torch.stack([xx, yy], dim=-1)  # [nx, ny, 2]
+
+    net = model.net_fine if model.net_fine is not None else model.net
+    vol_pred = np.empty((nx, ny, nz), dtype=np.float32)
+
+    for zi in range(nz):
+        zz = z[zi].expand(nx, ny).unsqueeze(-1)
+        coords = torch.cat([xy, zz], dim=-1).reshape(-1, 3)
+        dens = run_network(coords, net, config.netchunk).reshape(nx, ny, -1)[..., 0]
+        vol_pred[:, :, zi] = dens.detach().cpu().numpy()
+
+    return vol_pred
 
 
 class NeRFModel(nn.Module):
@@ -165,24 +275,24 @@ def training_nerf(
 
     # 准备训练数据
     train_cameras = scene.getTrainCameras()
-    test_cameras = scene.getTestCameras()
 
-    # 体素网格用于 3D 评估
-    nVoxel = scanner_cfg["nVoxel"]
-    sVoxel = scanner_cfg["sVoxel"]
-    offOrigin = scanner_cfg["offOrigin"]
-    scene_bound = max(sVoxel) / 2  # 场景边界用于归一化
+    # 预缓存训练视角 rays：可显著减少每次迭代的 H*W 网格构造开销
+    ray_cache = {}
+    weight_cache = {}
+    sampling = getattr(config, "ray_sampling", "uniform")
+    importance_ratio = float(getattr(config, "importance_ratio", 0.0))
+    importance_power = float(getattr(config, "importance_power", 1.0))
+    importance_eps = float(getattr(config, "importance_eps", 1e-4))
 
-    # 创建体素坐标 (归一化到 [-1, 1])
-    # 原始范围: [-sVoxel/2, sVoxel/2]
-    # 归一化: [-1, 1]
-    x = torch.linspace(-sVoxel[0]/2, sVoxel[0]/2, int(nVoxel[0])) / scene_bound
-    y = torch.linspace(-sVoxel[1]/2, sVoxel[1]/2, int(nVoxel[1])) / scene_bound
-    z = torch.linspace(-sVoxel[2]/2, sVoxel[2]/2, int(nVoxel[2])) / scene_bound
-    xx, yy, zz = torch.meshgrid(x, y, z, indexing='ij')
-    voxels = torch.stack([xx, yy, zz], dim=-1).cuda()
+    if sampling != "on_the_fly":
+        for cam in train_cameras:
+            rays_all, indices_all = generate_rays_from_camera(cam, scanner_cfg, n_rays=None)
+            ray_cache[cam.uid] = (rays_all, indices_all)
 
-    print(f"[NeRF Training] Voxel coords normalized to [{voxels.min():.2f}, {voxels.max():.2f}]")
+            if sampling != "uniform" and importance_ratio > 0:
+                weights = cam.original_image[0].detach().clamp(min=0).flatten()
+                weights = (weights + importance_eps) ** importance_power
+                weight_cache[cam.uid] = weights
 
     print(f"[NeRF Training] Total iterations: {opt.iterations}")
     print(f"[NeRF Training] Training views: {len(train_cameras)}")
@@ -203,10 +313,8 @@ def training_nerf(
         viewpoint_idx = randint(0, len(viewpoint_stack) - 1)
         viewpoint = viewpoint_stack.pop(viewpoint_idx)
 
-        # 生成射线
-        rays, indices = generate_rays_from_camera(
-            viewpoint, scanner_cfg, n_rays=config.n_rays
-        )
+        # 生成射线（优先 cache + 重要性采样）
+        rays, indices = _get_training_rays(viewpoint, scanner_cfg, config, ray_cache, weight_cache)
 
         # 渲染
         render_result = render_rays(
@@ -231,7 +339,11 @@ def training_nerf(
         gt_pixels = gt_image[0, indices[:, 0], indices[:, 1]].unsqueeze(-1)  # [N_rays, 1]
 
         # 损失
-        loss = l1_loss(pred, gt_pixels)
+        loss_type = getattr(config, "loss_type", "l1").lower()
+        if loss_type in ["l2", "mse"]:
+            loss = F.mse_loss(pred, gt_pixels)
+        else:
+            loss = l1_loss(pred, gt_pixels)
 
         # 反向传播
         optimizer.zero_grad()
@@ -256,7 +368,7 @@ def training_nerf(
         if iteration in testing_iterations:
             _nerf_eval(
                 tb_writer, iteration, method, model, scene,
-                voxels, config, scanner_cfg
+                config, scanner_cfg
             )
 
         # 保存
@@ -299,66 +411,51 @@ def training_nerf(
     print(f"\n[{method}] Training complete!")
 
 
-def _nerf_eval(tb_writer, iteration, method, model, scene, voxels, config, scanner_cfg):
+def _nerf_eval(tb_writer, iteration, method, model, scene, config, scanner_cfg):
     """NeRF 评估"""
     model.eval()
     eval_save_path = osp.join(scene.model_path, "eval", f"iter_{iteration:06d}")
     os.makedirs(eval_save_path, exist_ok=True)
 
     with torch.no_grad():
-        # 3D 体积查询
-        vol_pred = run_network(
-            voxels.reshape(-1, 3),
-            model.net_fine if model.net_fine else model.net,
-            config.netchunk,
-        )
-        vol_pred = vol_pred.reshape(*voxels.shape[:-1])
+        psnr_3d, ssim_3d = None, None
 
-        # 与 GT 比较
+        # 3D 体积评估：逐 slice 查询，降低峰值显存
         vol_gt = scene.vol_gt
         if vol_gt is not None:
-            vol_pred_np = vol_pred.squeeze().cpu().numpy()
-            # 确保 vol_gt 也是 numpy array
+            vol_pred_np = _query_volume_by_slices(model, config, scanner_cfg)
             if isinstance(vol_gt, torch.Tensor):
-                vol_gt_np = vol_gt.cpu().numpy()
+                vol_gt_np = vol_gt.detach().cpu().numpy()
             else:
                 vol_gt_np = vol_gt
+
             psnr_3d, _ = metric_vol(vol_gt_np, vol_pred_np, "psnr")
             ssim_3d, _ = metric_vol(vol_gt_np, vol_pred_np, "ssim")
 
-            eval_dict = {"psnr_3d": psnr_3d, "ssim_3d": ssim_3d}
+            eval_dict_3d = {"psnr_3d": psnr_3d, "ssim_3d": ssim_3d}
             with open(osp.join(eval_save_path, f"eval3d_{method}.yml"), "w") as f:
-                yaml.dump(eval_dict, f)
+                yaml.dump(eval_dict_3d, f, default_flow_style=False, sort_keys=False)
+            # 兼容 3DGS 的默认文件名（便于统一脚本抽取）
+            with open(osp.join(eval_save_path, "eval3d.yml"), "w") as f:
+                yaml.dump(eval_dict_3d, f, default_flow_style=False, sort_keys=False)
 
             if tb_writer:
                 tb_writer.add_scalar(f"{method}/psnr_3d", psnr_3d, iteration)
                 tb_writer.add_scalar(f"{method}/ssim_3d", ssim_3d, iteration)
 
-        # 2D 投影评估
+        # 2D 投影评估：按 rays 分块渲染，避免 OOM
         test_cameras = scene.getTestCameras()
         if test_cameras and len(test_cameras) > 0:
+            eval_max_views = int(getattr(config, "eval_max_views", 10))
+            chunk_rays = int(getattr(config, "eval_rays_chunk", 8192))
+
             images = []
             gt_images = []
 
-            for viewpoint in test_cameras[:10]:  # 只评估前 10 个视角
-                rays, indices = generate_rays_from_camera(
-                    viewpoint, scanner_cfg, n_rays=None
+            for viewpoint in test_cameras[:eval_max_views]:
+                pred_image = _render_full_image(
+                    viewpoint, scanner_cfg, model, config, chunk_rays=chunk_rays
                 )
-                render_result = render_rays(
-                    rays,
-                    model.net,
-                    model.net_fine,
-                    n_samples=config.n_samples,
-                    n_fine=config.n_fine,
-                    perturb=False,
-                    netchunk=config.netchunk,
-                    raw_noise_std=0.0,
-                )
-
-                pred = render_result["acc"]  # [H*W, 1]
-                H, W = viewpoint.image_height, viewpoint.image_width
-                pred_image = pred.reshape(H, W, 1).permute(2, 0, 1)  # [1, H, W]
-
                 gt_image = viewpoint.original_image.to("cuda")
                 images.append(pred_image)
                 gt_images.append(gt_image)
@@ -366,24 +463,42 @@ def _nerf_eval(tb_writer, iteration, method, model, scene, voxels, config, scann
             images = torch.concat(images, 0).permute(1, 2, 0)
             gt_images = torch.concat(gt_images, 0).permute(1, 2, 0)
 
-            psnr_2d, _ = metric_proj(gt_images, images, "psnr")
-            ssim_2d, _ = metric_proj(gt_images, images, "ssim")
+            psnr_2d, psnr_2d_projs = metric_proj(gt_images, images, "psnr")
+            ssim_2d, ssim_2d_projs = metric_proj(gt_images, images, "ssim")
 
-            eval_dict_2d = {"psnr_2d": psnr_2d, "ssim_2d": ssim_2d}
+            eval_dict_2d = {
+                "psnr_2d": psnr_2d,
+                "ssim_2d": ssim_2d,
+                "psnr_2d_projs": psnr_2d_projs,
+                "ssim_2d_projs": ssim_2d_projs,
+                "eval_num_views": int(min(eval_max_views, len(test_cameras))),
+            }
             with open(osp.join(eval_save_path, f"eval2d_{method}.yml"), "w") as f:
+                yaml.dump(eval_dict_2d, f, default_flow_style=False, sort_keys=False)
+            # 兼容 3DGS 的默认文件名（便于统一脚本抽取）
+            with open(osp.join(eval_save_path, "eval2d_render_test.yml"), "w") as f:
                 yaml.dump(eval_dict_2d, f, default_flow_style=False, sort_keys=False)
 
             if tb_writer:
                 tb_writer.add_scalar(f"{method}/psnr_2d", psnr_2d, iteration)
                 tb_writer.add_scalar(f"{method}/ssim_2d", ssim_2d, iteration)
 
-            tqdm.write(
-                f"[{method} ITER {iteration}] "
-                f"psnr3d {psnr_3d:.3f}, ssim3d {ssim_3d:.3f}, "
-                f"psnr2d {psnr_2d:.3f}, ssim2d {ssim_2d:.3f}"
-            )
+            if psnr_3d is not None and ssim_3d is not None:
+                tqdm.write(
+                    f"[{method} ITER {iteration}] "
+                    f"psnr3d {psnr_3d:.3f}, ssim3d {ssim_3d:.3f}, "
+                    f"psnr2d {psnr_2d:.3f}, ssim2d {ssim_2d:.3f}"
+                )
+            else:
+                tqdm.write(
+                    f"[{method} ITER {iteration}] "
+                    f"psnr2d {psnr_2d:.3f}, ssim2d {ssim_2d:.3f}"
+                )
         else:
-            tqdm.write(f"[{method} ITER {iteration}] psnr3d {psnr_3d:.3f}, ssim3d {ssim_3d:.3f}")
+            if psnr_3d is not None and ssim_3d is not None:
+                tqdm.write(f"[{method} ITER {iteration}] psnr3d {psnr_3d:.3f}, ssim3d {ssim_3d:.3f}")
+            else:
+                tqdm.write(f"[{method} ITER {iteration}] (no test views / no vol_gt)")
 
     model.train()
     torch.cuda.empty_cache()

@@ -115,7 +115,10 @@ class GaussianModel:
         # 训练视角数，用于自动缩放 ADM 调制强度
         # 默认 3（稀疏视角），由 train.py 设置实际值
         self.num_train_views = 3
+        # 默认开启：不同 views 下自动缩放 ADM 强度与 TV 权重（更符合消融脚本的使用习惯）
         self.adm_view_adaptive = getattr(args, 'adm_view_adaptive', True) if args else True
+        # 🆕 X2GS 风格稳定性：去除全局密度缩放偏置（零均值调制）
+        self.adm_zero_mean = getattr(args, 'adm_zero_mean', True) if args else True
 
     def capture(self):
         # K-Planes 状态（如果启用）
@@ -243,8 +246,13 @@ class GaussianModel:
         return self._xyz
 
     @property
+    def get_base_density(self):
+        """不含 ADM 的基础密度（Softplus 激活后）。"""
+        return self.density_activation(self._density)
+
+    @property
     def get_density(self):
-        base_density = self.density_activation(self._density)
+        base_density = self.get_base_density
 
         # 🎯 ADM 自适应密度调制（双头输出 + 训练调度 + 视角自适应）
         if self.enable_kplanes and self.kplanes_encoder is not None and self.density_decoder is not None:
@@ -267,6 +275,13 @@ class GaussianModel:
             # - strength: 训练进程调度（warmup -> hold -> decay）
             # - view_scale: 视角自适应缩放（3v=1.0, 6v≈0.71, 9v≈0.58）
             effective_offset = offset * confidence * max_range * strength * view_scale
+            # 🆕 去除全局偏置：避免 ADM 学成“整体系数缩放”，导致 densify/prune 不稳定
+            if getattr(self, 'adm_zero_mean', False):
+                effective_offset = effective_offset - effective_offset.mean()
+                # 零均值后可能轻微越界，做一次安全裁剪（保持最大调制范围）
+                max_abs = float(max_range) * float(strength) * float(view_scale)
+                if max_abs > 0:
+                    effective_offset = torch.clamp(effective_offset, -max_abs, max_abs)
             modulation = 1.0 + effective_offset
 
             base_density = base_density * modulation
@@ -325,10 +340,15 @@ class GaussianModel:
             view_scale = self.get_view_adaptive_scale()
 
             effective_offset = offset * confidence * max_range * strength * view_scale
+            if getattr(self, 'adm_zero_mean', False):
+                effective_offset = effective_offset - effective_offset.mean()
+                max_abs = float(max_range) * float(strength) * float(view_scale)
+                if max_abs > 0:
+                    effective_offset = torch.clamp(effective_offset, -max_abs, max_abs)
             modulation = 1.0 + effective_offset
 
             # 计算基础密度（用于对比）
-            base_density = self.density_activation(self._density)
+            base_density = self.get_base_density
             modulated_density = base_density * modulation
             density_change_pct = ((modulated_density - base_density) / (base_density + 1e-8) * 100)
 
@@ -600,7 +620,8 @@ class GaussianModel:
     def reset_density(self, reset_density=1.0):
         densities_new = self.density_inverse_activation(
             torch.min(
-                self.get_density, torch.ones_like(self.get_density) * reset_density
+                self.get_base_density,
+                torch.ones_like(self.get_base_density) * reset_density,
             )
         )
         optimizable_tensors = self.replace_tensor_to_optimizer(densities_new, "density")
@@ -786,7 +807,7 @@ class GaussianModel:
         new_rotation = self._rotation[selected_pts_mask].repeat(N, 1)
         # new_density = self._density[selected_pts_mask].repeat(N, 1)
         new_density = self.density_inverse_activation(
-            self.get_density[selected_pts_mask].repeat(N, 1) * (1 / N)
+            self.get_base_density[selected_pts_mask].repeat(N, 1) * (1 / N)
         )
         new_max_radii2D = self.max_radii2D[selected_pts_mask].repeat(N)
 
@@ -819,7 +840,7 @@ class GaussianModel:
         new_xyz = self._xyz[selected_pts_mask]
         # new_densities = self._density[selected_pts_mask]
         new_densities = self.density_inverse_activation(
-            self.get_density[selected_pts_mask] * 0.5
+            self.get_base_density[selected_pts_mask] * 0.5
         )
         new_scaling = self._scaling[selected_pts_mask]
         new_rotation = self._rotation[selected_pts_mask]
@@ -857,7 +878,7 @@ class GaussianModel:
                 self.densify_and_split(grads, max_grad, densify_scale_threshold)
 
         # Prune gaussians with too small density
-        prune_mask = (self.get_density < min_density).squeeze()
+        prune_mask = (self.get_base_density < min_density).squeeze()
         # Prune gaussians outside the bbox
         if bbox is not None:
             xyz = self.get_xyz
@@ -902,7 +923,7 @@ class GaussianModel:
             - 应在 densify_from_iter 后每次迭代调用
         """
         # 在激活空间应用衰减
-        density = self.get_density * factor
+        density = self.get_base_density * factor
         # 转回逆激活空间存储
         self._density.data = self.density_inverse_activation(density)
 

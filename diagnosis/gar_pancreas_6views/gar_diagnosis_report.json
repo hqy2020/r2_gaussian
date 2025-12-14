@@ -1,0 +1,78 @@
+{
+  "summary": {
+    "total_gaussians": 88079,
+    "proximity_score_mean": 0.026878047734498978,
+    "proximity_score_std": 0.007464976515620947,
+    "proximity_score_range": [
+      0.002159603638574481,
+      0.10251722484827042
+    ]
+  },
+  "statistics": {
+    "count": 88079,
+    "mean": 0.026878047734498978,
+    "std": 0.007464976515620947,
+    "min": 0.002159603638574481,
+    "max": 0.10251722484827042,
+    "median": 0.027287861332297325,
+    "percentile_25": 0.022273672744631767,
+    "percentile_50": 0.027287861332297325,
+    "percentile_75": 0.03177129849791527,
+    "percentile_90": 0.0358293816447258,
+    "percentile_95": 0.03843756094574928,
+    "percentile_99": 0.044034089669585226
+  },
+  "threshold_analysis": {
+    "threshold_0.01": {
+      "count": 86456,
+      "ratio": 0.9815733602788406
+    },
+    "threshold_0.02": {
+      "count": 72963,
+      "ratio": 0.828381339479331
+    },
+    "threshold_0.03": {
+      "count": 30249,
+      "ratio": 0.34343032959048125
+    },
+    "threshold_0.05": {
+      "count": 170,
+      "ratio": 0.0019300854914338264
+    },
+    "threshold_0.07": {
+      "count": 7,
+      "ratio": 7.947410847080462e-05
+    },
+    "threshold_0.1": {
+      "count": 1,
+      "ratio": 1.1353444067257803e-05
+    },
+    "threshold_0.15": {
+      "count": 0,
+      "ratio": 0.0
+    },
+    "threshold_0.2": {
+      "count": 0,
+      "ratio": 0.0
+    }
+  },
+  "config": {
+    "checkpoint": "output/2025_12_13_gar_rerun_pancreas_6views_gar/point_cloud/iteration_30000/point_cloud.pickle",
+    "k": 5,
+    "threshold": 0.05
+  },
+  "diagnosis": [
+    {
+      "level": "WARNING",
+      "issue": "阈值设置过高",
+      "detail": "阈值 0.05 下只有 0.19% 的点会被密化",
+      "suggestion": "降低阈值或使用自适应阈值"
+    },
+    {
+      "level": "INFO",
+      "issue": "分数分布左偏",
+      "detail": "均值 (0.0269) < 中位数 (0.0273)，存在少量高分异常点",
+      "suggestion": "考虑使用百分位数作为自适应阈值"
+    }
+  ]
+}

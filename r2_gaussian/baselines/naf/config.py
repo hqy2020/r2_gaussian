@@ -38,3 +38,14 @@ class NAFConfig:
     lrate: float = 0.001
     lrate_gamma: float = 0.1
     lrate_step: int = 500
+
+    # 训练采样 / 损失
+    loss_type: str = "l1"  # "l1" | "mse"
+    ray_sampling: str = "uniform"  # "uniform" | "importance" | "on_the_fly"
+    importance_ratio: float = 0.0
+    importance_power: float = 1.0
+    importance_eps: float = 1e-4
+
+    # 评估
+    eval_max_views: int = 10
+    eval_rays_chunk: int = 8192

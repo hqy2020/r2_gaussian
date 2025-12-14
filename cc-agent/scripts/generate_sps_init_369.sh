@@ -8,9 +8,10 @@
 # - 使用 initialize_pcd.py 的 --enable_sps（density-weighted）
 #
 # 用法:
-#   ./cc-agent/scripts/generate_sps_init_369.sh [GPU] [N_POINTS]
+#   ./cc-agent/scripts/generate_sps_init_369.sh [GPU] [N_POINTS] [FORCE]
 #   例:
 #   ./cc-agent/scripts/generate_sps_init_369.sh 0 50000
+#   ./cc-agent/scripts/generate_sps_init_369.sh 0 50000 1   # 强制覆盖重生成
 # ============================================================================
 
 set -e
@@ -29,6 +30,7 @@ cd "$PROJECT_ROOT"
 
 GPU=${1:-0}
 N_POINTS=${2:-50000}
+FORCE=${3:-0}
 
 # GPU 检查：TIGRE(FDK) 需要 CUDA，CPU 环境下可能直接崩溃/segfault
 CUDA_VISIBLE_DEVICES=$GPU python - <<'PY'
@@ -58,6 +60,7 @@ echo "==========================================================================
 echo "生成 SPS 初始化点云（369-sps）"
 echo "GPU: $GPU"
 echo "N_POINTS: $N_POINTS"
+echo "FORCE: $FORCE"
 echo "输出目录: $OUT_DIR"
 echo "============================================================================"
 
@@ -71,9 +74,12 @@ for ORGAN in "${ORGANS[@]}"; do
       continue
     fi
 
-    if [ -f "$OUT_PATH" ]; then
+    if [ -f "$OUT_PATH" ] && [ "$FORCE" != "1" ]; then
       echo "[跳过] 已存在: $OUT_PATH"
       continue
+    fi
+    if [ -f "$OUT_PATH" ] && [ "$FORCE" = "1" ]; then
+      rm -f "$OUT_PATH"
     fi
 
     echo ""
@@ -85,7 +91,10 @@ for ORGAN in "${ORGANS[@]}"; do
       --data "$DATA_PATH" \
       --output "$OUT_PATH" \
       --enable_sps \
-      --sps_strategy density_weighted \
+      --sps_strategy adaptive \
+      --sps_uniform_ratio 0.2 \
+      --sps_density_gamma 1.0 \
+      --sps_density_clip_percentile 99.5 \
       --n_points "$N_POINTS"
   done
 done

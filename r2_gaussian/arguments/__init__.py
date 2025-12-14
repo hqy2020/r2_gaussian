@@ -91,8 +91,15 @@ class ModelParams(ParamGroup):
         self.proximity_interval = 500  # [GAR] 邻近密化间隔
         self.proximity_until_iter = 15000  # [GAR] 邻近密化结束迭代
 
-        # 🆕 GAR 优化参数（基于诊断分析优化，避免 77% 过度密化问题）
-        self.gar_adaptive_threshold = True  # [GAR] 启用自适应阈值（基于邻近分数分布）- 默认启用解决固定阈值0.05导致的过度密化
+        # 🆕 GAR 优化参数（可选）
+        # 默认尽量对齐 FSGS：使用固定阈值触发，点云变密后会自然减弱/停止密化。
+        # 如果固定阈值在 3-views 场景触发过多，可手动启用自适应阈值做保护。
+        self.gar_adaptive_threshold = False  # [GAR] 启用自适应阈值（基于邻近分数分布）
+        # 🆕 自动阈值：在固定阈值“过松/过严”时自动切到自适应阈值（更鲁棒，尤其跨器官/视角数）
+        # - gar_adaptive_threshold=True 时将始终使用自适应阈值；此开关仅对 gar_adaptive_threshold=False 生效
+        self.gar_auto_threshold = True  # [GAR] 自动阈值保护
+        self.gar_auto_min_ratio = 0.01  # [GAR] 固定阈值下候选比例 < min → 自动启用自适应阈值
+        self.gar_auto_max_ratio = 0.30  # [GAR] 固定阈值下候选比例 > max → 自动启用自适应阈值
         self.gar_adaptive_method = "percentile"  # [GAR] 自适应方法: percentile/std/iqr
         self.gar_adaptive_percentile = 90.0  # [GAR] percentile 百分位（90=只密化最稀疏10%，理想范围5-15%）
         self.gar_progressive_decay = False  # [GAR] 启用渐进衰减（训练后期减少密化）
@@ -101,6 +108,11 @@ class ModelParams(ParamGroup):
         self.gar_gradient_filter = False  # [GAR] 启用梯度过滤（只密化高梯度点）
         self.gar_gradient_threshold = 0.0002  # [GAR] 梯度过滤阈值
         self.gar_max_candidates = 5000  # [GAR] 每次密化最大候选点数（避免 OOM）
+        self.gar_candidate_ratio_cap = 0.15  # [GAR] 每次最多密化点数占比上限（0 表示不限制）
+        # FSGS 原始策略是沿 KNN 的多条边生成新点；这里提供可控上限
+        # - 1: 只沿最近邻生成 1 个新点（更保守，默认）
+        # - <=0: 使用全部 K 个邻居（更贴近 FSGS，但更激进）
+        self.gar_new_per_source = 1  # [GAR] 每个候选点最多生成的新点数
 
         # ════════════════════════════════════════════════════════════════════
         # [ADM] Adaptive Density Modulation - K-Planes 空间调制参数
@@ -113,7 +125,8 @@ class ModelParams(ParamGroup):
         self.adm_decoder_hidden = 128  # [ADM] MLP Decoder 隐藏层维度
         self.adm_decoder_layers = 3  # [ADM] MLP Decoder 层数
         self.adm_max_range = 0.3  # [ADM] 最大调制范围 (±30%)
-        self.adm_view_adaptive = True  # [ADM] 🆕 视角自适应：自动根据训练视角数调整调制强度和TV正则化
+        self.adm_view_adaptive = True  # [ADM] 🆕 视角自适应：自动根据训练视角数调整调制强度与TV正则化
+        self.adm_zero_mean = True  # [ADM] 🆕 零均值调制：去除全局密度缩放偏置，提升跨视角稳定性
         # 向下兼容旧参数名
         self.enable_kplanes = False  # [兼容] 旧名，映射到 enable_adm
         self.kplanes_resolution = 64  # [兼容] 旧名
@@ -249,20 +262,21 @@ class OptimizationParams(ParamGroup):
         # Stage 3: 自适应密度调制
         # 需配合 ModelParams.enable_adm=True 使用
         # ════════════════════════════════════════════════════════════════════
-        self.adm_lr_init = 0.002  # [ADM] K-Planes 初始学习率
+        self.adm_lr_init = 0.005  # [ADM] K-Planes 初始学习率
         self.adm_lr_final = 0.0002  # [ADM] K-Planes 最终学习率
         self.adm_lr_max_steps = 30000  # [ADM] K-Planes 学习率衰减步数
-        self.adm_lambda_tv = 0.002  # [ADM] Plane TV 正则化权重（最优值）
+        # 经验：较大的 TV(如 0.002) 在部分场景会导致 K-Planes 过度平滑、退化为近常数；默认更保守地减小 TV 并略提高学习率
+        self.adm_lambda_tv = 0.0005  # [ADM] Plane TV 正则化权重
         self.adm_tv_type = "l2"  # [ADM] TV 损失类型
         # [ADM] 训练调度参数（自适应置信度调制）
-        self.adm_warmup_iters = 3000  # [ADM] warmup 迭代数（避免初期干扰）
+        self.adm_warmup_iters = 1000  # [ADM] warmup 迭代数（避免初期干扰）
         self.adm_decay_start = 20000  # [ADM] 调制衰减开始迭代
         self.adm_final_strength = 0.5  # [ADM] 最终调制强度（后期稳定）
         # 向下兼容旧参数名
-        self.kplanes_lr_init = 0.002  # [兼容] 旧名
+        self.kplanes_lr_init = self.adm_lr_init  # [兼容] 旧名
         self.kplanes_lr_final = 0.0002  # [兼容] 旧名
         self.kplanes_lr_max_steps = 30000  # [兼容] 旧名
-        self.lambda_plane_tv = 0.002  # [兼容] 旧名，使用最优值
+        self.lambda_plane_tv = self.adm_lambda_tv  # [兼容] 旧名
         self.plane_tv_weight_proposal = [1.0, 1.0, 1.0]  # [兼容] 均匀权重，由 lambda_plane_tv 控制总强度
         self.tv_loss_type = "l2"  # [兼容] 旧名
 

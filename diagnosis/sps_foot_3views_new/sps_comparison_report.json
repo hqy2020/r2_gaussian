@@ -1,0 +1,17 @@
+{
+  "name": "Baseline_vs_SPS",
+  "metrics": {
+    "density_mean_ratio": 1.882513890547895,
+    "cv_ratio": 1.6395379864297766,
+    "occupancy_delta": -0.017000000000000015,
+    "center_shift_l2": 0.14994211070133787
+  },
+  "diagnosis": [
+    {
+      "level": "INFO",
+      "issue": "SPS 采样偏向更高密度区域",
+      "detail": "density_mean: 0.0624 -> 0.1176",
+      "suggestion": "若出现条纹伪影或训练不稳定，尝试启用 density_clip（如 99-99.5）或 sps_denoise"
+    }
+  ]
+}

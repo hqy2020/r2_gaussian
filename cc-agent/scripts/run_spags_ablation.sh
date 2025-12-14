@@ -10,6 +10,26 @@ conda activate r2_gaussian_new
 
 cd /home/qyhu/Documents/r2_ours/r2_gaussian
 
+# CUDA 可用性检查（避免跑到一半才发现环境/驱动问题）
+if ! python - <<'PY'
+import sys
+
+try:
+    import torch
+except Exception as e:
+    print("[SPAGS] torch import failed:", repr(e))
+    sys.exit(2)
+
+print("[SPAGS] torch:", torch.__version__)
+print("[SPAGS] cuda_available:", torch.cuda.is_available())
+sys.exit(0 if torch.cuda.is_available() else 1)
+PY
+then
+    echo "错误: CUDA 不可用（torch.cuda.is_available()=False）。"
+    echo "请先确保 nvidia-smi 正常输出，并确认 conda 环境 r2_gaussian_new 使用的是 GPU 版 torch。"
+    exit 1
+fi
+
 # 参数解析
 CONFIG=$1    # baseline/sps/gar/adm/sps_gar/sps_adm/gar_adm/spags
 ORGAN=$2     # foot/chest/head/abdomen/pancreas
@@ -67,29 +87,29 @@ BASE_INIT_PCD_PATH="data/369/init_${ORGAN}_50_${VIEWS}views.npy"
 SPS_INIT_PCD_DIR="data/369-sps"
 SPS_INIT_PCD_PATH="${SPS_INIT_PCD_DIR}/init_${ORGAN}_50_${VIEWS}views.npy"
 
-# 公共参数
-COMMON_FLAGS="--iterations 30000 --test_iterations 10000 20000 30000"
+# 公共参数（可通过环境变量覆盖，便于快速验证/消融）
+# - SPAGS_ITERS: 总迭代数（默认 30000）
+# - SPAGS_TEST_ITERS: 测试迭代点列表（默认 "10000 20000 30000"）
+SPAGS_ITERS=${SPAGS_ITERS:-30000}
+SPAGS_TEST_ITERS=${SPAGS_TEST_ITERS:-10000 20000 30000}
+COMMON_FLAGS="--iterations ${SPAGS_ITERS} --test_iterations ${SPAGS_TEST_ITERS}"
 
 # ============================================================================
 # 配置定义
 # ============================================================================
 
-# GAR 参数（Proximity-guided Densification）- 🔧 优化版本 v5
-# 关键优化（基于诊断分析）：
-#   - 📊 percentile 85→90：只密化最稀疏的 10%（原来 15% 仍然偏多）
-#   - 📊 decay_start_ratio 0.7→0.6：更早开始衰减，给新点更多优化时间
-#   - 📊 max_candidates 1000→2000：增加每次密化的点数上限
-#   - 🔧 下限保护已在代码中从 P50→P25（允许密化更多点）
-#   - 🔧 候选选择已从随机改为按分数排序（优先最稀疏的点）
-# 注意: 布尔参数使用 flag 格式（不带 true/false 值）
+# GAR 参数（Proximity-guided Densification）- 尽量对齐 FSGS
+# 关键点：
+#   - 固定阈值触发：点云变密后会自然减弱/停止密化（避免 views 变多仍强制密化）
+#   - 沿 KNN 边生成新点：更贴近 FSGS 的“边中点”密化（gar_new_per_source<=0 表示用全部 K）
+#   - 候选数仍做上限保护：避免极端场景 OOM（按分数排序，优先最稀疏区域）
+# 注意: 布尔参数使用 flag 格式（不带 true/false 值），关闭用 --no_xxx
 GAR_FLAGS_COMPAT="--enable_fsgs_proximity \
     --gar_proximity_threshold 0.05 \
     --gar_proximity_k 5 \
-    --gar_adaptive_threshold \
-    --gar_adaptive_percentile 90 \
-    --gar_progressive_decay \
-    --gar_decay_start_ratio 0.6 \
-    --gar_final_strength 0.5 \
+    --no_gar_adaptive_threshold \
+    --no_gar_progressive_decay \
+    --gar_new_per_source -1 \
     --gar_max_candidates 2000"
 
 # ADM 参数（K-Planes Density Modulation）- 🔧 补全完整参数
@@ -102,9 +122,12 @@ ADM_FLAGS_COMPAT="--enable_kplanes \
     --adm_feature_dim 32 \
     --adm_decoder_hidden 128 \
     --adm_decoder_layers 3 \
-    --lambda_plane_tv 0.002 \
+    --kplanes_lr_init 0.005 \
+    --lambda_plane_tv 0.0005 \
+    --adm_warmup_iters 1000 \
     --adm_max_range 0.3 \
-    --adm_view_adaptive"
+    --adm_view_adaptive \
+    --adm_zero_mean"
 
 # ============================================================================
 # 根据配置选择参数

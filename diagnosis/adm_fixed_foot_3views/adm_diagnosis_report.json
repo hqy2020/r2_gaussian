@@ -1,0 +1,146 @@
+{
+  "summary": {
+    "kplanes_total_params": 393216,
+    "kplanes_planes": [
+      "plane_xy",
+      "plane_xz",
+      "plane_yz"
+    ],
+    "avg_std": 0.0065978824471433955,
+    "avg_cv": 0.022007540095181504
+  },
+  "kplanes_statistics": {
+    "plane_xy": {
+      "shape": [
+        1,
+        32,
+        64,
+        64
+      ],
+      "mean": 0.30126452445983887,
+      "std": 0.006362295243889093,
+      "min": 0.22848504781723022,
+      "max": 0.3443387746810913,
+      "abs_mean": 0.30126452445983887,
+      "non_zero_ratio": 1.0,
+      "cv": 0.021118633347587887,
+      "avg_spatial_std": 0.004321559277741471,
+      "channel_variance": 1.7588411804123592e-05
+    },
+    "plane_xz": {
+      "shape": [
+        1,
+        32,
+        64,
+        64
+      ],
+      "mean": 0.2996737062931061,
+      "std": 0.006539184600114822,
+      "min": 0.2557709515094757,
+      "max": 0.3488224148750305,
+      "abs_mean": 0.2996737062931061,
+      "non_zero_ratio": 1.0,
+      "cv": 0.021821014805712725,
+      "avg_spatial_std": 0.004135721603233833,
+      "channel_variance": 2.0508993006373988e-05
+    },
+    "plane_yz": {
+      "shape": [
+        1,
+        32,
+        64,
+        64
+      ],
+      "mean": 0.2985823154449463,
+      "std": 0.0068921674974262714,
+      "min": 0.24974706768989563,
+      "max": 0.33548814058303833,
+      "abs_mean": 0.2985823154449463,
+      "non_zero_ratio": 1.0,
+      "cv": 0.023082972132243893,
+      "avg_spatial_std": 0.004360912287665997,
+      "channel_variance": 2.2771380790376217e-05
+    }
+  },
+  "decoder_info": {
+    "total_params": 29378,
+    "layers": [
+      "input_norm.weight",
+      "input_norm.bias",
+      "backbone.0.weight",
+      "backbone.0.bias",
+      "backbone.2.weight",
+      "backbone.2.bias",
+      "offset_head.0.weight",
+      "offset_head.0.bias",
+      "confidence_head.0.weight",
+      "confidence_head.0.bias"
+    ]
+  },
+  "adm_analysis": {},
+  "config": {
+    "checkpoint": "output/adm_fixed_1213_1305_foot_3views_adm/point_cloud/iteration_30000/point_cloud.pickle"
+  },
+  "diagnosis": [
+    {
+      "level": "WARNING",
+      "issue": "plane_xy 标准差过低 (std=0.0064 < 0.01)",
+      "detail": "K-Planes 几乎没有学到空间变化，mean=0.3013 接近初始化值 0.3",
+      "suggestion": "降低 TV 正则化权重 (lambda_plane_tv: 0.002 → 0.0005) 或增加学习率"
+    },
+    {
+      "level": "INFO",
+      "issue": "plane_xy 变异系数过低 (CV=0.0211 < 0.05)",
+      "detail": "特征相对于均值的变化不足",
+      "suggestion": "考虑增加训练迭代或调整学习率"
+    },
+    {
+      "level": "WARNING",
+      "issue": "plane_xy 空间标准差过低 (avg_spatial_std=0.0043)",
+      "detail": "每个通道内的空间变化不足，TV 正则化可能过强",
+      "suggestion": "降低 lambda_plane_tv 或使用自适应 TV 调度"
+    },
+    {
+      "level": "WARNING",
+      "issue": "plane_xz 标准差过低 (std=0.0065 < 0.01)",
+      "detail": "K-Planes 几乎没有学到空间变化，mean=0.2997 接近初始化值 0.3",
+      "suggestion": "降低 TV 正则化权重 (lambda_plane_tv: 0.002 → 0.0005) 或增加学习率"
+    },
+    {
+      "level": "INFO",
+      "issue": "plane_xz 变异系数过低 (CV=0.0218 < 0.05)",
+      "detail": "特征相对于均值的变化不足",
+      "suggestion": "考虑增加训练迭代或调整学习率"
+    },
+    {
+      "level": "WARNING",
+      "issue": "plane_xz 空间标准差过低 (avg_spatial_std=0.0041)",
+      "detail": "每个通道内的空间变化不足，TV 正则化可能过强",
+      "suggestion": "降低 lambda_plane_tv 或使用自适应 TV 调度"
+    },
+    {
+      "level": "WARNING",
+      "issue": "plane_yz 标准差过低 (std=0.0069 < 0.01)",
+      "detail": "K-Planes 几乎没有学到空间变化，mean=0.2986 接近初始化值 0.3",
+      "suggestion": "降低 TV 正则化权重 (lambda_plane_tv: 0.002 → 0.0005) 或增加学习率"
+    },
+    {
+      "level": "INFO",
+      "issue": "plane_yz 变异系数过低 (CV=0.0231 < 0.05)",
+      "detail": "特征相对于均值的变化不足",
+      "suggestion": "考虑增加训练迭代或调整学习率"
+    },
+    {
+      "level": "WARNING",
+      "issue": "plane_yz 空间标准差过低 (avg_spatial_std=0.0044)",
+      "detail": "每个通道内的空间变化不足，TV 正则化可能过强",
+      "suggestion": "降低 lambda_plane_tv 或使用自适应 TV 调度"
+    },
+    {
+      "level": "ERROR",
+      "issue": "K-Planes 整体学习不足 (avg_std=0.0066)",
+      "detail": "所有平面的特征变化都很小，ADM 无法有效调制密度",
+      "suggestion": "1) 降低 lambda_plane_tv: 0.002 → 0.0005\n         2) 增加 kplanes_lr_init: 0.002 → 0.005\n         3) 缩短 warmup: adm_warmup_iters 3000 → 1000"
+    }
+  ]
+}

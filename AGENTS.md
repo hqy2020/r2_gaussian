@@ -1,5 +1,6 @@
 # Repository Guidelines
 用中文输出
+环境是 r2_gaussian_new
 ## 项目结构与模块组织
 - `r2_gaussian/`：核心 Python 包（`gaussian/`、`dataset/`、`baselines/`、`innovations/`、`utils/`、`arguments/`）。
 - 顶层入口：`train.py`（训练/方法路由）、`test.py`（评估）、`initialize_pcd.py`（SPS 初始化点云）。

@@ -1,0 +1,72 @@
+{
+  "summary": {
+    "total_gaussians": 85374,
+    "proximity_score_mean": 0.03130166232585907,
+    "proximity_score_std": 0.007938121445477009,
+    "proximity_score_range": [
+      0.0039524356834590435,
+      0.14863379299640656
+    ]
+  },
+  "statistics": {
+    "count": 85374,
+    "mean": 0.03130166232585907,
+    "std": 0.007938121445477009,
+    "min": 0.0039524356834590435,
+    "max": 0.14863379299640656,
+    "median": 0.03125733882188797,
+    "percentile_25": 0.026074924506247044,
+    "percentile_50": 0.03125733695924282,
+    "percentile_75": 0.03629377204924822,
+    "percentile_90": 0.04102635905146599,
+    "percentile_95": 0.04401538167148829,
+    "percentile_99": 0.05138744503259662
+  },
+  "threshold_analysis": {
+    "threshold_0.01": {
+      "count": 85166,
+      "ratio": 0.9975636610677724
+    },
+    "threshold_0.02": {
+      "count": 79124,
+      "ratio": 0.9267927003537376
+    },
+    "threshold_0.03": {
+      "count": 48287,
+      "ratio": 0.565593740483051
+    },
+    "threshold_0.05": {
+      "count": 1137,
+      "ratio": 0.013317871951648044
+    },
+    "threshold_0.07": {
+      "count": 50,
+      "ratio": 0.0005856583971700986
+    },
+    "threshold_0.1": {
+      "count": 6,
+      "ratio": 7.027900766041184e-05
+    },
+    "threshold_0.15": {
+      "count": 0,
+      "ratio": 0.0
+    },
+    "threshold_0.2": {
+      "count": 0,
+      "ratio": 0.0
+    }
+  },
+  "config": {
+    "checkpoint": "output/2025_12_13_gar_rerun_foot_6views_gar/point_cloud/iteration_30000/point_cloud.pickle",
+    "k": 5,
+    "threshold": 0.05
+  },
+  "diagnosis": [
+    {
+      "level": "OK",
+      "issue": "邻近分数分布正常",
+      "detail": "分数范围合理，阈值设置适当",
+      "suggestion": "无需调整"
+    }
+  ]
+}

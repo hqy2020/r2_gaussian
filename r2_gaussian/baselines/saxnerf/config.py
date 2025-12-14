@@ -48,3 +48,15 @@ class SAXNeRFConfig:
     lrate_step: int = 1500
     window_size: tuple = (8, 8)
     window_num: int = 16
+
+    # 训练采样 / 损失
+    # SAX-NeRF 在 CT 投影中背景像素占比高，使用 MSE 能更强调高强度射线，配合重要性采样更稳定
+    loss_type: str = "mse"  # "l1" | "mse"
+    ray_sampling: str = "importance"  # "uniform" | "importance" | "on_the_fly"
+    importance_ratio: float = 0.75
+    importance_power: float = 1.0
+    importance_eps: float = 1e-4
+
+    # 评估
+    eval_max_views: int = 10
+    eval_rays_chunk: int = 4096
