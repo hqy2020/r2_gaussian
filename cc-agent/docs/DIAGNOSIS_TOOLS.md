@@ -169,7 +169,7 @@ python cc-agent/scripts/diagnosis/diagnose_sps.py \
 # 对比分析
 python cc-agent/scripts/diagnosis/diagnose_sps.py \
     --baseline_init data/369/init_foot_50_3views.npy \
-    --sps_init data/density-369/init_foot_50_3views.npy \
+    --sps_init data/369-sps/init_foot_50_3views.npy \
     --output_dir diagnosis/sps/
 ```
 

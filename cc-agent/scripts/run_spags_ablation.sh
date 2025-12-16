@@ -117,6 +117,21 @@ GAR_FLAGS_COMPAT="--enable_fsgs_proximity \
 #   - 🔴 添加所有关键参数（之前只传了 --enable_kplanes）
 #   - 分辨率、特征维度、MLP 配置、TV 正则化
 # 注意: 布尔参数使用 flag 格式（不带 true/false 值）
+
+# 🆕 视角自适应 warmup：让 effective_warmup 对齐 densify_until_iter=15000
+# 公式：effective_warmup = adm_warmup_iters × (views / 3)
+# 因此：adm_warmup_iters = 15000 × (3 / views)
+#   - 3v: 15000 × (3/3) = 15000
+#   - 6v: 15000 × (3/6) = 7500
+#   - 9v: 15000 × (3/9) = 5000
+case $VIEWS in
+    3) ADM_WARMUP_ITERS=15000 ;;
+    6) ADM_WARMUP_ITERS=7500 ;;
+    9) ADM_WARMUP_ITERS=5000 ;;
+    *) ADM_WARMUP_ITERS=1000 ;;  # fallback
+esac
+echo ">>> ADM warmup: ${ADM_WARMUP_ITERS} (effective: ${ADM_WARMUP_ITERS} × ${VIEWS}/3 = $((ADM_WARMUP_ITERS * VIEWS / 3)))"
+
 ADM_FLAGS_COMPAT="--enable_kplanes \
     --adm_resolution 64 \
     --adm_feature_dim 32 \
@@ -124,7 +139,7 @@ ADM_FLAGS_COMPAT="--enable_kplanes \
     --adm_decoder_layers 3 \
     --kplanes_lr_init 0.005 \
     --lambda_plane_tv 0.0005 \
-    --adm_warmup_iters 1000 \
+    --adm_warmup_iters ${ADM_WARMUP_ITERS} \
     --adm_max_range 0.3 \
     --adm_view_adaptive \
     --adm_zero_mean \

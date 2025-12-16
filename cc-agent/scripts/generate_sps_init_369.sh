@@ -95,7 +95,7 @@ for ORGAN in "${ORGANS[@]}"; do
       --sps_uniform_ratio 0.3 \
       --sps_density_gamma 0.8 \
       --sps_density_clip_percentile 99.5 \
-      --sps_density_init_mode match_valid_mean \
+      --sps_density_init_mode match_valid_median \
       --n_points "$N_POINTS"
   done
 done

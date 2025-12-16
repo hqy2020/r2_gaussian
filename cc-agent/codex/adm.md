@@ -20,7 +20,41 @@
   - 评估对齐训练：评估侧传入完整 cfg 参数并设置 gaussians.current_iteration=loaded_iter，见 test.py:38。
   - 统一脚本参数：消融脚本补齐 --adm_zero_mean_mode density_confidence，见 cc-agent/scripts/run_spags_ablation.sh:120。
 
-  之后要做的事（把“稳定超过 baseline”跑出来）
+  之后要做的事（把"稳定超过 baseline"跑出来）
+
+  ✅ [2025-12-15] Smoke Test 验证通过！
+
+  Smoke Test 结果 (5000 iterations, foot 6 views):
+  | 方法     | PSNR 2D | SSIM 2D |
+  |----------|---------|---------|
+  | Baseline | 31.975  | 0.9364  |
+  | ADM      | 32.217  | 0.9363  |
+  | 差异     | +0.24   | -0.0001 |
+
+  ADM 诊断指标 (iter 5000):
+  - offset: mean=-0.2956, std=0.9551 ✅ 不是常数-1
+  - confidence: mean=1.0000, std=0.0011
+  - modulation: mean=0.916, std=0.174, range=[0.79, 1.15] ✅ 有空间变化
+
+  结论：修复有效，ADM 不再退化为全局缩放。
+
+  ✅ [2025-12-15] 全量实验验证通过！ADM 稳定超越 baseline！
+
+  全量实验结果 (30000 iterations, foot 6 views):
+  | 方法     | PSNR 2D | SSIM 2D |
+  |----------|---------|---------|
+  | Baseline | 32.294  | 0.9374  |
+  | ADM      | 32.611  | 0.9381  |
+  | 差异     | **+0.32** | **+0.0007** |
+
+  实验目录:
+  - baseline: output/_2025_12_15_00_27_foot_6views_baseline
+  - adm: output/_2025_12_15_00_27_foot_6views_adm
+
+  结论：
+  - Smoke test (5000 iters): ADM +0.24 dB
+  - Full training (30000 iters): ADM +0.32 dB
+  - ADM 在全量训练后优势进一步扩大，修复成功！
 
   - 先做 smoke（同 init/同迭代/同评估点）再全量：SPAGS_ITERS=5000 SPAGS_TEST_ITERS="1 5000" ./cc-agent/scripts/
     run_spags_ablation.sh baseline foot 6 0 与 ... adm foot 6 0；确认 ADM 日志不再饱和后再跑 30000。
@@ -45,3 +79,36 @@
         --output_dir diagnosis/<tag>/comparison/
       - python cc-agent/scripts/diagnosis/generate_diagnosis_report.py --adm_report diagnosis/<tag>/adm/adm_diagnosis_report.json
         --training_report diagnosis/<tag>/comparison/training_analysis_report.json --output diagnosis/<tag>/full_report.md
+
+---
+## codex最新建议
+1) 先把历史最容易回退的组合跑掉（建议先 smoke 再 30k）
+
+  - 优先：pancreas_9views、foot_9views、pancreas_6views（你之前最差回退点就在这些附近）
+  - 命令模板（同一前缀便于配对对比）：
+      - SPAGS_ITERS=5000 SPAGS_TEST_ITERS="1 5000" ./cc-agent/scripts/run_spags_ablation.sh baseline pancreas 9 0 admfix_sanity
+      - SPAGS_ITERS=5000 SPAGS_TEST_ITERS="1 5000" ./cc-agent/scripts/run_spags_ablation.sh adm pancreas 9 0 admfix_sanity
+      - 通过后再把 SPAGS_ITERS=30000 SPAGS_TEST_ITERS="10000 20000 30000" 跑全量。
+
+  2) 再全量跑 15 场景（5 器官×3 视角）
+
+  - 用现成批处理脚本，一次性产出可对比目录：
+      - PREFIX=admfix_369_15_$(date +%Y_%m_%d_%H_%M)
+      - bash cc-agent/scripts/run_baseline_369_15.sh 0 "$PREFIX"
+      - bash cc-agent/scripts/run_adm_369_15.sh 0 "$PREFIX"
+  - 产物路径规则：output/${PREFIX}_<organ>_<views>views_{baseline|adm}
+
+  3) 跑完立刻汇总表（避免靠肉眼翻 yml）
+
+  - 汇总口径统一看：output/<run>/eval/iter_030000/eval2d_render_test.yml
+  - 如果你把这次全量的 PREFIX 发我（或直接把 output/ 下对应目录名发我），我可以按你目录自动给你生成 15 场景的 PSNR/SSIM 总表和平均
+    提升。
+
+  4) 只对“没提点/回退”的场景做诊断
+
+  - 先看训练日志里 [Iter xxxx] === ADM 诊断 === 是否又出现饱和/近常数趋势。
+  - 再跑 cc-agent 诊断工具（文档：cc-agent/docs/DIAGNOSIS_TOOLS.md:1）：
+      - python cc-agent/scripts/diagnosis/diagnose_adm.py --checkpoint output/<run>/point_cloud/iteration_30000/point_cloud.pickle
+        --output_dir diagnosis/<tag>/adm --adm_zero_mean --adm_view_adaptive --num_views <3|6|9>
+  - 若确实回退，再按顺序小步调参：先降 --adm_max_range 或加 --adm_warmup_iters，再扫 --lambda_plane_tv（优先对 6/9views 做保
+    守化）。
