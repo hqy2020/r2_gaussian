@@ -148,6 +148,21 @@ METHOD_REGISTRY = {
         'description': 'SAX-NeRF with Lineformer',
         'module': 'r2_gaussian.baselines.saxnerf',
     },
+    'corgs': {
+        'type': 'gaussian',
+        'description': 'CoR-GS: Co-Regularization Gaussian Splatting',
+        'module': 'r2_gaussian.baselines.corgs',
+    },
+    'dngaussian': {
+        'type': 'gaussian',
+        'description': 'DNGaussian: Sparse-View 3DGS with Depth Normalization (CVPR 2024)',
+        'module': 'r2_gaussian.baselines.dngaussian',
+    },
+    'fsgs': {
+        'type': 'gaussian',
+        'description': 'FSGS: Few-Shot Gaussian Splatting with proximity densification (ECCV 2024)',
+        'module': 'r2_gaussian.baselines.fsgs',
+    },
 }
 
 

@@ -799,8 +799,8 @@ if __name__ == "__main__":
 
     # 🆕 方法选择参数（必须在其他参数之前添加）
     parser.add_argument("--method", type=str, default="r2_gaussian",
-                        choices=["r2_gaussian", "xgaussian", "naf", "tensorf", "saxnerf"],
-                        help="选择训练方法: r2_gaussian(默认), xgaussian, naf, tensorf, saxnerf")
+                        choices=["r2_gaussian", "xgaussian", "naf", "tensorf", "saxnerf", "corgs", "dngaussian", "fsgs"],
+                        help="选择训练方法: r2_gaussian(默认), xgaussian, naf, tensorf, saxnerf, corgs, dngaussian, fsgs")
 
     lp = ModelParams(parser)
     op = OptimizationParams(parser)
@@ -816,8 +816,8 @@ if __name__ == "__main__":
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
     args.test_iterations.append(args.iterations)
-    # 仅对高斯系方法保留 iter=1 的快速 sanity check，避免 NeRF 系 baseline 误读“随机初始化”的极差指标
-    if args.method in ["r2_gaussian", "xgaussian"]:
+    # 仅对高斯系方法保留 iter=1 的快速 sanity check，避免 NeRF 系 baseline 误读"随机初始化"的极差指标
+    if args.method in ["r2_gaussian", "xgaussian", "dngaussian", "corgs"]:
         args.test_iterations.append(1)
     # fmt: on
 
@@ -857,6 +857,45 @@ if __name__ == "__main__":
         # X-Gaussian baseline
         from r2_gaussian.baselines.xgaussian import training_xgaussian
         training_xgaussian(
+            lp.extract(args),
+            op.extract(args),
+            pp.extract(args),
+            tb_writer,
+            args.test_iterations,
+            args.save_iterations,
+            args.checkpoint_iterations,
+            args.start_checkpoint,
+        )
+    elif args.method == "corgs":
+        # CoR-GS baseline (Co-Regularization Gaussian Splatting)
+        from r2_gaussian.baselines.corgs import training_corgs
+        training_corgs(
+            lp.extract(args),
+            op.extract(args),
+            pp.extract(args),
+            tb_writer,
+            args.test_iterations,
+            args.save_iterations,
+            args.checkpoint_iterations,
+            args.start_checkpoint,
+        )
+    elif args.method == "dngaussian":
+        # DNGaussian baseline (CVPR 2024)
+        from r2_gaussian.baselines.dngaussian import training_dngaussian
+        training_dngaussian(
+            lp.extract(args),
+            op.extract(args),
+            pp.extract(args),
+            tb_writer,
+            args.test_iterations,
+            args.save_iterations,
+            args.checkpoint_iterations,
+            args.start_checkpoint,
+        )
+    elif args.method == "fsgs":
+        # FSGS baseline (ECCV 2024) - Few-Shot Gaussian Splatting
+        from r2_gaussian.baselines.fsgs import training_fsgs
+        training_fsgs(
             lp.extract(args),
             op.extract(args),
             pp.extract(args),

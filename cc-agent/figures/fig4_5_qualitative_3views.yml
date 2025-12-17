@@ -1,0 +1,172 @@
+created_at: '2025-12-17 23:03:10'
+views: 3
+organs:
+- chest
+- foot
+- head
+- abdomen
+- pancreas
+methods:
+- gt
+- tensorf
+- naf
+- saxnerf
+- xgaussian
+- r2gs
+- spags
+experiments:
+  foot:
+    tensorf:
+      model_path: output/_2025_12_16_14_17_foot_3views_tensorf
+      iteration: 30000
+      psnr: 28.154869079589844
+      ssim: 0.8955532908439636
+    naf:
+      model_path: output/_2025_12_16_15_17_foot_3views_naf
+      iteration: 30000
+      psnr: 28.095521926879883
+      ssim: 0.9129528999328613
+    saxnerf:
+      model_path: output/_2025_12_16_15_17_foot_3views_saxnerf
+      iteration: 30000
+      psnr: 26.132007598876953
+      ssim: 0.8771026730537415
+    xgaussian:
+      model_path: output/baselines_comparison/xgaussian_foot_3views_xgaussian
+      iteration: 30000
+      psnr: 35.02419815063477
+      ssim: 0.9268875658512116
+    r2gs:
+      model_path: output/gar_10k_trend_foot_3views_baseline
+      iteration: 10000
+      psnr: 28.498207092285156
+      ssim: 0.8982445001602173
+    spags:
+      model_path: output/_2025_12_15_00_37_foot_3views_spags
+      iteration: 3000
+      psnr: 28.371475219726562
+      ssim: 0.8920503854751587
+  chest:
+    tensorf:
+      model_path: output/_2025_12_16_14_56_chest_3views_tensorf
+      iteration: 30000
+      psnr: 29.327566146850586
+      ssim: 0.8751378059387207
+    naf:
+      model_path: output/_2025_12_16_16_01_chest_3views_naf
+      iteration: 30000
+      psnr: 29.578109741210938
+      ssim: 0.8894599676132202
+    saxnerf:
+      model_path: output/_2025_12_15_19_16_chest_3views_saxnerf
+      iteration: 30000
+      psnr: 31.69692611694336
+      ssim: 0.9094651937484741
+    xgaussian:
+      model_path: output/baselines_comparison/xgaussian_chest_3views_xgaussian
+      iteration: 30000
+      psnr: 27.284700012207033
+      ssim: 0.8128056764602661
+    r2gs:
+      model_path: output/gar_10k_trend_chest_3views_baseline
+      iteration: 10000
+      psnr: 26.28091812133789
+      ssim: 0.8381126523017883
+    spags:
+      model_path: output/_2025_12_15_00_21_chest_3views_spags
+      iteration: 3000
+      psnr: 25.4630126953125
+      ssim: 0.8260990977287292
+  head:
+    tensorf:
+      model_path: output/_2025_12_16_16_00_head_3views_tensorf
+      iteration: 30000
+      psnr: 27.968761444091797
+      ssim: 0.9311621189117432
+    naf:
+      model_path: output/_2025_12_16_09_02_head_3views_naf
+      iteration: 30000
+      psnr: 27.859830856323242
+      ssim: 0.9468441605567932
+    saxnerf:
+      model_path: output/_2025_12_15_22_15_head_3views_saxnerf
+      iteration: 30000
+      psnr: 27.674457550048828
+      ssim: 0.9436051845550537
+    xgaussian:
+      model_path: output/baselines_comparison/xgaussian_head_3views_xgaussian
+      iteration: 30000
+      psnr: 28.487299919128418
+      ssim: 0.9047622442245483
+    r2gs:
+      model_path: output/_2025_12_15_00_41_head_3views_baseline
+      iteration: 3000
+      psnr: 26.68077850341797
+      ssim: 0.9227430820465088
+    spags:
+      model_path: output/_2025_12_15_00_53_head_3views_spags
+      iteration: 3000
+      psnr: 26.982744216918945
+      ssim: 0.920299768447876
+  abdomen:
+    tensorf:
+      model_path: output/_2025_12_15_18_03_abdomen_3views_tensorf
+      iteration: 30000
+      psnr: 29.74574851989746
+      ssim: 0.9573203921318054
+    naf:
+      model_path: output/_2025_12_16_09_34_abdomen_3views_naf
+      iteration: 30000
+      psnr: 29.640439987182617
+      ssim: 0.956687867641449
+    saxnerf:
+      model_path: output/_2025_12_16_01_20_abdomen_3views_saxnerf
+      iteration: 30000
+      psnr: 29.6914005279541
+      ssim: 0.9522395133972168
+    xgaussian:
+      model_path: output/baselines_comparison/xgaussian_abdomen_3views_xgaussian
+      iteration: 30000
+      psnr: 32.81237277984619
+      ssim: 0.948132586479187
+    r2gs:
+      model_path: output/verify_1k_abdomen_3views_baseline
+      iteration: 1000
+      psnr: 27.643171310424805
+      ssim: 0.9259347319602966
+    spags:
+      model_path: output/2025_12_05_13_58_abdomen_3views_spags_3k
+      iteration: 30000
+      psnr: 29.418458938598633
+      ssim: 0.9367992877960205
+  pancreas:
+    tensorf:
+      model_path: output/_2025_12_15_18_54_pancreas_3views_tensorf
+      iteration: 30000
+      psnr: 30.45977783203125
+      ssim: 0.9368427395820618
+    naf:
+      model_path: output/_2025_12_16_10_15_pancreas_3views_naf
+      iteration: 30000
+      psnr: 29.44796371459961
+      ssim: 0.9397980570793152
+    saxnerf:
+      model_path: output/_2025_12_16_04_43_pancreas_3views_saxnerf
+      iteration: 30000
+      psnr: 28.493745803833008
+      ssim: 0.9312109351158142
+    xgaussian:
+      model_path: output/baselines_comparison/xgaussian_pancreas_3views_xgaussian
+      iteration: 30000
+      psnr: 25.414646339416503
+      ssim: 0.881999260187149
+    r2gs:
+      model_path: output/verify_1k_pancreas_3views_baseline
+      iteration: 1000
+      psnr: 28.095205307006836
+      ssim: 0.9213271141052246
+    spags:
+      model_path: output/2025_12_05_13_58_pancreas_3views_spags_3k
+      iteration: 30000
+      psnr: 27.974281311035156
+      ssim: 0.920752763748169

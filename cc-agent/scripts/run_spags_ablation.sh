@@ -55,10 +55,13 @@ if [ -z "$CONFIG" ] || [ -z "$ORGAN" ] || [ -z "$VIEWS" ]; then
     echo "  spags     - Full SPAGS (SPS + GAR + ADM)"
     echo ""
     echo "Baseline 方法:"
-    echo "  xgaussian - X-Gaussian baseline"
-    echo "  naf       - NAF (Neural Attenuation Fields)"
-    echo "  tensorf   - TensoRF"
-    echo "  saxnerf   - SAX-NeRF with Lineformer"
+    echo "  xgaussian  - X-Gaussian baseline"
+    echo "  naf        - NAF (Neural Attenuation Fields)"
+    echo "  tensorf    - TensoRF"
+    echo "  saxnerf    - SAX-NeRF with Lineformer"
+    echo "  corgs      - CoR-GS (Co-Regularization)"
+    echo "  dngaussian - DNGaussian (Depth Normalization, CVPR 2024)"
+    echo "  fsgs       - FSGS (Few-Shot Gaussian Splatting, ECCV 2024)"
     echo ""
     echo "器官: foot, chest, head, abdomen, pancreas"
     echo "视角: 3, 6, 9"
@@ -229,10 +232,28 @@ case $CONFIG in
         USE_SPS=false
         METHOD="saxnerf"
         ;;
+    corgs)
+        echo "=== CoR-GS (Co-Regularization) Baseline ==="
+        CONFIG_FLAGS=""
+        USE_SPS=false  # CoR-GS 使用 baseline 初始化
+        METHOD="corgs"
+        ;;
+    dngaussian)
+        echo "=== DNGaussian (Depth Normalization, CVPR 2024) Baseline ==="
+        CONFIG_FLAGS=""
+        USE_SPS=true  # DNGaussian 使用 SPS 初始化（与 X-Gaussian 一致）
+        METHOD="dngaussian"
+        ;;
+    fsgs)
+        echo "=== FSGS (Few-Shot Gaussian Splatting, ECCV 2024) Baseline ==="
+        CONFIG_FLAGS=""
+        USE_SPS=true  # FSGS 使用 SPS 初始化
+        METHOD="fsgs"
+        ;;
     *)
         echo "错误: 未知配置 '$CONFIG'"
         echo "可用配置: baseline, sps, gar, adm, sps_gar, sps_adm, gar_adm, spags"
-        echo "Baseline 方法: xgaussian, naf, tensorf, saxnerf"
+        echo "Baseline 方法: xgaussian, naf, tensorf, saxnerf, corgs, dngaussian, fsgs"
         exit 1
         ;;
 esac
