@@ -41,11 +41,11 @@
   ✅ [2025-12-15] 全量实验验证通过！ADM 稳定超越 baseline！
 
   全量实验结果 (30000 iterations, foot 6 views):
-  | 方法     | PSNR 2D | SSIM 2D |
-  |----------|---------|---------|
-  | Baseline | 32.294  | 0.9374  |
-  | ADM      | 32.611  | 0.9381  |
-  | 差异     | **+0.32** | **+0.0007** |
+  | 方法     | PSNR 2D | SSIM 2D | PSNR 3D | SSIM 3D |
+  |----------|---------|---------|---------|---------|
+  | Baseline | 32.294  | 0.9374  | 24.602  | 0.7705  |
+  | ADM      | 32.611  | 0.9381  | 24.655  | 0.7713  |
+  | 差异     | **+0.32** | **+0.0007** | **+0.05** | **+0.0008** |
 
   实验目录:
   - baseline: output/_2025_12_15_00_27_foot_6views_baseline
@@ -112,3 +112,32 @@
         --output_dir diagnosis/<tag>/adm --adm_zero_mean --adm_view_adaptive --num_views <3|6|9>
   - 若确实回退，再按顺序小步调参：先降 --adm_max_range 或加 --adm_warmup_iters，再扫 --lambda_plane_tv（优先对 6/9views 做保
     守化）。
+
+---
+## [2025-12-16] 执行进度
+
+### SPS vs SPS+ADM 验证 (进行中)
+- ✅ SPS foot_6views 30k 已启动 (GPU 1)
+- ⏳ SPS+ADM foot_6views 30k 等待启动
+
+### 9views 保守 ADM 配置
+脚本已支持环境变量调参（见 run_spags_ablation.sh:134-140）：
+```bash
+# 降低 max_range (0.3 → 0.15)
+ADM_MAX_RANGE=0.15 ./cc-agent/scripts/run_spags_ablation.sh adm foot 9 <gpu> adm_conservative
+
+# 增加 warmup (+5000)
+ADM_WARMUP_EXTRA=5000 ./cc-agent/scripts/run_spags_ablation.sh adm pancreas 9 <gpu> adm_conservative
+
+# 组合使用
+ADM_MAX_RANGE=0.15 ADM_WARMUP_EXTRA=5000 ./cc-agent/scripts/run_spags_ablation.sh sps_adm foot 9 <gpu> spsadm_conservative
+```
+
+### admfix_sanity smoke test 结果 (5000 iters)
+| 场景 | Baseline | ADM | 差异 |
+|------|----------|-----|------|
+| pancreas_6views | 33.05 | 33.15 | **+0.10** ✅ |
+| pancreas_9views | 35.12 | 35.06 | -0.07 ⚠️ |
+| foot_9views | 34.70 | 34.53 | -0.17 ⚠️ |
+
+结论：9views 需要保守配置

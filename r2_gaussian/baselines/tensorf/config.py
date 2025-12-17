@@ -47,5 +47,5 @@ class TensoRFConfig:
     importance_eps: float = 1e-4
 
     # 评估（TensoRF 开启 fine sampling，默认 chunk 小一些以降低峰值显存）
-    eval_max_views: int = 10
+    eval_max_views: int = 50
     eval_rays_chunk: int = 4096

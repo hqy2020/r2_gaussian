@@ -47,5 +47,5 @@ class NAFConfig:
     importance_eps: float = 1e-4
 
     # 评估
-    eval_max_views: int = 10
+    eval_max_views: int = 50
     eval_rays_chunk: int = 8192

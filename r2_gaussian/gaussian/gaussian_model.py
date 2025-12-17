@@ -290,6 +290,29 @@ class GaussianModel:
         return self.rotation_activation(self._rotation)
 
     @property
+    def get_normals(self):
+        """
+        获取每个高斯的“法向量”（基于椭球主轴）。
+
+        说明：
+        - 3D Gaussian 的协方差可写为 R·diag(s^2)·R^T；其特征向量就是旋转矩阵 R 的列向量。
+        - 这里取尺度最小的那一根主轴方向作为 normal（更贴近 surface-like Gaussians 的用法）。
+        - 若高斯近似各向同性（sx≈sy≈sz），该 normal 可能不稳定/无物理意义。
+
+        Returns:
+            torch.Tensor: [N, 3] 单位向量
+        """
+        if self._rotation.numel() == 0:
+            return self._rotation.new_empty((0, 3))
+
+        scales = self.get_scaling  # [N, 3]
+        min_axis = torch.argmin(scales, dim=1)  # [N]
+        R = build_rotation(self._rotation)  # [N, 3, 3]
+        idx = torch.arange(scales.shape[0], device=scales.device)
+        normals = R[idx, :, min_axis]  # [N, 3]
+        return normals
+
+    @property
     def get_xyz(self):
         return self._xyz
 
@@ -666,9 +689,11 @@ class GaussianModel:
         densities = t2a(self._density)
         scale = t2a(self._scaling)
         rotation = t2a(self._rotation)
+        normals = t2a(self.get_normals)
 
         out = {
             "xyz": xyz,
+            "normals": normals,
             "density": densities,
             "scale": scale,
             "rotation": rotation,

@@ -51,10 +51,12 @@ def initialize_gaussian(gaussians: GaussianModel, args: ModelParams, loaded_iter
             point_cloud = np.load(ply_path)
             xyz = point_cloud[:, :3]
             density = point_cloud[:, 3:4]
-        elif ply_type == ".ply":
+        elif ply_type == "ply":
             point_cloud = fetchPly(ply_path)
             xyz = np.asarray(point_cloud.points)
             density = np.asarray(point_cloud.colors[:, :1])
+        else:
+            raise ValueError(f"Unsupported point cloud format: {ply_type} ({ply_path})")
 
         gaussians.create_from_pcd(xyz, density, 1.0)
 

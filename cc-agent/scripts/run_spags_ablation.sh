@@ -1,4 +1,4 @@
-
+#!/bin/bash
 set -e
 
 # 取消代理设置
@@ -130,7 +130,14 @@ case $VIEWS in
     9) ADM_WARMUP_ITERS=5000 ;;
     *) ADM_WARMUP_ITERS=1000 ;;  # fallback
 esac
+
+# 🆕 支持环境变量覆盖 ADM 参数（用于调参测试）
+# 用法：ADM_MAX_RANGE=0.15 ADM_WARMUP_EXTRA=5000 ./run_spags_ablation.sh adm foot 9 0
+ADM_MAX_RANGE_VAL=${ADM_MAX_RANGE:-0.3}
+ADM_WARMUP_EXTRA=${ADM_WARMUP_EXTRA:-0}
+ADM_WARMUP_ITERS=$((ADM_WARMUP_ITERS + ADM_WARMUP_EXTRA))
 echo ">>> ADM warmup: ${ADM_WARMUP_ITERS} (effective: ${ADM_WARMUP_ITERS} × ${VIEWS}/3 = $((ADM_WARMUP_ITERS * VIEWS / 3)))"
+echo ">>> ADM max_range: ${ADM_MAX_RANGE_VAL}"
 
 ADM_FLAGS_COMPAT="--enable_kplanes \
     --adm_resolution 64 \
@@ -140,7 +147,7 @@ ADM_FLAGS_COMPAT="--enable_kplanes \
     --kplanes_lr_init 0.005 \
     --lambda_plane_tv 0.0005 \
     --adm_warmup_iters ${ADM_WARMUP_ITERS} \
-    --adm_max_range 0.3 \
+    --adm_max_range ${ADM_MAX_RANGE_VAL} \
     --adm_view_adaptive \
     --adm_zero_mean \
     --adm_zero_mean_mode density_confidence"

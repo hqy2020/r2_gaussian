@@ -476,7 +476,7 @@ def _nerf_eval(tb_writer, iteration, method, model, scene, config, scanner_cfg):
         # 2D 投影评估：按 rays 分块渲染，避免 OOM
         test_cameras = scene.getTestCameras()
         if test_cameras and len(test_cameras) > 0:
-            eval_max_views = int(getattr(config, "eval_max_views", 10))
+            eval_max_views = int(getattr(config, "eval_max_views", 50))
             chunk_rays = int(getattr(config, "eval_rays_chunk", 8192))
 
             images = []

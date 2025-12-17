@@ -1,0 +1,146 @@
+created_at: '2025-12-16 22:29:33'
+views: 3
+prefer_iter: 30000
+strict_iter: false
+organs_grid:
+- foot
+- abdomen
+organs_bar:
+- chest
+- foot
+- head
+- abdomen
+- pancreas
+selected:
+  foot:
+    gt:
+      exp_dir: output/2025_12_06_15_58_foot_3views_baseline
+      vol_gt: output/2025_12_06_15_58_foot_3views_baseline/point_cloud/iteration_30000/vol_gt.npy
+      slice_idx: 64
+      axis: 2
+    baseline:
+      exp_dir: output/2025_12_06_15_58_foot_3views_baseline
+      vol_pred: output/2025_12_06_15_58_foot_3views_baseline/point_cloud/iteration_30000/vol_pred.npy
+      vol_gt: output/2025_12_06_15_58_foot_3views_baseline/point_cloud/iteration_30000/vol_gt.npy
+      metric_psnr: 28.55813217163086
+      metric_ssim: 0.8978608846664429
+      metric_iter: 30000
+      vol_iter: 30000
+      slice_idx: 64
+      axis: 2
+    sps:
+      exp_dir: output/_2025_12_16_13_55_foot_3views_sps
+      vol_pred: output/_2025_12_16_13_55_foot_3views_sps/point_cloud/iteration_5000/vol_pred.npy
+      vol_gt: output/_2025_12_16_13_55_foot_3views_sps/point_cloud/iteration_5000/vol_gt.npy
+      metric_psnr: 28.471696853637695
+      metric_ssim: 0.9012409448623657
+      metric_iter: 5000
+      vol_iter: 5000
+      slice_idx: 64
+      axis: 2
+    gar:
+      exp_dir: output/2025_12_13_gar_rerun_foot_3views_gar
+      vol_pred: output/2025_12_13_gar_rerun_foot_3views_gar/point_cloud/iteration_30000/vol_pred.npy
+      vol_gt: output/2025_12_13_gar_rerun_foot_3views_gar/point_cloud/iteration_30000/vol_gt.npy
+      metric_psnr: 28.77361297607422
+      metric_ssim: 0.8932233452796936
+      metric_iter: 30000
+      vol_iter: 30000
+      slice_idx: 64
+      axis: 2
+    adm:
+      exp_dir: output/_2025_12_13_18_34_foot_3views_adm
+      vol_pred: output/_2025_12_13_18_34_foot_3views_adm/point_cloud/iteration_30000/vol_pred.npy
+      vol_gt: output/_2025_12_13_18_34_foot_3views_adm/point_cloud/iteration_30000/vol_gt.npy
+      metric_psnr: 28.693374633789062
+      metric_ssim: 0.8977253437042236
+      metric_iter: 30000
+      vol_iter: 30000
+      slice_idx: 64
+      axis: 2
+    sps_adm:
+      exp_dir: null
+      vol_pred: null
+      vol_gt: null
+      metric_psnr: null
+      metric_ssim: null
+      metric_iter: null
+      vol_iter: null
+      slice_idx: 64
+      axis: 2
+    spags:
+      exp_dir: output/2025_12_05_13_58_foot_3views_spags_3k
+      vol_pred: output/2025_12_05_13_58_foot_3views_spags_3k/point_cloud/iteration_30000/vol_pred.npy
+      vol_gt: output/2025_12_05_13_58_foot_3views_spags_3k/point_cloud/iteration_30000/vol_gt.npy
+      metric_psnr: 29.183595657348633
+      metric_ssim: 0.9033755660057068
+      metric_iter: 30000
+      vol_iter: 30000
+      slice_idx: 64
+      axis: 2
+  abdomen:
+    gt:
+      exp_dir: output/baselines_comparison/baseline_abdomen_3views_baseline
+      vol_gt: output/baselines_comparison/baseline_abdomen_3views_baseline/point_cloud/iteration_30000/vol_gt.npy
+      slice_idx: 64
+      axis: 2
+    baseline:
+      exp_dir: output/baselines_comparison/baseline_abdomen_3views_baseline
+      vol_pred: output/baselines_comparison/baseline_abdomen_3views_baseline/point_cloud/iteration_30000/vol_pred.npy
+      vol_gt: output/baselines_comparison/baseline_abdomen_3views_baseline/point_cloud/iteration_30000/vol_gt.npy
+      metric_psnr: 29.254751205444336
+      metric_ssim: 0.9363206624984741
+      metric_iter: 30000
+      vol_iter: 30000
+      slice_idx: 64
+      axis: 2
+    sps:
+      exp_dir: output/_2025_12_16_14_13_abdomen_3views_sps
+      vol_pred: output/_2025_12_16_14_13_abdomen_3views_sps/point_cloud/iteration_5000/vol_pred.npy
+      vol_gt: output/_2025_12_16_14_13_abdomen_3views_sps/point_cloud/iteration_5000/vol_gt.npy
+      metric_psnr: 29.163789749145508
+      metric_ssim: 0.9319270253181458
+      metric_iter: 5000
+      vol_iter: 5000
+      slice_idx: 64
+      axis: 2
+    gar:
+      exp_dir: output/2025_12_06_20_10_abdomen_3views_gar
+      vol_pred: output/2025_12_06_20_10_abdomen_3views_gar/point_cloud/iteration_30000/vol_pred.npy
+      vol_gt: output/2025_12_06_20_10_abdomen_3views_gar/point_cloud/iteration_30000/vol_gt.npy
+      metric_psnr: 29.219131469726562
+      metric_ssim: 0.9362951517105103
+      metric_iter: 30000
+      vol_iter: 30000
+      slice_idx: 64
+      axis: 2
+    adm:
+      exp_dir: output/_2025_12_12_23_44_abdomen_3views_adm
+      vol_pred: output/_2025_12_12_23_44_abdomen_3views_adm/point_cloud/iteration_30000/vol_pred.npy
+      vol_gt: output/_2025_12_12_23_44_abdomen_3views_adm/point_cloud/iteration_30000/vol_gt.npy
+      metric_psnr: 29.310827255249023
+      metric_ssim: 0.9369375109672546
+      metric_iter: 30000
+      vol_iter: 30000
+      slice_idx: 64
+      axis: 2
+    sps_adm:
+      exp_dir: null
+      vol_pred: null
+      vol_gt: null
+      metric_psnr: null
+      metric_ssim: null
+      metric_iter: null
+      vol_iter: null
+      slice_idx: 64
+      axis: 2
+    spags:
+      exp_dir: output/2025_12_05_13_58_abdomen_3views_spags_3k
+      vol_pred: output/2025_12_05_13_58_abdomen_3views_spags_3k/point_cloud/iteration_30000/vol_pred.npy
+      vol_gt: output/2025_12_05_13_58_abdomen_3views_spags_3k/point_cloud/iteration_30000/vol_gt.npy
+      metric_psnr: 29.418458938598633
+      metric_ssim: 0.9367992877960205
+      metric_iter: 30000
+      vol_iter: 30000
+      slice_idx: 64
+      axis: 2
