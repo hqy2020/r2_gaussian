@@ -4,6 +4,8 @@
 # 基于 X-Gaussian 架构，添加 GridRenderer 进行 opacity 调制
 #
 
+import os
+import pickle
 import torch
 import torch.nn as nn
 import numpy as np
@@ -11,11 +13,14 @@ from typing import Dict, List, Optional
 
 from r2_gaussian.utils.gaussian_utils import (
     inverse_sigmoid,
+    inverse_softplus,
     get_expon_lr_func,
     build_rotation,
     strip_symmetric,
     build_scaling_rotation,
 )
+from r2_gaussian.utils.general_utils import t2a
+from r2_gaussian.utils.system_utils import mkdir_p
 from simple_knn._C import distCUDA2
 
 from ..registry import GaussianBaseModel
@@ -48,9 +53,6 @@ class DNGaussianModel(GaussianBaseModel):
         self.opacity_activation = torch.sigmoid
         self.inverse_opacity_activation = inverse_sigmoid
         self.rotation_activation = torch.nn.functional.normalize
-        # 密度激活（与 R²-Gaussian 一致）
-        self.density_activation = torch.nn.functional.softplus
-        self.density_inverse_activation = lambda x: x + torch.log(-torch.expm1(-x))
 
     def __init__(self, scale_bound=None, args=None, config: DNGaussianConfig = None):
         """
@@ -69,7 +71,7 @@ class DNGaussianModel(GaussianBaseModel):
         self._xyz = torch.empty(0)
         self._scaling = torch.empty(0)
         self._rotation = torch.empty(0)
-        self._density = torch.empty(0)  # 基础密度（R²-Gaussian 风格）
+        self._opacity = torch.empty(0)  # 基础 opacity（与 3DGS/DNGaussian 一致）
         self.max_radii2D = torch.empty(0)
         self.xyz_gradient_accum = torch.empty(0)
         self.denom = torch.empty(0)
@@ -125,44 +127,46 @@ class DNGaussianModel(GaussianBaseModel):
 
     @property
     def get_base_density(self) -> torch.Tensor:
-        """获取基础密度（未经 neural renderer 调制）"""
-        return self.density_activation(self._density)
+        """兼容接口：返回基础 opacity（未经 neural renderer 调制）"""
+        return self.get_opacity_
 
     @property
     def get_density(self) -> torch.Tensor:
         """
-        获取调制后的密度
+        获取调制后的“密度/opacity”（渲染用）
 
-        使用 Neural Renderer 预测的 sigma 调制基础密度
+        使用 Neural Renderer 预测的 sigma 调制基础 opacity
         """
-        base_density = self.get_base_density
+        base_opacity = self.get_opacity_
 
         if self.neural_renderer is None or not self._neural_renderer_initialized:
-            return base_density
+            return base_opacity
 
-        # 获取 neural renderer 的调制值
-        with torch.set_grad_enabled(self.training if hasattr(self, 'training') else True):
-            sigma = self.neural_renderer(self._xyz)
-            # sigma 可以是正负值，通过 sigmoid 映射到 [0, 1] 作为调制因子
-            modulation = torch.sigmoid(sigma).view(-1, 1)
+        sigma = self.neural_renderer(self._xyz)
+        modulation = torch.sigmoid(sigma).view(-1, 1)
 
         # 应用调制
         if self.modulation_mode == 'multiplicative':
             # 乘法调制: density * (1 + strength * (modulation - 0.5))
             # modulation=0.5 时不变，>0.5 增强，<0.5 减弱
             factor = 1.0 + self.modulation_strength * (modulation - 0.5) * 2.0
-            return base_density * factor
+            return torch.clamp(base_opacity * factor, 0.0, 1.0)
         elif self.modulation_mode == 'additive':
             # 加法调制
             offset = self.modulation_strength * (modulation - 0.5)
-            return base_density + offset
+            return torch.clamp(base_opacity + offset, 0.0, 1.0)
         else:
-            return base_density
+            return base_opacity
 
     @property
     def get_opacity(self) -> torch.Tensor:
-        """兼容接口，返回密度"""
+        """兼容接口：返回渲染用 opacity（即 get_density）"""
         return self.get_density
+
+    @property
+    def get_opacity_(self) -> torch.Tensor:
+        """返回基础 opacity（不含 neural renderer 调制）"""
+        return self.opacity_activation(self._opacity)
 
     def get_covariance(self, scaling_modifier=1.0) -> torch.Tensor:
         return self.covariance_activation(
@@ -181,7 +185,7 @@ class DNGaussianModel(GaussianBaseModel):
 
         Args:
             points: [N, 3] 点云坐标
-            densities: [N] 密度值 (可选)
+            densities: [N] 密度值 (可选，当前不用于初始化 opacity)
             spatial_lr_scale: 空间学习率缩放
         """
         self.spatial_lr_scale = spatial_lr_scale
@@ -200,22 +204,16 @@ class DNGaussianModel(GaussianBaseModel):
         rots[:, 0] = 1
 
         # 初始密度
-        if densities is not None:
-            # 使用提供的密度值
-            densities_tensor = torch.tensor(densities).float().cuda()
-            densities_tensor = torch.clamp(densities_tensor, min=1e-6)
-            init_densities = self.density_inverse_activation(densities_tensor.view(-1, 1))
-        else:
-            # 默认密度
-            init_densities = self.density_inverse_activation(
-                0.1 * torch.ones((num_points, 1), dtype=torch.float, device="cuda")
-            )
+        # DNGaussian/3DGS 采用 opacity 参数化；这里使用与 X-Gaussian 一致的常数初始化
+        init_opacities = inverse_sigmoid(
+            0.1 * torch.ones((num_points, 1), dtype=torch.float, device="cuda")
+        )
 
         # 设置参数
         self._xyz = nn.Parameter(fused_point_cloud.requires_grad_(True))
         self._scaling = nn.Parameter(scales.requires_grad_(True))
         self._rotation = nn.Parameter(rots.requires_grad_(True))
-        self._density = nn.Parameter(init_densities.requires_grad_(True))
+        self._opacity = nn.Parameter(init_opacities.requires_grad_(True))
         self.max_radii2D = torch.zeros((num_points,), device="cuda")
 
         # 初始化 Neural Renderer
@@ -243,7 +241,7 @@ class DNGaussianModel(GaussianBaseModel):
         """返回可训练参数组"""
         params = [
             {'params': [self._xyz], 'name': 'xyz'},
-            {'params': [self._density], 'name': 'density'},
+            {'params': [self._opacity], 'name': 'opacity'},
             {'params': [self._scaling], 'name': 'scaling'},
             {'params': [self._rotation], 'name': 'rotation'},
         ]
@@ -260,9 +258,9 @@ class DNGaussianModel(GaussianBaseModel):
             {'params': [self._xyz],
              'lr': getattr(opt, 'position_lr_init', self.config.position_lr_init) * self.spatial_lr_scale,
              'name': 'xyz'},
-            {'params': [self._density],
+            {'params': [self._opacity],
              'lr': getattr(opt, 'opacity_lr', self.config.opacity_lr),
-             'name': 'density'},
+             'name': 'opacity'},
             {'params': [self._scaling],
              'lr': getattr(opt, 'scaling_lr', self.config.scaling_lr),
              'name': 'scaling'},
@@ -304,7 +302,7 @@ class DNGaussianModel(GaussianBaseModel):
             '_xyz': self._xyz,
             '_scaling': self._scaling,
             '_rotation': self._rotation,
-            '_density': self._density,
+            '_opacity': self._opacity,
             'max_radii2D': self.max_radii2D,
             'xyz_gradient_accum': self.xyz_gradient_accum,
             'denom': self.denom,
@@ -321,7 +319,7 @@ class DNGaussianModel(GaussianBaseModel):
         self._xyz = state['_xyz']
         self._scaling = state['_scaling']
         self._rotation = state['_rotation']
-        self._density = state['_density']
+        self._opacity = state['_opacity']
         self.max_radii2D = state['max_radii2D']
         self.spatial_lr_scale = state['spatial_lr_scale']
 
@@ -335,6 +333,36 @@ class DNGaussianModel(GaussianBaseModel):
         self.denom = state['denom']
         if state['optimizer_state']:
             self.optimizer.load_state_dict(state['optimizer_state'])
+
+    def save_ply(self, path):
+        """保存为与 R2-Gaussian 兼容的 pickle 点云"""
+        mkdir_p(os.path.dirname(path))
+
+        with torch.no_grad():
+            density = self.get_density
+            density = torch.clamp(density, min=1e-6)
+            density_raw = inverse_softplus(density)
+
+            if self._rotation.numel() == 0:
+                normals = self._rotation.new_empty((0, 3))
+            else:
+                scales = self.get_scaling
+                min_axis = torch.argmin(scales, dim=1)
+                R = build_rotation(self._rotation)
+                idx = torch.arange(scales.shape[0], device=scales.device)
+                normals = R[idx, :, min_axis]
+
+            out = {
+                "xyz": t2a(self._xyz),
+                "normals": t2a(normals),
+                "density": t2a(density_raw),
+                "scale": t2a(self._scaling),
+                "rotation": t2a(self._rotation),
+                "scale_bound": self.scale_bound,
+            }
+
+        with open(path, "wb") as f:
+            pickle.dump(out, f, pickle.HIGHEST_PROTOCOL)
 
     # ============ 密集化相关 ============
 
@@ -388,7 +416,7 @@ class DNGaussianModel(GaussianBaseModel):
         optimizable_tensors = self._prune_optimizer(valid_points_mask)
 
         self._xyz = optimizable_tensors["xyz"]
-        self._density = optimizable_tensors["density"]
+        self._opacity = optimizable_tensors["opacity"]
         self._scaling = optimizable_tensors["scaling"]
         self._rotation = optimizable_tensors["rotation"]
 
@@ -431,13 +459,13 @@ class DNGaussianModel(GaussianBaseModel):
         """密集化后处理"""
         d = {
             "xyz": new_xyz,
-            "density": new_densities,
+            "opacity": new_densities,
             "scaling": new_scaling,
             "rotation": new_rotation,
         }
         optimizable_tensors = self.cat_tensors_to_optimizer(d)
         self._xyz = optimizable_tensors["xyz"]
-        self._density = optimizable_tensors["density"]
+        self._opacity = optimizable_tensors["opacity"]
         self._scaling = optimizable_tensors["scaling"]
         self._rotation = optimizable_tensors["rotation"]
 
@@ -467,7 +495,7 @@ class DNGaussianModel(GaussianBaseModel):
             self.get_scaling[selected_pts_mask].repeat(N, 1) / (0.8 * N)
         )
         new_rotation = self._rotation[selected_pts_mask].repeat(N, 1)
-        new_density = self._density[selected_pts_mask].repeat(N, 1)
+        new_density = self._opacity[selected_pts_mask].repeat(N, 1)
         new_max_radii2D = torch.zeros((new_xyz.shape[0],), device="cuda")
 
         self.densification_postfix(
@@ -491,7 +519,7 @@ class DNGaussianModel(GaussianBaseModel):
         )
 
         new_xyz = self._xyz[selected_pts_mask]
-        new_density = self._density[selected_pts_mask]
+        new_density = self._opacity[selected_pts_mask]
         new_scaling = self._scaling[selected_pts_mask]
         new_rotation = self._rotation[selected_pts_mask]
         new_max_radii2D = torch.zeros((new_xyz.shape[0],), device="cuda")
@@ -508,7 +536,7 @@ class DNGaussianModel(GaussianBaseModel):
         self.densify_and_clone(grads, max_grad, extent)
         self.densify_and_split(grads, max_grad, extent)
 
-        prune_mask = (self.get_density < min_opacity).squeeze()
+        prune_mask = (self.get_base_density < min_opacity).squeeze()
         if max_screen_size:
             big_points_vs = self.max_radii2D > max_screen_size
             big_points_ws = self.get_scaling.max(dim=1).values > 0.1 * extent
@@ -520,9 +548,9 @@ class DNGaussianModel(GaussianBaseModel):
         torch.cuda.empty_cache()
 
     def reset_opacity(self):
-        """重置 density"""
-        densities_new = self.density_inverse_activation(
+        """重置 opacity（与 3DGS/X-Gaussian 一致）"""
+        opacities_new = inverse_sigmoid(
             torch.min(self.get_base_density, torch.ones_like(self.get_base_density) * 0.01)
         )
-        optimizable_tensors = self.replace_tensor_to_optimizer(densities_new, "density")
-        self._density = optimizable_tensors["density"]
+        optimizable_tensors = self.replace_tensor_to_optimizer(opacities_new, "opacity")
+        self._opacity = optimizable_tensors["opacity"]

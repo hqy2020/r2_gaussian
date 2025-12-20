@@ -14,9 +14,20 @@ except ImportError:
 
 sys.path.append("./")
 from r2_gaussian.utils.cfg_utils import args2string
+from r2_gaussian.utils.unified_logger import init_logger, get_logger
 
 
-def prepare_output_and_logger(args):
+def prepare_output_and_logger(args, method: str = "unknown"):
+    """
+    准备输出目录并初始化日志器
+
+    Args:
+        args: 命令行参数
+        method: 方法名称（用于统一日志格式）
+
+    Returns:
+        tb_writer: TensorBoard writer（如果可用）
+    """
     # Update model path if not specified
     if not args.model_path:
         if os.getenv("OAR_JOB_ID"):
@@ -26,8 +37,18 @@ def prepare_output_and_logger(args):
         args.model_path = osp.join("./output/", unique_str[0:10])
 
     # Set up output folder
-    print("Output folder: {}".format(args.model_path))
     os.makedirs(args.model_path, exist_ok=True)
+
+    # 初始化统一日志器
+    logger = init_logger(
+        method=method,
+        output_dir=args.model_path,
+        use_tqdm=True,
+        write_to_file=False,  # 由 shell tee 处理文件写入
+    )
+    logger.config(f"Output folder: {args.model_path}")
+
+    # 保存配置文件
     with open(osp.join(args.model_path, "cfg_args"), "w") as cfg_log_f:
         cfg_log_f.write(str(Namespace(**vars(args))))
 
@@ -42,5 +63,5 @@ def prepare_output_and_logger(args):
         tb_writer = SummaryWriter(args.model_path)
         tb_writer.add_text("args", args2string(args_dict), global_step=0)
     else:
-        print("Tensorboard not available: not logging progress")
+        logger.warn("Tensorboard not available: not logging progress")
     return tb_writer

@@ -11,6 +11,8 @@
 # - 新增 dist_prune() 方法基于距离初始点云剪枝
 #
 
+import os
+import pickle
 import torch
 import torch.nn as nn
 import numpy as np
@@ -18,11 +20,14 @@ from typing import Dict, List, Optional
 
 from r2_gaussian.utils.gaussian_utils import (
     inverse_sigmoid,
+    inverse_softplus,
     get_expon_lr_func,
     build_rotation,
     strip_symmetric,
     build_scaling_rotation,
 )
+from r2_gaussian.utils.general_utils import t2a
+from r2_gaussian.utils.system_utils import mkdir_p
 from simple_knn._C import distCUDA2
 
 from ..registry import GaussianBaseModel
@@ -318,6 +323,38 @@ class FSGSModel(GaussianBaseModel):
         if state['optimizer_state']:
             self.optimizer.load_state_dict(state['optimizer_state'])
 
+    def save_ply(self, path):
+        """保存为与 R2-Gaussian 兼容的 pickle 点云"""
+        mkdir_p(os.path.dirname(path))
+
+        with torch.no_grad():
+            density = self.get_density
+            if self.config.use_confidence and self.confidence.shape[0] == density.shape[0]:
+                density = density * self.confidence
+            density = torch.clamp(density, min=1e-6)
+            density_raw = inverse_softplus(density)
+
+            if self._rotation.numel() == 0:
+                normals = self._rotation.new_empty((0, 3))
+            else:
+                scales = self.get_scaling
+                min_axis = torch.argmin(scales, dim=1)
+                R = build_rotation(self._rotation)
+                idx = torch.arange(scales.shape[0], device=scales.device)
+                normals = R[idx, :, min_axis]
+
+            out = {
+                "xyz": t2a(self._xyz),
+                "normals": t2a(normals),
+                "density": t2a(density_raw),
+                "scale": t2a(self._scaling),
+                "rotation": t2a(self._rotation),
+                "scale_bound": self.scale_bound,
+            }
+
+        with open(path, "wb") as f:
+            pickle.dump(out, f, pickle.HIGHEST_PROTOCOL)
+
     # ============ 球谐升级 ============
 
     def oneupSHdegree(self):
@@ -347,7 +384,19 @@ class FSGSModel(GaussianBaseModel):
             N = self.config.proximity_k_neighbors
 
         # 计算每个高斯到最近邻的距离
-        dist, nearest_indices = distCUDA2(self.get_xyz)
+        # 注意: 项目中的 distCUDA2 只返回距离，不返回索引
+        # 需要单独计算 nearest_indices
+        xyz = self.get_xyz
+        dist = distCUDA2(xyz)
+
+        # 使用 PyTorch 计算 k 个最近邻索引
+        # cdist 计算所有点对之间的距离
+        with torch.no_grad():
+            pairwise_dist = torch.cdist(xyz, xyz)
+            # 排除自身 (对角线设为无穷大)
+            pairwise_dist.fill_diagonal_(float('inf'))
+            # 获取 N 个最近邻的索引
+            _, nearest_indices = torch.topk(pairwise_dist, k=N, dim=1, largest=False)
 
         # FSGS 选择条件
         dist_threshold = self.config.proximity_dist_multiplier * scene_extent

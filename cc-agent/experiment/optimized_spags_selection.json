@@ -1,0 +1,137 @@
+[
+  {
+    "method": "spags",
+    "organ": "abdomen",
+    "views": 3,
+    "psnr": 29.65963363647461,
+    "ssim": 0.9376375675201416,
+    "checkpoint": "iter_030000",
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_19_16_04_abdomen_3views_spags"
+  },
+  {
+    "method": "spags",
+    "organ": "abdomen",
+    "views": 6,
+    "psnr": 34.37041091918945,
+    "ssim": 0.9755123257637024,
+    "checkpoint": "iter_030000",
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_19_22_17_abdomen_6views_spags"
+  },
+  {
+    "method": "spags",
+    "organ": "abdomen",
+    "views": 9,
+    "psnr": 36.7425651550293,
+    "ssim": 0.9820456504821777,
+    "checkpoint": "iter_030000",
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_20_09_30_abdomen_9views_spags"
+  },
+  {
+    "method": "spags",
+    "organ": "chest",
+    "views": 3,
+    "psnr": 27.32500457763672,
+    "ssim": 0.8476518988609314,
+    "checkpoint": "iter_010000",
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_17_15_19_chest_3views_spags"
+  },
+  {
+    "method": "spags",
+    "organ": "chest",
+    "views": 6,
+    "psnr": 33.471771240234375,
+    "ssim": 0.9280455112457275,
+    "checkpoint": "iter_020000",
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_19_10_37_chest_6views_spags"
+  },
+  {
+    "method": "spags",
+    "organ": "chest",
+    "views": 9,
+    "psnr": 36.794898986816406,
+    "ssim": 0.9524509310722351,
+    "checkpoint": "iter_030000",
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_19_14_01_chest_9views_spags"
+  },
+  {
+    "method": "spags",
+    "organ": "foot",
+    "views": 3,
+    "psnr": 28.834613800048828,
+    "ssim": 0.8998094201087952,
+    "checkpoint": "iter_030000",
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/2025_12_04_14_51_foot_3views_spags"
+  },
+  {
+    "method": "spags",
+    "organ": "foot",
+    "views": 6,
+    "psnr": 32.378623962402344,
+    "ssim": 0.9403218030929565,
+    "checkpoint": "iter_020000",
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_19_22_03_foot_6views_spags"
+  },
+  {
+    "method": "spags",
+    "organ": "foot",
+    "views": 9,
+    "psnr": 34.74089050292969,
+    "ssim": 0.9549862742424011,
+    "checkpoint": "iter_020000",
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_20_02_11_foot_9views_spags"
+  },
+  {
+    "method": "spags",
+    "organ": "head",
+    "views": 3,
+    "psnr": 26.779809951782227,
+    "ssim": 0.918234646320343,
+    "checkpoint": "iter_020000",
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_17_15_19_head_3views_spags"
+  },
+  {
+    "method": "spags",
+    "organ": "head",
+    "views": 6,
+    "psnr": 32.8820915222168,
+    "ssim": 0.9734680652618408,
+    "checkpoint": "iter_030000",
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_19_20_22_head_6views_spags"
+  },
+  {
+    "method": "spags",
+    "organ": "head",
+    "views": 9,
+    "psnr": 36.19655990600586,
+    "ssim": 0.9823826551437378,
+    "checkpoint": "iter_020000",
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_19_22_52_head_9views_spags"
+  },
+  {
+    "method": "spags",
+    "organ": "pancreas",
+    "views": 3,
+    "psnr": 29.1285343170166,
+    "ssim": 0.9243782162666321,
+    "checkpoint": "iter_030000",
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_19_16_04_pancreas_3views_spags"
+  },
+  {
+    "method": "spags",
+    "organ": "pancreas",
+    "views": 6,
+    "psnr": 33.91228103637695,
+    "ssim": 0.9524381756782532,
+    "checkpoint": "iter_030000",
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_19_20_29_pancreas_6views_spags"
+  },
+  {
+    "method": "spags",
+    "organ": "pancreas",
+    "views": 9,
+    "psnr": 35.696563720703125,
+    "ssim": 0.9610289931297302,
+    "checkpoint": "iter_030000",
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_19_23_03_pancreas_9views_spags"
+  }
+]

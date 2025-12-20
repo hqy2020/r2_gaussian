@@ -11,11 +11,13 @@ from random import randint
 import numpy as np
 import yaml
 from tqdm import tqdm
+import imageio
 
 from r2_gaussian.dataset import Scene
 from r2_gaussian.utils.loss_utils import l1_loss, ssim
 from r2_gaussian.utils.image_utils import metric_vol, metric_proj
 from r2_gaussian.utils.plot_utils import show_two_slice
+from r2_gaussian.utils.unified_logger import get_logger
 
 from .model import DNGaussianModel
 from .renderer import render_dngaussian, render_dngaussian_depth, query_dngaussian
@@ -23,8 +25,6 @@ from .config import DNGaussianConfig
 from .loss_utils import (
     patch_norm_mse_loss,
     patch_norm_mse_loss_global,
-    compute_projection_depth_prior,
-    depth_smoothness_loss,
 )
 
 
@@ -92,11 +92,13 @@ def training_dngaussian(
     # 设置优化参数
     gaussians.training_setup(opt)
 
+    logger = get_logger()
+
     # 加载检查点
     if checkpoint is not None:
         state, first_iter = torch.load(checkpoint)
         gaussians.restore(state, opt)
-        print(f"Loaded DNGaussian checkpoint from {checkpoint}")
+        logger.config(f"Loaded DNGaussian checkpoint from {checkpoint}")
 
     # 深度正则化参数
     hard_depth_start = getattr(opt, 'hard_depth_start', config.hard_depth_start)
@@ -107,7 +109,6 @@ def training_dngaussian(
     error_tolerance = getattr(opt, 'error_tolerance', config.error_tolerance)
     lambda_depth_local = getattr(opt, 'lambda_depth_local', config.lambda_depth_local)
     lambda_depth_global = getattr(opt, 'lambda_depth_global', config.lambda_depth_global)
-    depth_prior_method = getattr(opt, 'depth_prior_method', config.depth_prior_method)
 
     # 密集化参数
     densify_from_iter = getattr(opt, 'densify_from_iter', config.densify_from_iter)
@@ -128,13 +129,12 @@ def training_dngaussian(
     progress_bar = tqdm(range(first_iter, opt.iterations), desc="DNGaussian Training")
     first_iter += 1
 
-    print("=" * 70)
-    print("DNGaussian Training Configuration:")
-    print(f"  - Neural Renderer: Hash Grid ({config.num_levels} levels) + MLP")
-    print(f"  - Depth regularization: {hard_depth_start} - {depth_end_iter} iterations")
-    print(f"  - Patch size: {patch_size_min} - {patch_size_max}")
-    print(f"  - Depth prior method: {depth_prior_method}")
-    print("=" * 70)
+    logger.config_block("DNGaussian Training Configuration", {
+        "Neural Renderer": f"Hash Grid ({config.num_levels} levels) + MLP",
+        "Depth regularization": f"{hard_depth_start} - {depth_end_iter} iterations",
+        "Patch size": f"{patch_size_min} - {patch_size_max}",
+        "Depth prior": "viewpoint_cam.depth_mono (if provided)",
+    })
 
     for iteration in range(first_iter, opt.iterations + 1):
         iter_start = torch.cuda.Event(enable_timing=True)
@@ -173,7 +173,21 @@ def training_dngaussian(
             loss = loss + lambda_dssim * loss_ssim
 
         # 2. 深度正则化（DNGaussian 核心创新）
-        use_depth_reg = (iteration >= hard_depth_start and iteration < depth_end_iter)
+        # 仅在数据提供了可用的深度先验时启用（例如 monocular depth）。
+        depth_gt = None
+        if hasattr(viewpoint_cam, "depth_mono") and viewpoint_cam.depth_mono is not None:
+            depth_gt = viewpoint_cam.depth_mono
+            if not torch.is_tensor(depth_gt):
+                depth_gt = torch.as_tensor(depth_gt)
+            depth_gt = depth_gt.to("cuda").float()
+            if depth_gt.max() > 1.5:
+                depth_gt = 255.0 - depth_gt
+
+        use_depth_reg = (
+            depth_gt is not None
+            and iteration >= hard_depth_start
+            and iteration < depth_end_iter
+        )
 
         if use_depth_reg:
             # 随机选择 patch 大小
@@ -181,18 +195,15 @@ def training_dngaussian(
 
             # 渲染深度图
             depth_render = render_dngaussian_depth(
-                viewpoint_cam, gaussians, pipe, use_base_density=False
-            )
-
-            # 从 GT 投影计算伪深度先验
-            depth_gt = compute_projection_depth_prior(
-                gt_image, method=depth_prior_method
+                viewpoint_cam, gaussians, pipe, use_base_density=True
             )
 
             # 确保形状匹配
             if depth_render.dim() == 3:
                 depth_render = depth_render.unsqueeze(0)
-            if depth_gt.dim() == 3:
+            if depth_gt.dim() == 2:
+                depth_gt = depth_gt.unsqueeze(0).unsqueeze(0)
+            elif depth_gt.dim() == 3:
                 depth_gt = depth_gt.unsqueeze(0)
 
             # 全局深度损失
@@ -243,9 +254,10 @@ def training_dngaussian(
 
             # 保存
             if iteration in saving_iterations:
-                print(f"\n[ITER {iteration}] Saving DNGaussian model")
+                logger.info("Saving DNGaussian model", iteration=iteration)
                 save_path = osp.join(scene.model_path, f"dngaussian_iter_{iteration}.pth")
                 torch.save((gaussians.capture(), iteration), save_path)
+                scene.save(iteration, queryfunc)
 
             # 密集化
             if iteration < densify_until_iter:
@@ -270,7 +282,7 @@ def training_dngaussian(
 
             # 检查点
             if iteration in checkpoint_iterations:
-                print(f"\n[ITER {iteration}] Saving Checkpoint")
+                logger.info("Saving Checkpoint", iteration=iteration)
                 ckpt_path = osp.join(scene.model_path, f"chkpnt_dngaussian_{iteration}.pth")
                 torch.save((gaussians.capture(), iteration), ckpt_path)
 
@@ -330,10 +342,24 @@ def _dngaussian_eval(tb_writer, iteration, scene, gaussians, pipe, queryfunc):
         tb_writer.add_scalar("dngaussian/psnr_3d", psnr_3d, iteration)
         tb_writer.add_scalar("dngaussian/ssim_3d", ssim_3d, iteration)
 
-    tqdm.write(
-        f"[DNGaussian ITER {iteration}] "
-        f"psnr3d {psnr_3d:.3f}, ssim3d {ssim_3d:.3f}, "
-        f"psnr2d {psnr_2d:.3f}, ssim2d {ssim_2d:.3f}"
-    )
+    # 保存可视化
+    logger = get_logger()
+    try:
+        # 取中间切片进行可视化
+        mid_slice = vol_gt.shape[0] // 2
+        slice_gt = vol_gt[mid_slice].cpu().numpy()
+        slice_pred = vol_pred[mid_slice].cpu().numpy()
+        vis_data = show_two_slice(
+            slice_gt,
+            slice_pred,
+            "GT",
+            "DNGaussian",
+            save=True,
+        )
+        imageio.imwrite(osp.join(eval_save_path, "slices_dngaussian.png"), vis_data)
+    except Exception as e:
+        logger.warn(f"Failed to save slice visualization: {e}", iteration=iteration)
+
+    logger.eval(f"psnr3d {psnr_3d:.3f}, ssim3d {ssim_3d:.3f}, psnr2d {psnr_2d:.3f}, ssim2d {ssim_2d:.3f}", iteration=iteration)
 
     torch.cuda.empty_cache()

@@ -12,6 +12,7 @@ import yaml
 from random import randint
 from tqdm import tqdm
 from typing import Dict, Optional
+import imageio
 
 import open3d as o3d
 
@@ -19,6 +20,7 @@ from r2_gaussian.dataset import Scene
 from r2_gaussian.utils.loss_utils import l1_loss, ssim
 from r2_gaussian.utils.image_utils import metric_vol, metric_proj
 from r2_gaussian.utils.plot_utils import show_two_slice
+from r2_gaussian.utils.unified_logger import get_logger
 
 from ..xgaussian.model import XGaussianModel
 from ..xgaussian.renderer import render_xgaussian, query_xgaussian
@@ -128,6 +130,8 @@ def training_corgs(
         pipe,
     )
 
+    logger = get_logger()
+
     # ============ 创建双 Gaussian 场 ============
     gs_dict: Dict[str, XGaussianModel] = {}
     sh_degree = getattr(dataset, 'sh_degree', config.sh_degree)
@@ -148,7 +152,7 @@ def training_corgs(
         # 设置优化器
         gs_opt = _create_opt_params(opt, config)
         gs_dict[f"gs{i}"].training_setup(gs_opt)
-        print(f"[CoR-GS] Created Gaussian field gs{i} with {gs_dict[f'gs{i}'].get_num_points()} points")
+        logger.config(f"Created Gaussian field gs{i} with {gs_dict[f'gs{i}'].get_num_points()} points")
 
     # 保存第一个场到 scene（用于兼容性）
     scene.gaussians = gs_dict["gs0"]
@@ -269,15 +273,17 @@ def training_corgs(
 
             # ============ 保存模型 ============
             if iteration in saving_iterations:
-                print(f"\n[ITER {iteration}] Saving CoR-GS model")
+                logger.info("Saving CoR-GS model", iteration=iteration)
                 save_path = osp.join(scene.model_path, f"corgs_iter_{iteration}.pth")
                 torch.save({
                     "gs0": gs_dict["gs0"].capture(),
                     "gs1": gs_dict["gs1"].capture() if config.gaussians_n > 1 else None,
                     "iteration": iteration,
                 }, save_path)
+                scene.save(iteration, queryfunc)
 
             # ============ Co-Pruning（点云位置不一致性剪枝） ============
+            coprune_executed = False
             if (config.coprune and
                 iteration > config.densify_from_iter and
                 iteration % config.coprune_interval == 0 and
@@ -294,12 +300,13 @@ def training_corgs(
                             # 只剪枝不一致的点
                             if mask_inconsistent.sum() > 0:
                                 gs_dict[f"gs{i}"].prune_points(mask_inconsistent)
+                                coprune_executed = True
                                 if iteration % 1000 == 0:
-                                    print(f"  [Co-Prune] gs{i}: pruned {mask_inconsistent.sum().item()} "
-                                          f"inconsistent points")
+                                    logger.info(f"Co-Prune gs{i}: pruned {mask_inconsistent.sum().item()} inconsistent points", iteration=iteration)
 
             # ============ 密集化 ============
-            if iteration < config.densify_until_iter:
+            # 注意：如果 Co-Pruning 执行了，跳过当前迭代的密集化统计，因为 visibility_filter 已过时
+            if iteration < config.densify_until_iter and not coprune_executed:
                 for i in range(config.gaussians_n):
                     viewspace_point_tensor = render_dict[f"gs{i}"]["viewspace_points"]
                     visibility_filter = render_dict[f"gs{i}"]["visibility_filter"]
@@ -333,7 +340,7 @@ def training_corgs(
 
             # 检查点
             if iteration in checkpoint_iterations:
-                print(f"\n[ITER {iteration}] Saving Checkpoint")
+                logger.info("Saving Checkpoint", iteration=iteration)
                 ckpt_path = osp.join(scene.model_path, f"chkpnt_corgs_{iteration}.pth")
                 torch.save({
                     "gs0": gs_dict["gs0"].capture(),
@@ -341,7 +348,7 @@ def training_corgs(
                     "iteration": iteration,
                 }, ckpt_path)
 
-    print("\n[CoR-GS] Training complete!")
+    logger.info("Training complete!")
 
 
 def _get_baseline_init_path(dataset) -> Optional[str]:
@@ -440,10 +447,24 @@ def _corgs_eval(tb_writer, iteration, scene, gaussians, pipe, queryfunc):
         tb_writer.add_scalar("corgs/psnr_3d", psnr_3d, iteration)
         tb_writer.add_scalar("corgs/ssim_3d", ssim_3d, iteration)
 
-    tqdm.write(
-        f"[CoR-GS ITER {iteration}] "
-        f"psnr3d {psnr_3d:.3f}, ssim3d {ssim_3d:.3f}, "
-        f"psnr2d {psnr_2d:.3f}, ssim2d {ssim_2d:.3f}"
-    )
+    # 保存可视化
+    logger = get_logger()
+    try:
+        # 取中间切片进行可视化
+        mid_slice = vol_gt.shape[0] // 2
+        slice_gt = vol_gt[mid_slice].cpu().numpy()
+        slice_pred = vol_pred[mid_slice].cpu().numpy()
+        vis_data = show_two_slice(
+            slice_gt,
+            slice_pred,
+            "GT",
+            "CoR-GS",
+            save=True,
+        )
+        imageio.imwrite(osp.join(eval_save_path, "slices_corgs.png"), vis_data)
+    except Exception as e:
+        logger.warn(f"Failed to save slice visualization: {e}", iteration=iteration)
+
+    logger.eval(f"psnr3d {psnr_3d:.3f}, ssim3d {ssim_3d:.3f}, psnr2d {psnr_2d:.3f}, ssim2d {ssim_2d:.3f}", iteration=iteration)
 
     torch.cuda.empty_cache()

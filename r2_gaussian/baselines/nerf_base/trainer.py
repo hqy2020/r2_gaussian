@@ -16,6 +16,7 @@ from random import randint
 from r2_gaussian.dataset import Scene
 from r2_gaussian.utils.image_utils import metric_vol, metric_proj
 from r2_gaussian.utils.loss_utils import l1_loss
+from r2_gaussian.utils.unified_logger import get_logger
 
 from .network import DensityNetwork, get_network
 from .render import render_rays, run_network, generate_rays_from_camera
@@ -249,8 +250,9 @@ def training_nerf(
     """
     # 获取配置
     config = get_method_config(method)
-    print(f"\n[NeRF Training] Method: {method}")
-    print(f"[NeRF Training] Config: {config}")
+    logger = get_logger()
+    logger.config(f"Method: {method}")
+    logger.config(f"Config: {config}")
 
     # 加载场景
     scene = Scene(dataset, shuffle=False)
@@ -270,7 +272,7 @@ def training_nerf(
         unique_params.append(p)
         seen.add(pid)
     if len(unique_params) != len(params):
-        print(f"[NeRF Training] Deduplicate optimizer params: {len(params)} -> {len(unique_params)}")
+        logger.config(f"Deduplicate optimizer params: {len(params)} -> {len(unique_params)}")
 
     optimizer = torch.optim.Adam(unique_params, lr=config.lrate, betas=(0.9, 0.999))
     lr_scheduler = torch.optim.lr_scheduler.StepLR(
@@ -290,9 +292,9 @@ def training_nerf(
             try:
                 model.net.encoder.load_state_dict(ckpt["encoder"])
             except Exception as e:
-                print(f"[NeRF Training] Warning: failed to load legacy encoder state: {e}")
+                logger.warn(f"Failed to load legacy encoder state: {e}")
         optimizer.load_state_dict(ckpt["optimizer"])
-        print(f"Loaded checkpoint from {checkpoint}, iteration {first_iter}")
+        logger.config(f"Loaded checkpoint from {checkpoint}, iteration {first_iter}")
 
     # 准备训练数据
     train_cameras = scene.getTrainCameras()
@@ -322,14 +324,14 @@ def training_nerf(
             valid0 = (rays0[:, 7] > rays0[:, 6] + 1e-6).float().mean().item()
             near0 = rays0[:, 6]
             far0 = rays0[:, 7]
-            print(
-                f"[NeRF Training] Ray-AABB hit ratio (cam0 uid={cam0.uid}): {valid0:.3f}, "
+            logger.config(
+                f"Ray-AABB hit ratio (cam0 uid={cam0.uid}): {valid0:.3f}, "
                 f"near[min,max]=({near0.min().item():.3f},{near0.max().item():.3f}), "
                 f"far[min,max]=({far0.min().item():.3f},{far0.max().item():.3f})"
             )
 
-    print(f"[NeRF Training] Total iterations: {opt.iterations}")
-    print(f"[NeRF Training] Training views: {len(train_cameras)}")
+    logger.config(f"Total iterations: {opt.iterations}")
+    logger.config(f"Training views: {len(train_cameras)}")
 
     # 训练循环
     viewpoint_stack = None
@@ -418,7 +420,7 @@ def training_nerf(
             if model.net_fine is not None:
                 save_dict["network_fine"] = model.net_fine.state_dict()
             torch.save(save_dict, save_path)
-            print(f"\n[{method}] Saved model to {save_path}")
+            logger.info(f"Saved model to {save_path}", iteration=iteration)
 
         # 检查点
         if iteration in checkpoint_iterations:
@@ -431,14 +433,14 @@ def training_nerf(
             if model.net_fine is not None:
                 save_dict["network_fine"] = model.net_fine.state_dict()
             torch.save(save_dict, ckpt_path)
-            print(f"\n[{method}] Saved checkpoint to {ckpt_path}")
+            logger.info(f"Saved checkpoint to {ckpt_path}", iteration=iteration)
 
         # 学习率调度 - 基于固定迭代次数，而非视角循环
         # 每 5000 次迭代衰减一次学习率，确保 3/6/9 视角训练有一致的学习率行为
         if iteration % 5000 == 0:
             lr_scheduler.step()
 
-    print(f"\n[{method}] Training complete!")
+    logger.info("Training complete!")
 
 
 def _nerf_eval(tb_writer, iteration, method, model, scene, config, scanner_cfg):
@@ -513,22 +515,17 @@ def _nerf_eval(tb_writer, iteration, method, model, scene, config, scanner_cfg):
                 tb_writer.add_scalar(f"{method}/psnr_2d", psnr_2d, iteration)
                 tb_writer.add_scalar(f"{method}/ssim_2d", ssim_2d, iteration)
 
+            logger = get_logger()
             if psnr_3d is not None and ssim_3d is not None:
-                tqdm.write(
-                    f"[{method} ITER {iteration}] "
-                    f"psnr3d {psnr_3d:.3f}, ssim3d {ssim_3d:.3f}, "
-                    f"psnr2d {psnr_2d:.3f}, ssim2d {ssim_2d:.3f}"
-                )
+                logger.eval(f"psnr3d {psnr_3d:.3f}, ssim3d {ssim_3d:.3f}, psnr2d {psnr_2d:.3f}, ssim2d {ssim_2d:.3f}", iteration=iteration)
             else:
-                tqdm.write(
-                    f"[{method} ITER {iteration}] "
-                    f"psnr2d {psnr_2d:.3f}, ssim2d {ssim_2d:.3f}"
-                )
+                logger.eval(f"psnr2d {psnr_2d:.3f}, ssim2d {ssim_2d:.3f}", iteration=iteration)
         else:
+            logger = get_logger()
             if psnr_3d is not None and ssim_3d is not None:
-                tqdm.write(f"[{method} ITER {iteration}] psnr3d {psnr_3d:.3f}, ssim3d {ssim_3d:.3f}")
+                logger.eval(f"psnr3d {psnr_3d:.3f}, ssim3d {ssim_3d:.3f}", iteration=iteration)
             else:
-                tqdm.write(f"[{method} ITER {iteration}] (no test views / no vol_gt)")
+                logger.eval("(no test views / no vol_gt)", iteration=iteration)
 
     model.train()
     torch.cuda.empty_cache()

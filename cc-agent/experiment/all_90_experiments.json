@@ -1,0 +1,722 @@
+[
+  {
+    "method": "baseline",
+    "organ": "abdomen",
+    "views": 3,
+    "psnr": 29.23626136779785,
+    "ssim": 0.9361777305603027,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_18_19_28_abdomen_3views_baseline"
+  },
+  {
+    "method": "baseline",
+    "organ": "abdomen",
+    "views": 6,
+    "psnr": 34.00027084350586,
+    "ssim": 0.9741194844245911,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_18_13_40_abdomen_6views_baseline"
+  },
+  {
+    "method": "baseline",
+    "organ": "abdomen",
+    "views": 9,
+    "psnr": 36.9666748046875,
+    "ssim": 0.98125159740448,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_18_14_00_abdomen_9views_baseline"
+  },
+  {
+    "method": "baseline",
+    "organ": "chest",
+    "views": 3,
+    "psnr": 26.15926742553711,
+    "ssim": 0.836825966835022,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_19_11_00_chest_3views_baseline"
+  },
+  {
+    "method": "baseline",
+    "organ": "chest",
+    "views": 6,
+    "psnr": 33.14496612548828,
+    "ssim": 0.9266059398651123,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_18_11_57_chest_6views_baseline"
+  },
+  {
+    "method": "baseline",
+    "organ": "chest",
+    "views": 9,
+    "psnr": 36.919403076171875,
+    "ssim": 0.9534459114074707,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_18_12_05_chest_9views_baseline"
+  },
+  {
+    "method": "baseline",
+    "organ": "foot",
+    "views": 3,
+    "psnr": 28.81786346435547,
+    "ssim": 0.8981672525405884,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_18_12_19_foot_3views_baseline"
+  },
+  {
+    "method": "baseline",
+    "organ": "foot",
+    "views": 6,
+    "psnr": 32.30937194824219,
+    "ssim": 0.9374606609344482,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_18_12_23_foot_6views_baseline"
+  },
+  {
+    "method": "baseline",
+    "organ": "foot",
+    "views": 9,
+    "psnr": 34.95683288574219,
+    "ssim": 0.9545350670814514,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_18_13_27_foot_9views_baseline"
+  },
+  {
+    "method": "baseline",
+    "organ": "head",
+    "views": 3,
+    "psnr": 26.589521408081055,
+    "ssim": 0.9221019148826599,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_18_14_46_head_3views_baseline"
+  },
+  {
+    "method": "baseline",
+    "organ": "head",
+    "views": 6,
+    "psnr": 33.028873443603516,
+    "ssim": 0.9734086394309998,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_18_16_32_head_6views_baseline"
+  },
+  {
+    "method": "baseline",
+    "organ": "head",
+    "views": 9,
+    "psnr": 35.800086975097656,
+    "ssim": 0.9820998311042786,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_18_18_02_head_9views_baseline"
+  },
+  {
+    "method": "baseline",
+    "organ": "pancreas",
+    "views": 3,
+    "psnr": 28.5755615234375,
+    "ssim": 0.9197074174880981,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_18_14_32_pancreas_3views_baseline"
+  },
+  {
+    "method": "baseline",
+    "organ": "pancreas",
+    "views": 6,
+    "psnr": 33.403053283691406,
+    "ssim": 0.9503161907196045,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_18_14_34_pancreas_6views_baseline"
+  },
+  {
+    "method": "baseline",
+    "organ": "pancreas",
+    "views": 9,
+    "psnr": 35.80122375488281,
+    "ssim": 0.960427463054657,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_18_14_50_pancreas_9views_baseline"
+  },
+  {
+    "method": "corgs",
+    "organ": "abdomen",
+    "views": 3,
+    "psnr": 22.588886260986328,
+    "ssim": 0.9088303446769714,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_20_13_10_abdomen_3views_corgs"
+  },
+  {
+    "method": "corgs",
+    "organ": "abdomen",
+    "views": 6,
+    "psnr": 28.2702693939209,
+    "ssim": 0.9509038329124451,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_19_16_04_abdomen_6views_corgs"
+  },
+  {
+    "method": "corgs",
+    "organ": "abdomen",
+    "views": 9,
+    "psnr": 31.4595947265625,
+    "ssim": 0.9646692872047424,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_18_08_50_abdomen_9views_corgs"
+  },
+  {
+    "method": "corgs",
+    "organ": "chest",
+    "views": 3,
+    "psnr": 19.52733612060547,
+    "ssim": 0.7242174744606018,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_20_13_10_chest_3views_corgs"
+  },
+  {
+    "method": "corgs",
+    "organ": "chest",
+    "views": 6,
+    "psnr": 27.6888427734375,
+    "ssim": 0.8711490035057068,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_20_13_10_chest_6views_corgs"
+  },
+  {
+    "method": "corgs",
+    "organ": "chest",
+    "views": 9,
+    "psnr": 32.2591667175293,
+    "ssim": 0.920727014541626,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_20_13_10_chest_9views_corgs"
+  },
+  {
+    "method": "corgs",
+    "organ": "foot",
+    "views": 3,
+    "psnr": 25.251392364501953,
+    "ssim": 0.8507952094078064,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_20_13_10_foot_3views_corgs"
+  },
+  {
+    "method": "corgs",
+    "organ": "foot",
+    "views": 6,
+    "psnr": 28.452329635620117,
+    "ssim": 0.9006688594818115,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_20_13_10_foot_6views_corgs"
+  },
+  {
+    "method": "corgs",
+    "organ": "foot",
+    "views": 9,
+    "psnr": 30.891128540039062,
+    "ssim": 0.9281760454177856,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_18_08_14_foot_9views_corgs"
+  },
+  {
+    "method": "corgs",
+    "organ": "head",
+    "views": 3,
+    "psnr": 20.537633895874023,
+    "ssim": 0.8619072437286377,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_20_13_10_head_3views_corgs"
+  },
+  {
+    "method": "corgs",
+    "organ": "head",
+    "views": 6,
+    "psnr": 27.281970977783203,
+    "ssim": 0.9439376592636108,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_20_13_10_head_6views_corgs"
+  },
+  {
+    "method": "corgs",
+    "organ": "head",
+    "views": 9,
+    "psnr": 30.022329330444336,
+    "ssim": 0.9562164545059204,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_20_13_10_head_9views_corgs"
+  },
+  {
+    "method": "corgs",
+    "organ": "pancreas",
+    "views": 3,
+    "psnr": 20.362464904785156,
+    "ssim": 0.8799692392349243,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_20_13_10_pancreas_3views_corgs"
+  },
+  {
+    "method": "corgs",
+    "organ": "pancreas",
+    "views": 6,
+    "psnr": 29.28081512451172,
+    "ssim": 0.9359745979309082,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_20_13_10_pancreas_6views_corgs"
+  },
+  {
+    "method": "corgs",
+    "organ": "pancreas",
+    "views": 9,
+    "psnr": 30.775379180908203,
+    "ssim": 0.9470677375793457,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_20_13_10_pancreas_9views_corgs"
+  },
+  {
+    "method": "dngaussian",
+    "organ": "abdomen",
+    "views": 3,
+    "psnr": 16.202392578125,
+    "ssim": 0.8273808360099792,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_20_21_02_abdomen_3views_dngaussian"
+  },
+  {
+    "method": "dngaussian",
+    "organ": "abdomen",
+    "views": 6,
+    "psnr": 19.72917366027832,
+    "ssim": 0.9066805839538574,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_20_21_02_abdomen_6views_dngaussian"
+  },
+  {
+    "method": "dngaussian",
+    "organ": "abdomen",
+    "views": 9,
+    "psnr": 21.400060653686523,
+    "ssim": 0.9237166047096252,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_20_21_02_abdomen_9views_dngaussian"
+  },
+  {
+    "method": "dngaussian",
+    "organ": "chest",
+    "views": 3,
+    "psnr": 20.521177291870117,
+    "ssim": 0.748060941696167,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_20_21_02_chest_3views_dngaussian"
+  },
+  {
+    "method": "dngaussian",
+    "organ": "chest",
+    "views": 6,
+    "psnr": 27.336259841918945,
+    "ssim": 0.8632784485816956,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_20_21_02_chest_6views_dngaussian"
+  },
+  {
+    "method": "dngaussian",
+    "organ": "chest",
+    "views": 9,
+    "psnr": 30.420761108398438,
+    "ssim": 0.8976189494132996,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_20_21_02_chest_9views_dngaussian"
+  },
+  {
+    "method": "dngaussian",
+    "organ": "foot",
+    "views": 3,
+    "psnr": 24.783300399780273,
+    "ssim": 0.8519673347473145,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_20_21_02_foot_3views_dngaussian"
+  },
+  {
+    "method": "dngaussian",
+    "organ": "foot",
+    "views": 6,
+    "psnr": 27.567790985107422,
+    "ssim": 0.9006609320640564,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_20_21_02_foot_6views_dngaussian"
+  },
+  {
+    "method": "dngaussian",
+    "organ": "foot",
+    "views": 9,
+    "psnr": 29.551424026489258,
+    "ssim": 0.9214521050453186,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_20_21_02_foot_9views_dngaussian"
+  },
+  {
+    "method": "dngaussian",
+    "organ": "head",
+    "views": 3,
+    "psnr": 17.69994354248047,
+    "ssim": 0.7979041934013367,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_20_21_02_head_3views_dngaussian"
+  },
+  {
+    "method": "dngaussian",
+    "organ": "head",
+    "views": 6,
+    "psnr": 18.238021850585938,
+    "ssim": 0.8356928825378418,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_20_21_02_head_6views_dngaussian"
+  },
+  {
+    "method": "dngaussian",
+    "organ": "head",
+    "views": 9,
+    "psnr": 21.156824111938477,
+    "ssim": 0.8720898628234863,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_19_16_04_head_9views_dngaussian"
+  },
+  {
+    "method": "dngaussian",
+    "organ": "pancreas",
+    "views": 3,
+    "psnr": 23.651145935058594,
+    "ssim": 0.885021448135376,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_20_21_02_pancreas_3views_dngaussian"
+  },
+  {
+    "method": "dngaussian",
+    "organ": "pancreas",
+    "views": 6,
+    "psnr": 28.968687057495117,
+    "ssim": 0.9326748847961426,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_20_21_02_pancreas_6views_dngaussian"
+  },
+  {
+    "method": "dngaussian",
+    "organ": "pancreas",
+    "views": 9,
+    "psnr": 29.774702072143555,
+    "ssim": 0.9432757496833801,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_19_16_04_pancreas_9views_dngaussian"
+  },
+  {
+    "method": "fsgs",
+    "organ": "abdomen",
+    "views": 3,
+    "psnr": 24.011011123657227,
+    "ssim": 0.9072802662849426,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_18_00_55_abdomen_3views_fsgs"
+  },
+  {
+    "method": "fsgs",
+    "organ": "abdomen",
+    "views": 6,
+    "psnr": 28.1696834564209,
+    "ssim": 0.9500167369842529,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_18_01_00_abdomen_6views_fsgs"
+  },
+  {
+    "method": "fsgs",
+    "organ": "abdomen",
+    "views": 9,
+    "psnr": 31.458993911743164,
+    "ssim": 0.963881254196167,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_18_01_16_abdomen_9views_fsgs"
+  },
+  {
+    "method": "fsgs",
+    "organ": "chest",
+    "views": 3,
+    "psnr": 20.549013137817383,
+    "ssim": 0.7364667654037476,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_19_12_26_chest_3views_fsgs"
+  },
+  {
+    "method": "fsgs",
+    "organ": "chest",
+    "views": 6,
+    "psnr": 27.609996795654297,
+    "ssim": 0.8757072687149048,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_18_00_40_chest_6views_fsgs"
+  },
+  {
+    "method": "fsgs",
+    "organ": "chest",
+    "views": 9,
+    "psnr": 31.285165786743164,
+    "ssim": 0.914865255355835,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_18_00_40_chest_9views_fsgs"
+  },
+  {
+    "method": "fsgs",
+    "organ": "foot",
+    "views": 3,
+    "psnr": 25.794198989868164,
+    "ssim": 0.8513047695159912,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_18_00_40_foot_3views_fsgs"
+  },
+  {
+    "method": "fsgs",
+    "organ": "foot",
+    "views": 6,
+    "psnr": 28.341354370117188,
+    "ssim": 0.8967141509056091,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_18_00_40_foot_6views_fsgs"
+  },
+  {
+    "method": "fsgs",
+    "organ": "foot",
+    "views": 9,
+    "psnr": 30.743650436401367,
+    "ssim": 0.92561936378479,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_18_00_50_foot_9views_fsgs"
+  },
+  {
+    "method": "fsgs",
+    "organ": "head",
+    "views": 3,
+    "psnr": 20.507638931274414,
+    "ssim": 0.858717679977417,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_18_00_51_head_3views_fsgs"
+  },
+  {
+    "method": "fsgs",
+    "organ": "head",
+    "views": 6,
+    "psnr": 27.77044677734375,
+    "ssim": 0.9437386393547058,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_18_00_54_head_6views_fsgs"
+  },
+  {
+    "method": "fsgs",
+    "organ": "head",
+    "views": 9,
+    "psnr": 30.221412658691406,
+    "ssim": 0.9595415592193604,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_18_00_55_head_9views_fsgs"
+  },
+  {
+    "method": "fsgs",
+    "organ": "pancreas",
+    "views": 3,
+    "psnr": 25.078950881958008,
+    "ssim": 0.8987756967544556,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_18_01_18_pancreas_3views_fsgs"
+  },
+  {
+    "method": "fsgs",
+    "organ": "pancreas",
+    "views": 6,
+    "psnr": 28.822328567504883,
+    "ssim": 0.9331287145614624,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_18_01_21_pancreas_6views_fsgs"
+  },
+  {
+    "method": "fsgs",
+    "organ": "pancreas",
+    "views": 9,
+    "psnr": 31.0325870513916,
+    "ssim": 0.9453928470611572,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_18_01_36_pancreas_9views_fsgs"
+  },
+  {
+    "method": "spags",
+    "organ": "abdomen",
+    "views": 3,
+    "psnr": 29.65963363647461,
+    "ssim": 0.9376375675201416,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_19_16_04_abdomen_3views_spags"
+  },
+  {
+    "method": "spags",
+    "organ": "abdomen",
+    "views": 6,
+    "psnr": 34.37041091918945,
+    "ssim": 0.9755123257637024,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_19_22_17_abdomen_6views_spags"
+  },
+  {
+    "method": "spags",
+    "organ": "abdomen",
+    "views": 9,
+    "psnr": 36.7425651550293,
+    "ssim": 0.9820456504821777,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_20_09_30_abdomen_9views_spags"
+  },
+  {
+    "method": "spags",
+    "organ": "chest",
+    "views": 3,
+    "psnr": 27.32500457763672,
+    "ssim": 0.8476518988609314,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_17_15_19_chest_3views_spags"
+  },
+  {
+    "method": "spags",
+    "organ": "chest",
+    "views": 6,
+    "psnr": 33.471771240234375,
+    "ssim": 0.9280455112457275,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_19_10_37_chest_6views_spags"
+  },
+  {
+    "method": "spags",
+    "organ": "chest",
+    "views": 9,
+    "psnr": 36.794898986816406,
+    "ssim": 0.9524509310722351,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_19_14_01_chest_9views_spags"
+  },
+  {
+    "method": "spags",
+    "organ": "foot",
+    "views": 3,
+    "psnr": 28.834613800048828,
+    "ssim": 0.8998094201087952,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/2025_12_04_14_51_foot_3views_spags"
+  },
+  {
+    "method": "spags",
+    "organ": "foot",
+    "views": 6,
+    "psnr": 32.378623962402344,
+    "ssim": 0.9403218030929565,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_19_22_03_foot_6views_spags"
+  },
+  {
+    "method": "spags",
+    "organ": "foot",
+    "views": 9,
+    "psnr": 34.74089050292969,
+    "ssim": 0.9549862742424011,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_20_02_11_foot_9views_spags"
+  },
+  {
+    "method": "spags",
+    "organ": "head",
+    "views": 3,
+    "psnr": 26.779809951782227,
+    "ssim": 0.918234646320343,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_17_15_19_head_3views_spags"
+  },
+  {
+    "method": "spags",
+    "organ": "head",
+    "views": 6,
+    "psnr": 32.8820915222168,
+    "ssim": 0.9734680652618408,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_19_20_22_head_6views_spags"
+  },
+  {
+    "method": "spags",
+    "organ": "head",
+    "views": 9,
+    "psnr": 36.19655990600586,
+    "ssim": 0.9823826551437378,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_19_22_52_head_9views_spags"
+  },
+  {
+    "method": "spags",
+    "organ": "pancreas",
+    "views": 3,
+    "psnr": 29.1285343170166,
+    "ssim": 0.9243782162666321,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_19_16_04_pancreas_3views_spags"
+  },
+  {
+    "method": "spags",
+    "organ": "pancreas",
+    "views": 6,
+    "psnr": 33.91228103637695,
+    "ssim": 0.9524381756782532,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_19_20_29_pancreas_6views_spags"
+  },
+  {
+    "method": "spags",
+    "organ": "pancreas",
+    "views": 9,
+    "psnr": 35.696563720703125,
+    "ssim": 0.9610289931297302,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_19_23_03_pancreas_9views_spags"
+  },
+  {
+    "method": "xgaussian",
+    "organ": "abdomen",
+    "views": 3,
+    "psnr": 23.555665969848633,
+    "ssim": 0.9057514667510986,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_18_13_43_abdomen_3views_xgaussian"
+  },
+  {
+    "method": "xgaussian",
+    "organ": "abdomen",
+    "views": 6,
+    "psnr": 27.407129287719727,
+    "ssim": 0.9461808204650879,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_18_15_06_abdomen_6views_xgaussian"
+  },
+  {
+    "method": "xgaussian",
+    "organ": "abdomen",
+    "views": 9,
+    "psnr": 30.112205505371094,
+    "ssim": 0.9604483246803284,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_18_16_41_abdomen_9views_xgaussian"
+  },
+  {
+    "method": "xgaussian",
+    "organ": "chest",
+    "views": 3,
+    "psnr": 20.47929573059082,
+    "ssim": 0.7394033074378967,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_19_11_57_chest_3views_xgaussian"
+  },
+  {
+    "method": "xgaussian",
+    "organ": "chest",
+    "views": 6,
+    "psnr": 28.368423461914062,
+    "ssim": 0.876925528049469,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_18_09_35_chest_6views_xgaussian"
+  },
+  {
+    "method": "xgaussian",
+    "organ": "chest",
+    "views": 9,
+    "psnr": 31.895437240600586,
+    "ssim": 0.9152273535728455,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_18_09_48_chest_9views_xgaussian"
+  },
+  {
+    "method": "xgaussian",
+    "organ": "foot",
+    "views": 3,
+    "psnr": 26.02786636352539,
+    "ssim": 0.848497748374939,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_18_10_03_foot_3views_xgaussian"
+  },
+  {
+    "method": "xgaussian",
+    "organ": "foot",
+    "views": 6,
+    "psnr": 28.276782989501953,
+    "ssim": 0.8945271372795105,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_18_10_24_foot_6views_xgaussian"
+  },
+  {
+    "method": "xgaussian",
+    "organ": "foot",
+    "views": 9,
+    "psnr": 29.783527374267578,
+    "ssim": 0.921653687953949,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_18_10_51_foot_9views_xgaussian"
+  },
+  {
+    "method": "xgaussian",
+    "organ": "head",
+    "views": 3,
+    "psnr": 21.01629638671875,
+    "ssim": 0.8627992272377014,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_18_11_21_head_3views_xgaussian"
+  },
+  {
+    "method": "xgaussian",
+    "organ": "head",
+    "views": 6,
+    "psnr": 27.483203887939453,
+    "ssim": 0.9423269629478455,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_18_12_02_head_6views_xgaussian"
+  },
+  {
+    "method": "xgaussian",
+    "organ": "head",
+    "views": 9,
+    "psnr": 29.406208038330078,
+    "ssim": 0.9556609988212585,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_18_12_44_head_9views_xgaussian"
+  },
+  {
+    "method": "xgaussian",
+    "organ": "pancreas",
+    "views": 3,
+    "psnr": 24.933164596557617,
+    "ssim": 0.8977657556533813,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_18_18_00_pancreas_3views_xgaussian"
+  },
+  {
+    "method": "xgaussian",
+    "organ": "pancreas",
+    "views": 6,
+    "psnr": 29.026451110839844,
+    "ssim": 0.9319986701011658,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_18_19_18_pancreas_6views_xgaussian"
+  },
+  {
+    "method": "xgaussian",
+    "organ": "pancreas",
+    "views": 9,
+    "psnr": 29.809226989746094,
+    "ssim": 0.9436275362968445,
+    "output_path": "/home/qyhu/Documents/r2_ours/r2_gaussian/output/_2025_12_18_20_31_pancreas_9views_xgaussian"
+  }
+]

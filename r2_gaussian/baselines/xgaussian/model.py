@@ -4,6 +4,8 @@
 # 基于 X-Gaussian 的 GaussianModel_Xray，适配到 r2_gaussian 框架
 #
 
+import os
+import pickle
 import torch
 import torch.nn as nn
 import numpy as np
@@ -11,11 +13,14 @@ from typing import Dict, List, Optional
 
 from r2_gaussian.utils.gaussian_utils import (
     inverse_sigmoid,
+    inverse_softplus,
     get_expon_lr_func,
     build_rotation,
     strip_symmetric,
     build_scaling_rotation,
 )
+from r2_gaussian.utils.general_utils import t2a
+from r2_gaussian.utils.system_utils import mkdir_p
 from simple_knn._C import distCUDA2
 
 from ..registry import GaussianBaseModel
@@ -286,6 +291,36 @@ class XGaussianModel(GaussianBaseModel):
         self.denom = state['denom']
         if state['optimizer_state']:
             self.optimizer.load_state_dict(state['optimizer_state'])
+
+    def save_ply(self, path):
+        """保存为与 R2-Gaussian 兼容的 pickle 点云"""
+        mkdir_p(os.path.dirname(path))
+
+        with torch.no_grad():
+            density = self.get_density
+            density = torch.clamp(density, min=1e-6)
+            density_raw = inverse_softplus(density)
+
+            if self._rotation.numel() == 0:
+                normals = self._rotation.new_empty((0, 3))
+            else:
+                scales = self.get_scaling
+                min_axis = torch.argmin(scales, dim=1)
+                R = build_rotation(self._rotation)
+                idx = torch.arange(scales.shape[0], device=scales.device)
+                normals = R[idx, :, min_axis]
+
+            out = {
+                "xyz": t2a(self._xyz),
+                "normals": t2a(normals),
+                "density": t2a(density_raw),
+                "scale": t2a(self._scaling),
+                "rotation": t2a(self._rotation),
+                "scale_bound": self.scale_bound,
+            }
+
+        with open(path, "wb") as f:
+            pickle.dump(out, f, pickle.HIGHEST_PROTOCOL)
 
     # ============ 球谐升级 ============
 

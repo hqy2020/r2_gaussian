@@ -26,6 +26,7 @@ from r2_gaussian.gaussian import GaussianModel, render, query, initialize_gaussi
 from r2_gaussian.utils.general_utils import safe_state
 from r2_gaussian.utils.cfg_utils import load_config
 from r2_gaussian.utils.log_utils import prepare_output_and_logger
+from r2_gaussian.utils.unified_logger import get_logger
 from r2_gaussian.dataset import Scene
 from r2_gaussian.utils.loss_utils import l1_loss, ssim, tv_3d_loss
 from r2_gaussian.utils.regulation import compute_plane_tv_loss
@@ -84,15 +85,17 @@ def training(
     gar_view_scale = 1.0 / math.sqrt(max(float(num_train_views), 1.0) / 3.0)
     gar_view_scale = max(gar_view_scale, 0.3)
 
+    logger = get_logger()
+
     if checkpoint is not None:
         (model_params, first_iter) = torch.load(checkpoint)
         gaussians.restore(model_params, opt)
-        print(f"Load checkpoint {osp.basename(checkpoint)}.")
+        logger.config(f"Load checkpoint {osp.basename(checkpoint)}.")
 
     # Set up loss
     use_tv = opt.lambda_tv > 0
     if use_tv:
-        print("Use total variation loss")
+        logger.config("Use total variation loss")
         tv_vol_size = opt.tv_vol_size
         tv_vol_nVoxel = torch.tensor([tv_vol_size, tv_vol_size, tv_vol_size])
         tv_vol_sVoxel = torch.tensor(scanner_cfg["dVoxel"]) * tv_vol_nVoxel
@@ -126,7 +129,7 @@ def training(
     gar_scale_shrink_factor = getattr(dataset, 'gar_scale_shrink_factor', 0.8)
 
     if use_proximity:
-        print("Use FSGS proximity-guided densification (GAR)")
+        logger.config("Use FSGS proximity-guided densification (GAR)")
         # 🔧 修复：使用 None 检查而非 or，避免 falsy 值被错误覆盖
         # 优先使用新参数名 gar_*，旧参数名 proximity_* 作为 fallback
         _gar_k = getattr(dataset, 'gar_proximity_k', None)
@@ -148,9 +151,9 @@ def training(
             decay_start_ratio=gar_decay_start_ratio,
             final_strength=gar_final_strength,
         )
-        print(f"  - k_neighbors: {proximity_densifier.k_neighbors}")
-        print(f"  - proximity_threshold: {proximity_densifier.proximity_threshold}")
-        print(f"  - start_iter: {proximity_start_iter}, interval: {proximity_interval}, until: {proximity_until_iter}")
+        logger.config(f"  - k_neighbors: {proximity_densifier.k_neighbors}")
+        logger.config(f"  - proximity_threshold: {proximity_densifier.proximity_threshold}")
+        logger.config(f"  - start_iter: {proximity_start_iter}, interval: {proximity_interval}, until: {proximity_until_iter}")
 
         # 🆕 视角自适应：views 越多越保守（减少密化次数/每次密化预算）
         effective_proximity_until_iter = int(proximity_until_iter)
@@ -167,60 +170,60 @@ def training(
 
         # 🆕 打印优化参数
         if gar_adaptive_threshold:
-            print(f"  - 🆕 adaptive_threshold: {gar_adaptive_method} (p={gar_adaptive_percentile})")
+            logger.config(f"  - adaptive_threshold: {gar_adaptive_method} (p={gar_adaptive_percentile})")
         if (not gar_adaptive_threshold) and gar_auto_threshold:
-            print(f"  - 🆕 auto_threshold: ratio∈[{gar_auto_min_ratio:.3f},{gar_auto_max_ratio:.3f}] -> {gar_adaptive_method}(p={gar_adaptive_percentile})")
+            logger.config(f"  - auto_threshold: ratio in [{gar_auto_min_ratio:.3f},{gar_auto_max_ratio:.3f}] -> {gar_adaptive_method}(p={gar_adaptive_percentile})")
         if gar_progressive_decay:
-            print(f"  - 🆕 progressive_decay: start={gar_decay_start_ratio}, final={gar_final_strength}")
+            logger.config(f"  - progressive_decay: start={gar_decay_start_ratio}, final={gar_final_strength}")
         if gar_gradient_filter:
-            print(f"  - 🆕 gradient_filter: threshold={gar_gradient_threshold}")
+            logger.config(f"  - gradient_filter: threshold={gar_gradient_threshold}")
         if gar_candidate_ratio_cap and gar_candidate_ratio_cap > 0:
-            print(f"  - 🆕 candidate_ratio_cap: {gar_candidate_ratio_cap} (effective≈{effective_gar_candidate_ratio_cap:.4f})")
+            logger.config(f"  - candidate_ratio_cap: {gar_candidate_ratio_cap} (effective={effective_gar_candidate_ratio_cap:.4f})")
         if gar_new_per_source <= 0:
-            print(f"  - 🆕 new_per_source: all (K={proximity_densifier.k_neighbors})")
+            logger.config(f"  - new_per_source: all (K={proximity_densifier.k_neighbors})")
         else:
-            print(f"  - 🆕 new_per_source: {gar_new_per_source}")
-        print(f"  - 🆕 view_adaptive: {bool(gar_view_adaptive)} (views={num_train_views}, scale={gar_view_scale:.3f}, until={effective_proximity_until_iter}, max_candidates={effective_gar_max_candidates})")
-        print(f"  - 🆕 mass_preserve: {bool(gar_mass_preserve)}")
+            logger.config(f"  - new_per_source: {gar_new_per_source}")
+        logger.config(f"  - view_adaptive: {bool(gar_view_adaptive)} (views={num_train_views}, scale={gar_view_scale:.3f}, until={effective_proximity_until_iter}, max_candidates={effective_gar_max_candidates})")
+        logger.config(f"  - mass_preserve: {bool(gar_mass_preserve)}")
         if gar_scale_shrink:
-            print(f"  - 🆕 scale_shrink: True (factor={float(gar_scale_shrink_factor):.3f})")
+            logger.config(f"  - scale_shrink: True (factor={float(gar_scale_shrink_factor):.3f})")
         else:
-            print(f"  - 🆕 scale_shrink: False")
+            logger.config(f"  - scale_shrink: False")
 
     # 🆕 [SPS] 打印初始化点云信息
     if dataset.ply_path:
-        print("=" * 70)
-        print(f"✓ [SPS] 使用预初始化点云")
-        print(f"  - 点云路径: {dataset.ply_path}")
-        print(f"  - 初始点数: {gaussians.get_xyz.shape[0]:,}")
-        print("=" * 70)
+        logger.separator()
+        logger.config("[SPS] 使用预初始化点云")
+        logger.config(f"  - 点云路径: {dataset.ply_path}")
+        logger.config(f"  - 初始点数: {gaussians.get_xyz.shape[0]:,}")
+        logger.separator()
 
     # 🎯 K-Planes 诊断信息
     if gaussians.enable_kplanes and gaussians.kplanes_encoder is not None:
-        print("=" * 70)
-        print("✓ K-Planes Encoder 已启用")
+        logger.separator()
+        logger.config("K-Planes Encoder 已启用")
         # 从实际的 encoder 获取参数，而非 dataset（确保显示实际使用的值）
         actual_resolution = gaussians.kplanes_encoder.grid_resolution
         actual_dim = gaussians.kplanes_encoder.feature_dim
-        print(f"  - 平面分辨率: {actual_resolution}")
-        print(f"  - 特征维度: {actual_dim}")
-        print(f"  - 总特征维度: {actual_dim * 3} (3 个平面)")
+        logger.config(f"  - 平面分辨率: {actual_resolution}")
+        logger.config(f"  - 特征维度: {actual_dim}")
+        logger.config(f"  - 总特征维度: {actual_dim * 3} (3 个平面)")
 
         kplanes_params = sum(p.numel() for p in gaussians.kplanes_encoder.parameters())
-        print(f"  - K-Planes 参数量: {kplanes_params:,}")
+        logger.config(f"  - K-Planes 参数量: {kplanes_params:,}")
 
         # 检查 TV 正则化
         if opt.lambda_plane_tv > 0:
-            print(f"✓ K-Planes TV 正则化已启用")
-            print(f"  - lambda_plane_tv: {opt.lambda_plane_tv}")
-            print(f"  - TV 权重: {opt.plane_tv_weight_proposal}")
-            print(f"  - TV 损失类型: {opt.tv_loss_type}")
+            logger.config("K-Planes TV 正则化已启用")
+            logger.config(f"  - lambda_plane_tv: {opt.lambda_plane_tv}")
+            logger.config(f"  - TV 权重: {opt.plane_tv_weight_proposal}")
+            logger.config(f"  - TV 损失类型: {opt.tv_loss_type}")
         else:
-            print("⚠️ 警告：K-Planes 已启用但 TV 正则化未启用 (lambda_plane_tv = 0)")
+            logger.warn("K-Planes 已启用但 TV 正则化未启用 (lambda_plane_tv = 0)")
 
-        print("=" * 70)
+        logger.separator()
     else:
-        print("⚠️ K-Planes 未启用（使用标准 R²-Gaussian）")
+        logger.config("K-Planes 未启用（使用标准 R2-Gaussian）")
 
     # Train
     iter_start = torch.cuda.Event(enable_timing=True)
@@ -309,13 +312,13 @@ def training(
             # 🎯 在前几个迭代输出诊断信息
             if iteration <= 3:
                 kplanes_feat = gaussians.get_kplanes_features()
-                print(f"[Iter {iteration}] K-Planes 诊断:")
-                print(f"  - K-Planes 特征形状: {kplanes_feat.shape}")
-                print(f"  - 特征范围: [{kplanes_feat.min().item():.4f}, {kplanes_feat.max().item():.4f}]")
-                print(f"  - TV loss (plane): {tv_loss_planes.item():.6f}")
-                print(f"  - 🆕 视角自适应: view_scale={view_scale:.3f}, tv_scale={tv_scale:.3f}")
-                print(f"  - 🆕 有效 lambda_tv: {effective_lambda_tv:.6f} (base={opt.lambda_plane_tv:.6f})")
-                print(f"  - TV loss (weighted): {(effective_lambda_tv * tv_loss_planes).item():.6f}")
+                logger.info(f"K-Planes 诊断:", iteration=iteration)
+                logger.info(f"  - K-Planes 特征形状: {kplanes_feat.shape}", iteration=iteration)
+                logger.info(f"  - 特征范围: [{kplanes_feat.min().item():.4f}, {kplanes_feat.max().item():.4f}]", iteration=iteration)
+                logger.info(f"  - TV loss (plane): {tv_loss_planes.item():.6f}", iteration=iteration)
+                logger.info(f"  - 视角自适应: view_scale={view_scale:.3f}, tv_scale={tv_scale:.3f}", iteration=iteration)
+                logger.info(f"  - 有效 lambda_tv: {effective_lambda_tv:.6f} (base={opt.lambda_plane_tv:.6f})", iteration=iteration)
+                logger.info(f"  - TV loss (weighted): {(effective_lambda_tv * tv_loss_planes).item():.6f}", iteration=iteration)
 
         loss["total"].backward()
 
@@ -327,14 +330,14 @@ def training(
             if gaussians.enable_kplanes and iteration % 1000 == 0:
                 adm_diag = gaussians.get_adm_diagnostics()
                 if adm_diag:
-                    print(f"\n[Iter {iteration}] === ADM 诊断 ===")
-                    print(f"  调度参数: strength={adm_diag['adm_strength']:.3f}, view_scale={adm_diag['view_scale']:.3f}, max_range={adm_diag['max_range']:.3f}")
-                    print(f"  Gaussians数量: {adm_diag['num_gaussians']:,}")
-                    print(f"  offset:     mean={adm_diag['offset']['mean']:+.4f}, std={adm_diag['offset']['std']:.4f}, range=[{adm_diag['offset']['min']:.4f}, {adm_diag['offset']['max']:.4f}]")
-                    print(f"  confidence: mean={adm_diag['confidence']['mean']:.4f}, std={adm_diag['confidence']['std']:.4f}, range=[{adm_diag['confidence']['min']:.4f}, {adm_diag['confidence']['max']:.4f}]")
-                    print(f"  eff_offset: mean={adm_diag['effective_offset']['mean']:+.6f}, std={adm_diag['effective_offset']['std']:.6f}")
-                    print(f"  modulation: mean={adm_diag['modulation']['mean']:.4f}, std={adm_diag['modulation']['std']:.4f}, range=[{adm_diag['modulation']['min']:.4f}, {adm_diag['modulation']['max']:.4f}]")
-                    print(f"  密度变化%:  mean={adm_diag['density_change_pct']['mean']:+.2f}%, std={adm_diag['density_change_pct']['std']:.2f}%, range=[{adm_diag['density_change_pct']['min']:.2f}%, {adm_diag['density_change_pct']['max']:.2f}%]")
+                    logger.info("=== ADM 诊断 ===", iteration=iteration)
+                    logger.info(f"  调度参数: strength={adm_diag['adm_strength']:.3f}, view_scale={adm_diag['view_scale']:.3f}, max_range={adm_diag['max_range']:.3f}", iteration=iteration)
+                    logger.info(f"  Gaussians数量: {adm_diag['num_gaussians']:,}", iteration=iteration)
+                    logger.info(f"  offset:     mean={adm_diag['offset']['mean']:+.4f}, std={adm_diag['offset']['std']:.4f}, range=[{adm_diag['offset']['min']:.4f}, {adm_diag['offset']['max']:.4f}]", iteration=iteration)
+                    logger.info(f"  confidence: mean={adm_diag['confidence']['mean']:.4f}, std={adm_diag['confidence']['std']:.4f}, range=[{adm_diag['confidence']['min']:.4f}, {adm_diag['confidence']['max']:.4f}]", iteration=iteration)
+                    logger.info(f"  eff_offset: mean={adm_diag['effective_offset']['mean']:+.6f}, std={adm_diag['effective_offset']['std']:.6f}", iteration=iteration)
+                    logger.info(f"  modulation: mean={adm_diag['modulation']['mean']:.4f}, std={adm_diag['modulation']['std']:.4f}, range=[{adm_diag['modulation']['min']:.4f}, {adm_diag['modulation']['max']:.4f}]", iteration=iteration)
+                    logger.info(f"  密度变化%:  mean={adm_diag['density_change_pct']['mean']:+.2f}%, std={adm_diag['density_change_pct']['std']:.2f}%, range=[{adm_diag['density_change_pct']['min']:.2f}%, {adm_diag['density_change_pct']['max']:.2f}%]", iteration=iteration)
 
             # Adaptive control
             gaussians.max_radii2D[visibility_filter] = torch.max(
@@ -370,13 +373,13 @@ def training(
 
                     # 🔧 诊断日志：输出邻近分数统计（帮助调试阈值设置）
                     if iteration % 1000 == 0 or iteration == proximity_start_iter:
-                        print(f"\n[GAR 诊断] Iter {iteration}:")
-                        print(f"  - 邻近分数范围: [{proximity_scores.min():.4f}, {proximity_scores.max():.4f}]")
-                        print(f"  - 邻近分数均值: {proximity_scores.mean():.4f}, 标准差: {proximity_scores.std():.4f}")
-                        print(f"  - 百分位数: p25={torch.quantile(proximity_scores, 0.25):.4f}, "
+                        logger.info("[GAR 诊断]", iteration=iteration)
+                        logger.info(f"  - 邻近分数范围: [{proximity_scores.min():.4f}, {proximity_scores.max():.4f}]", iteration=iteration)
+                        logger.info(f"  - 邻近分数均值: {proximity_scores.mean():.4f}, 标准差: {proximity_scores.std():.4f}", iteration=iteration)
+                        logger.info(f"  - 百分位数: p25={torch.quantile(proximity_scores, 0.25):.4f}, "
                               f"p50={torch.quantile(proximity_scores, 0.50):.4f}, "
                               f"p75={torch.quantile(proximity_scores, 0.75):.4f}, "
-                              f"p90={torch.quantile(proximity_scores, 0.90):.4f}")
+                              f"p90={torch.quantile(proximity_scores, 0.90):.4f}", iteration=iteration)
 
                     # 🆕 2. 计算有效阈值（自适应 + 渐进衰减）
                     base_threshold = float(proximity_densifier.proximity_threshold)
@@ -427,12 +430,12 @@ def training(
                     # 🔧 诊断日志：输出阈值和候选数
                     if iteration % 1000 == 0 or iteration == proximity_start_iter:
                         used_threshold_value = float(effective_threshold.item()) if torch.is_tensor(effective_threshold) else float(effective_threshold)
-                        print(f"  - 使用阈值: {used_threshold_value:.4f} ({threshold_mode})")
+                        logger.info(f"  - 使用阈值: {used_threshold_value:.4f} ({threshold_mode})", iteration=iteration)
                         if fixed_ratio is not None:
-                            print(f"  - 固定阈值({base_threshold:.4f})候选比例: {fixed_ratio * 100:.2f}%")
-                        print(f"  - 候选点数: {num_candidates} / {len(positions)} ({100*num_candidates/len(positions):.2f}%)")
+                            logger.info(f"  - 固定阈值({base_threshold:.4f})候选比例: {fixed_ratio * 100:.2f}%", iteration=iteration)
+                        logger.info(f"  - 候选点数: {num_candidates} / {len(positions)} ({100*num_candidates/len(positions):.2f}%)", iteration=iteration)
                         if num_candidates == 0:
-                            print(f"  - ⚠️ 警告: 候选点为 0！可能阈值设置不合理")
+                            logger.warn("候选点为 0！可能阈值设置不合理", iteration=iteration)
 
                     # 获取 GAR 诊断信息（用于 TensorBoard；需反映实际使用的阈值）
                     gar_diag = {
@@ -560,11 +563,11 @@ def training(
                                 gar_diag = proximity_densifier.get_diagnostics(
                                     proximity_scores, iteration, proximity_start_iter, effective_proximity_until_iter
                                 )
-                                tqdm.write(f"\n[ITER {iteration}] === GAR 诊断 ===")
-                                tqdm.write(f"  邻近分数: mean={gar_diag['score_mean']:.4f}, std={gar_diag['score_std']:.4f}, "
-                                          f"range=[{gar_diag['score_min']:.4f}, {gar_diag['score_max']:.4f}]")
-                                tqdm.write(f"  阈值: {gar_diag['threshold']:.4f} (衰减系数: {gar_diag['decay_mult']:.3f})")
-                                tqdm.write(f"  密化: +{num_new} (候选: {num_candidates}, 总数: {gaussians.get_xyz.shape[0]})")
+                                logger.info("=== GAR 密化完成 ===", iteration=iteration)
+                                logger.info(f"  邻近分数: mean={gar_diag['score_mean']:.4f}, std={gar_diag['score_std']:.4f}, "
+                                          f"range=[{gar_diag['score_min']:.4f}, {gar_diag['score_max']:.4f}]", iteration=iteration)
+                                logger.info(f"  阈值: {gar_diag['threshold']:.4f} (衰减系数: {gar_diag['decay_mult']:.3f})", iteration=iteration)
+                                logger.info(f"  密化: +{num_new} (候选: {num_candidates}, 总数: {gaussians.get_xyz.shape[0]})", iteration=iteration)
 
             if gaussians.get_density.shape[0] == 0:
                 raise ValueError(
@@ -582,12 +585,12 @@ def training(
 
             # Save gaussians
             if iteration in saving_iterations or iteration == opt.iterations:
-                tqdm.write(f"[ITER {iteration}] Saving Gaussians")
+                logger.info("Saving Gaussians", iteration=iteration)
                 scene.save(iteration, queryfunc)
 
             # Save checkpoints
             if iteration in checkpoint_iterations:
-                tqdm.write(f"[ITER {iteration}] Saving Checkpoint")
+                logger.info("Saving Checkpoint", iteration=iteration)
                 torch.save(
                     (gaussians.capture(), iteration),
                     ckpt_save_path + "/chkpnt" + str(iteration) + ".pth",
@@ -779,9 +782,8 @@ def training_report(
             )
             tb_writer.add_scalar("reconstruction/psnr_3d", psnr_3d, iteration)
             tb_writer.add_scalar("reconstruction/ssim_3d", ssim_3d, iteration)
-        tqdm.write(
-            f"[ITER {iteration}] Evaluating: psnr3d {psnr_3d:.3f}, ssim3d {ssim_3d:.3f}, psnr2d {psnr_2d:.3f}, ssim2d {ssim_2d:.3f}"
-        )
+        logger = get_logger()
+        logger.eval(f"psnr3d {psnr_3d:.3f}, ssim3d {ssim_3d:.3f}, psnr2d {psnr_2d:.3f}, ssim2d {ssim_2d:.3f}", iteration=iteration)
 
         # Record other metrics
         if tb_writer:
@@ -832,11 +834,12 @@ if __name__ == "__main__":
         for key in list(cfg.keys()):
             args_dict[key] = cfg[key]
 
-    # Set up logging writer
-    tb_writer = prepare_output_and_logger(args)
+    # Set up logging writer (传入方法名以初始化统一日志格式)
+    tb_writer = prepare_output_and_logger(args, method=args.method)
 
-    print(f"Method: {args.method}")
-    print("Optimizing " + args.model_path)
+    logger = get_logger()
+    logger.config(f"Method: {args.method}")
+    logger.config(f"Optimizing {args.model_path}")
 
     torch.autograd.set_detect_anomaly(args.detect_anomaly)
 
@@ -923,4 +926,4 @@ if __name__ == "__main__":
         raise ValueError(f"Unknown method: {args.method}")
 
     # All done
-    print("Training complete.")
+    logger.info("Training complete.")

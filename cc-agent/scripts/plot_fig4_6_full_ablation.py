@@ -12,141 +12,70 @@
 """
 
 import os
-import sys
+import json
 import argparse
-import yaml
-from pathlib import Path
 from datetime import datetime
 
-import matplotlib.pyplot as plt
 import matplotlib
 matplotlib.use('Agg')
+import matplotlib.pyplot as plt
 import numpy as np
 
 import matplotlib.font_manager as fm
+from matplotlib.backends.backend_pdf import PdfPages
 
-# 使用 Noto Sans CJK SC 中文字体
+# 配置中文字体
 FONT_PATH = '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc'
 if os.path.exists(FONT_PATH):
     CHINESE_FONT = fm.FontProperties(fname=FONT_PATH)
+    # 设置全局字体（兼容旧版 matplotlib）
+    plt.rcParams['font.family'] = 'sans-serif'
+    plt.rcParams['font.sans-serif'] = ['Noto Sans CJK SC', 'SimHei', 'DejaVu Sans']
 else:
     CHINESE_FONT = None
+    print("Warning: Chinese font not found, using default font")
+
 plt.rcParams['axes.unicode_minus'] = False
+plt.rcParams['pdf.fonttype'] = 42  # 使用 TrueType 字体
+plt.rcParams['ps.fonttype'] = 42
 
 
-def find_latest_exp(pattern_parts, base_dir='output'):
-    """查找匹配模式的最新实验目录"""
-    import glob
+def load_ablation_data_from_json():
+    """从 JSON 文件加载消融实验数据"""
 
-    # 构建搜索模式
-    patterns = [
-        f"{base_dir}/*_{pattern_parts}",
-        f"{base_dir}/_*_{pattern_parts}",
-    ]
+    # 加载消融实验结果
+    ablation_file = 'cc-agent/experiment/ablation_results.json'
+    all_exp_file = 'cc-agent/experiment/all_90_experiments.json'
 
-    matches = []
-    for p in patterns:
-        matches.extend(glob.glob(p))
+    # 从 ablation_results.json 加载消融配置
+    with open(ablation_file, 'r') as f:
+        ablation_data = json.load(f)
 
-    # 按修改时间排序，返回最新的
-    if matches:
-        matches.sort(key=os.path.getmtime, reverse=True)
-        return matches[0]
-    return None
+    # 从 all_90_experiments.json 加载 baseline
+    with open(all_exp_file, 'r') as f:
+        all_data = json.load(f)
 
-
-def load_ablation_data():
-    """加载消融实验数据"""
-
-    organs = ['foot', 'head', 'abdomen', 'pancreas', 'chest']
+    # 提取 3 views 的数据
     configs = ['baseline', 'sps', 'gar', 'adm', 'sps_gar', 'sps_adm', 'gar_adm', 'spags']
-
-    # 实验目录映射 - 使用最新的实验结果
-    exp_dirs = {
-        'foot': {
-            'baseline': 'output/2025_12_06_15_58_foot_3views_baseline',
-            'sps': 'output/_2025_12_17_14_27_foot_3views_sps',
-            'gar': 'output/2025_12_13_gar_rerun_foot_3views_gar',
-            'adm': 'output/_2025_12_13_18_34_foot_3views_adm',
-            'sps_gar': 'output/2025_12_04_14_38_foot_3views_sps_gar',
-            'sps_adm': 'output/_2025_12_17_14_27_foot_3views_sps_adm',
-            'gar_adm': 'output/2025_12_04_14_21_foot_3views_gar_adm',
-            'spags': 'output/2025_12_05_13_58_foot_3views_spags_3k',
-        },
-        'head': {
-            'baseline': 'output/2025_12_06_15_58_head_3views_baseline',
-            'sps': 'output/_2025_12_17_14_27_head_3views_sps',
-            'gar': 'output/2025_12_06_20_10_head_3views_gar',
-            'adm': 'output/_2025_12_12_23_44_head_3views_adm',
-            'sps_gar': 'output/_2025_12_17_14_27_head_3views_sps_gar',
-            'sps_adm': 'output/_2025_12_17_14_27_head_3views_sps_adm',
-            'gar_adm': 'output/_2025_12_17_14_27_head_3views_gar_adm',
-            'spags': 'output/2025_12_05_13_58_head_3views_spags_3k',
-        },
-        'abdomen': {
-            'baseline': 'output/2025_12_06_15_58_abdomen_3views_baseline',
-            'sps': 'output/_2025_12_17_14_27_abdomen_3views_sps',
-            'gar': 'output/2025_12_06_20_10_abdomen_3views_gar',
-            'adm': 'output/_2025_12_12_23_44_abdomen_3views_adm',
-            'sps_gar': 'output/_2025_12_17_14_27_abdomen_3views_sps_gar',
-            'sps_adm': 'output/_2025_12_17_14_27_abdomen_3views_sps_adm',
-            'gar_adm': 'output/_2025_12_17_14_27_abdomen_3views_gar_adm',
-            'spags': 'output/2025_12_05_13_58_abdomen_3views_spags_3k',
-        },
-        'pancreas': {
-            'baseline': 'output/2025_12_06_15_58_pancreas_3views_baseline',
-            'sps': 'output/_2025_12_17_14_27_pancreas_3views_sps',
-            'gar': 'output/2025_12_06_20_10_pancreas_3views_gar',
-            'adm': 'output/_2025_12_12_23_44_pancreas_3views_adm',
-            'sps_gar': 'output/_2025_12_17_14_27_pancreas_3views_sps_gar',
-            'sps_adm': 'output/_2025_12_17_14_27_pancreas_3views_sps_adm',
-            'gar_adm': 'output/_2025_12_17_14_27_pancreas_3views_gar_adm',
-            'spags': 'output/2025_12_05_13_58_pancreas_3views_spags_3k',
-        },
-        'chest': {
-            'baseline': 'output/2025_12_06_15_58_chest_3views_baseline',
-            'sps': 'output/_2025_12_17_14_27_chest_3views_sps',
-            'gar': 'output/2025_12_06_20_10_chest_3views_gar',
-            'adm': 'output/_2025_12_12_23_44_chest_3views_adm',
-            'sps_gar': 'output/_2025_12_17_14_27_chest_3views_sps_gar',
-            'sps_adm': 'output/_2025_12_17_14_27_chest_3views_sps_adm',
-            'gar_adm': 'output/_2025_12_17_14_27_chest_3views_gar_adm',
-            'spags': 'output/2025_12_05_13_58_chest_3views_spags_3k',
-        }
-    }
-
-    default_iter = 'iter_030000'
-
-    results = {}
-    for organ in organs:
-        results[organ] = {}
-        for config in configs:
-            exp_dir = exp_dirs.get(organ, {}).get(config, '')
-            eval_file = os.path.join(exp_dir, f'eval/{default_iter}/eval2d_render_test.yml')
-
-            if os.path.exists(eval_file):
-                with open(eval_file) as f:
-                    data = yaml.safe_load(f)
-                    results[organ][config] = {
-                        'psnr': data.get('psnr_2d'),
-                        'ssim': data.get('ssim_2d'),
-                    }
-                    print(f"✓ {organ:10s} {config:10s}: PSNR={data.get('psnr_2d'):.2f}")
-            else:
-                print(f"✗ Missing: {organ} {config}: {eval_file}")
-
-    # 计算平均值（排除 chest）
-    organs_for_avg = ['foot', 'head', 'abdomen', 'pancreas']
     averages = {}
-    for config in configs:
-        vals = [results[organ][config]['psnr'] for organ in organs_for_avg
-                if organ in results and config in results[organ] and results[organ][config].get('psnr')]
-        if vals:
-            averages[config] = sum(vals) / len(vals)
-        else:
-            averages[config] = None
 
-    return results, averages, organs, configs
+    # baseline 从 all_90_experiments 获取
+    baseline_3v = [x['psnr'] for x in all_data if x['method'] == 'baseline' and x['views'] == 3]
+    if baseline_3v:
+        averages['baseline'] = sum(baseline_3v) / len(baseline_3v)
+
+    # 其他配置从 ablation_results 获取
+    for config in configs[1:]:  # 跳过 baseline
+        psnrs = [x['psnr'] for x in ablation_data if x['config'] == config and x['views'] == 3 and x['psnr']]
+        if psnrs:
+            averages[config] = sum(psnrs) / len(psnrs)
+
+    print("=== 3 views 平均 PSNR (从 JSON 加载) ===")
+    for config in configs:
+        if config in averages:
+            print(f"{config}: {averages[config]:.2f}")
+
+    return averages
 
 
 def plot_full_ablation_chart(averages, output_path):
@@ -171,9 +100,12 @@ def plot_full_ablation_chart(averages, output_path):
         '#9C27B0',  # 完整 SPAGS - 紫色
     ]
 
-    # 使用 chapter4_tables.tex 表4 中的精确数值
-    # 表4: SPAGS组件消融实验（3视角，平均PSNR dB）
-    psnr_values = [28.27, 28.38, 28.29, 28.45, 28.42, 28.40, 28.47, 28.55]
+    # 从 averages 获取 PSNR 值
+    psnr_values = [averages.get(k, 0) for k in config_keys]
+
+    print("\n=== 绘图数据 ===")
+    for label, key, val in zip(config_labels, config_keys, psnr_values):
+        print(f"{label.replace(chr(10), '+')}: {val:.2f}")
 
     fig, ax = plt.subplots(figsize=(12, 5), dpi=300)
 
@@ -191,12 +123,12 @@ def plot_full_ablation_chart(averages, output_path):
                     f'{val:.2f}', ha='center', va='bottom', fontsize=9, fontweight='normal')
 
     # 基线参考线
-    baseline_val = 28.27  # 表4中的基线值
+    baseline_val = psnr_values[0]
     ax.axhline(y=baseline_val, color='gray', linestyle='--', linewidth=0.8, alpha=0.7, zorder=1)
 
     # 添加相对提升标注
-    spags_val = 28.55  # 表4中的完整SPAGS值
-    delta = spags_val - baseline_val  # +0.28
+    spags_val = psnr_values[-1]
+    delta = spags_val - baseline_val
     ax.annotate(f'+{delta:.2f} dB',
                 xy=(7, spags_val),
                 xytext=(7.6, spags_val + 0.03),
@@ -231,41 +163,47 @@ def plot_full_ablation_chart(averages, output_path):
     plt.savefig(output_path, dpi=300, bbox_inches='tight', facecolor='white')
     print(f"\nChart saved to: {output_path}")
 
-    # 同时保存 PDF
+    # 保存 PDF（使用 SVG 作为中间格式避免字体问题）
     pdf_path = output_path.replace('.png', '.pdf')
-    plt.savefig(pdf_path, bbox_inches='tight', facecolor='white')
-    print(f"PDF saved to: {pdf_path}")
+    svg_path = output_path.replace('.png', '.svg')
+
+    try:
+        # 先保存 SVG
+        plt.savefig(svg_path, bbox_inches='tight', facecolor='white')
+        print(f"SVG saved to: {svg_path}")
+
+        # 尝试用 cairosvg 转 PDF
+        try:
+            import cairosvg
+            cairosvg.svg2pdf(url=svg_path, write_to=pdf_path)
+            print(f"PDF saved to: {pdf_path}")
+        except ImportError:
+            # 没有 cairosvg，尝试直接保存 PDF
+            plt.savefig(pdf_path, bbox_inches='tight', facecolor='white', format='pdf')
+            print(f"PDF saved to: {pdf_path}")
+    except Exception as e:
+        print(f"PDF/SVG 保存失败: {e}")
 
     plt.close()
 
 
-def save_data_yaml(averages, results, organs, configs, output_path):
-    """保存数据到 YAML 文件"""
-    data = {
-        'created_at': datetime.now().isoformat(),
-        'description': 'SPAGS Full Ablation Study Results (3 Views)',
-        'organs_used_for_average': ['foot', 'head', 'abdomen', 'pancreas'],
-        'all_organs': organs,
-        'configs': configs,
-        'averages': {k: float(v) if v else None for k, v in averages.items()},
-        'relative_to_baseline': {},
-        'per_organ': {}
-    }
+def save_data_json(averages, output_path):
+    """保存数据到 JSON 文件"""
+    configs = ['baseline', 'sps', 'gar', 'adm', 'sps_gar', 'sps_adm', 'gar_adm', 'spags']
 
     baseline = averages.get('baseline', 0)
-    for config, val in averages.items():
-        if val and config != 'baseline':
-            data['relative_to_baseline'][config] = float(val - baseline)
 
-    for organ in organs:
-        if organ in results:
-            data['per_organ'][organ] = {
-                k: {'psnr': v['psnr'], 'ssim': v.get('ssim')}
-                for k, v in results[organ].items() if v.get('psnr')
-            }
+    data = {
+        'created_at': datetime.now().isoformat(),
+        'description': 'SPAGS Full Ablation Study Results (3 Views, 5 Organs Average)',
+        'configs': configs,
+        'psnr_values': {k: round(averages.get(k, 0), 2) for k in configs},
+        'relative_to_baseline': {k: round(averages.get(k, 0) - baseline, 2) for k in configs if k != 'baseline'},
+        'improvement_spags_vs_baseline': round(averages.get('spags', 0) - baseline, 2)
+    }
 
     with open(output_path, 'w') as f:
-        yaml.dump(data, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+        json.dump(data, f, indent=2, ensure_ascii=False)
     print(f"Data saved to: {output_path}")
 
 
@@ -275,8 +213,8 @@ def main():
                         default='cc-agent/figures/fig4_6_ablation_full_3views.png',
                         help='Output path for the chart')
     parser.add_argument('--data-output', '-d', type=str,
-                        default='cc-agent/figures/fig4_6_ablation_full_3views_data.yml',
-                        help='Output path for the data YAML')
+                        default='cc-agent/figures/fig4_6_ablation_full_3views_data.json',
+                        help='Output path for the data JSON')
     args = parser.parse_args()
 
     os.makedirs(os.path.dirname(args.output), exist_ok=True)
@@ -284,13 +222,15 @@ def main():
     print("=" * 60)
     print("SPAGS Full Ablation Study (8 configurations)")
     print("=" * 60)
-    print("\nLoading ablation data...")
+    print("\nLoading ablation data from JSON...")
 
-    results, averages, organs, configs = load_ablation_data()
+    averages = load_ablation_data_from_json()
 
     print("\n" + "=" * 60)
-    print("Ablation Results Summary (4 organs, excluding Chest)")
+    print("Ablation Results Summary (5 organs average)")
     print("=" * 60)
+
+    configs = ['baseline', 'sps', 'gar', 'adm', 'sps_gar', 'sps_adm', 'gar_adm', 'spags']
     print(f"{'Config':<12} {'PSNR (dB)':<12} {'vs Baseline':<12}")
     print("-" * 36)
 
@@ -305,7 +245,7 @@ def main():
     print("\nGenerating chart...")
     plot_full_ablation_chart(averages, args.output)
 
-    save_data_yaml(averages, results, organs, configs, args.data_output)
+    save_data_json(averages, args.data_output)
 
     print("\nDone!")
 

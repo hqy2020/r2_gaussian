@@ -14,6 +14,7 @@ from r2_gaussian.dataset import Scene
 from r2_gaussian.utils.loss_utils import l1_loss, ssim
 from r2_gaussian.utils.image_utils import metric_vol, metric_proj
 from r2_gaussian.utils.plot_utils import show_two_slice
+from r2_gaussian.utils.unified_logger import get_logger
 
 from .model import XGaussianModel
 from .renderer import render_xgaussian, query_xgaussian
@@ -101,11 +102,13 @@ def training_xgaussian(
     xg_opt = XGOptParams(opt, xg_config)
     gaussians.training_setup(xg_opt)
 
+    logger = get_logger()
+
     # 加载检查点
     if checkpoint is not None:
         state, first_iter = torch.load(checkpoint)
         gaussians.restore(state, xg_opt)
-        print(f"Loaded X-Gaussian checkpoint from {checkpoint}")
+        logger.config(f"Loaded X-Gaussian checkpoint from {checkpoint}")
 
     # 密集化参数
     densify_from_iter = getattr(opt, 'densify_from_iter', xg_config.densify_from_iter)
@@ -186,7 +189,7 @@ def training_xgaussian(
 
             # 保存
             if iteration in saving_iterations:
-                print(f"\n[ITER {iteration}] Saving X-Gaussian model")
+                logger.info("Saving X-Gaussian model", iteration=iteration)
                 save_path = osp.join(scene.model_path, f"xgaussian_iter_{iteration}.pth")
                 torch.save((gaussians.capture(), iteration), save_path)
 
@@ -213,7 +216,7 @@ def training_xgaussian(
 
             # 检查点
             if iteration in checkpoint_iterations:
-                print(f"\n[ITER {iteration}] Saving Checkpoint")
+                logger.info("Saving Checkpoint", iteration=iteration)
                 ckpt_path = osp.join(scene.model_path, f"chkpnt_xgaussian_{iteration}.pth")
                 torch.save((gaussians.capture(), iteration), ckpt_path)
 
@@ -271,10 +274,7 @@ def _xgaussian_eval(tb_writer, iteration, scene, gaussians, pipe, queryfunc):
         tb_writer.add_scalar("xgaussian/psnr_3d", psnr_3d, iteration)
         tb_writer.add_scalar("xgaussian/ssim_3d", ssim_3d, iteration)
 
-    tqdm.write(
-        f"[X-Gaussian ITER {iteration}] "
-        f"psnr3d {psnr_3d:.3f}, ssim3d {ssim_3d:.3f}, "
-        f"psnr2d {psnr_2d:.3f}, ssim2d {ssim_2d:.3f}"
-    )
+    logger = get_logger()
+    logger.eval(f"psnr3d {psnr_3d:.3f}, ssim3d {ssim_3d:.3f}, psnr2d {psnr_2d:.3f}, ssim2d {ssim_2d:.3f}", iteration=iteration)
 
     torch.cuda.empty_cache()

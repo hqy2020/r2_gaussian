@@ -18,11 +18,13 @@ from random import randint
 import numpy as np
 import yaml
 from tqdm import tqdm
+import imageio
 
 from r2_gaussian.dataset import Scene
 from r2_gaussian.utils.loss_utils import l1_loss, ssim
 from r2_gaussian.utils.image_utils import metric_vol, metric_proj
 from r2_gaussian.utils.plot_utils import show_two_slice
+from r2_gaussian.utils.unified_logger import get_logger
 
 from .model import FSGSModel
 from .renderer import render_fsgs, query_fsgs
@@ -110,11 +112,13 @@ def training_fsgs(
     # 设置优化参数
     gaussians.training_setup(opt)
 
+    logger = get_logger()
+
     # 加载检查点
     if checkpoint is not None:
         state, first_iter = torch.load(checkpoint)
         gaussians.restore(state, opt)
-        print(f"Loaded FSGS checkpoint from {checkpoint}")
+        logger.config(f"Loaded FSGS checkpoint from {checkpoint}")
 
     # 生成伪相机 (CT 适配)
     pseudo_generator = None
@@ -222,9 +226,10 @@ def training_fsgs(
 
             # 保存
             if iteration in saving_iterations:
-                print(f"\n[ITER {iteration}] Saving FSGS model")
+                logger.info("Saving FSGS model", iteration=iteration)
                 save_path = osp.join(scene.model_path, f"fsgs_iter_{iteration}.pth")
                 torch.save((gaussians.capture(), iteration), save_path)
+                scene.save(iteration, queryfunc)
 
             # 密集化
             if iteration < densify_until_iter:
@@ -250,7 +255,7 @@ def training_fsgs(
 
             # 检查点
             if iteration in checkpoint_iterations:
-                print(f"\n[ITER {iteration}] Saving Checkpoint")
+                logger.info("Saving Checkpoint", iteration=iteration)
                 ckpt_path = osp.join(scene.model_path, f"chkpnt_fsgs_{iteration}.pth")
                 torch.save((gaussians.capture(), iteration), ckpt_path)
 
@@ -312,19 +317,23 @@ def _fsgs_eval(tb_writer, iteration, scene, gaussians, pipe, queryfunc):
         tb_writer.add_scalar("fsgs/ssim_3d", ssim_3d, iteration)
 
     # 保存可视化
+    logger = get_logger()
     try:
-        show_two_slice(
-            vol_gt.cpu().numpy(),
-            vol_pred.cpu().numpy(),
-            save_path=osp.join(eval_save_path, "slices_fsgs.png"),
+        # 取中间切片进行可视化
+        mid_slice = vol_gt.shape[0] // 2
+        slice_gt = vol_gt[mid_slice].cpu().numpy()
+        slice_pred = vol_pred[mid_slice].cpu().numpy()
+        vis_data = show_two_slice(
+            slice_gt,
+            slice_pred,
+            "GT",
+            "FSGS",
+            save=True,
         )
+        imageio.imwrite(osp.join(eval_save_path, "slices_fsgs.png"), vis_data)
     except Exception as e:
-        print(f"Warning: Failed to save slice visualization: {e}")
+        logger.warn(f"Failed to save slice visualization: {e}", iteration=iteration)
 
-    tqdm.write(
-        f"[FSGS ITER {iteration}] "
-        f"psnr3d {psnr_3d:.3f}, ssim3d {ssim_3d:.3f}, "
-        f"psnr2d {psnr_2d:.3f}, ssim2d {ssim_2d:.3f}"
-    )
+    logger.eval(f"psnr3d {psnr_3d:.3f}, ssim3d {ssim_3d:.3f}, psnr2d {psnr_2d:.3f}, ssim2d {ssim_2d:.3f}", iteration=iteration)
 
     torch.cuda.empty_cache()
