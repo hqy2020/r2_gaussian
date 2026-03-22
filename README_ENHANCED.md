@@ -1,0 +1,165 @@
+# R2-Gaussian 增强版
+
+基于原始R2-Gaussian，参考X-Gaussian的多高斯、伪标签、深度功能实现。
+
+## 🎯 新增功能
+
+### 1. 多高斯训练 (Multi-Gaussian Training)
+- 从多个视角同时训练高斯模型
+- 自动生成额外的训练视角
+- 提升3D重建的完整性和一致性
+
+### 2. 伪标签机制 (Pseudo Labels)
+- 使用当前模型预测结果作为训练标签
+- 实现自监督学习
+- 延迟启动机制避免早期不稳定
+
+### 3. 深度约束 (Depth Constraint)
+- 利用深度信息约束高斯模型空间分布
+- 提升3D重建的几何准确性
+- 支持深度范围约束
+
+## 🔧 技术实现
+
+### 核心修改文件
+
+1. **损失函数扩展** (`r2_gaussian/utils/loss_utils.py`)
+   - `loss_photometric()`: 带mask的光度损失
+   - `l1_loss_mask()`: 带mask的L1损失
+   - `depth_loss()`: 深度一致性损失
+   - `pseudo_label_loss()`: 伪标签损失
+
+2. **相机模块增强** (`r2_gaussian/dataset/cameras.py`)
+   - `PseudoCamera`类: 伪标签相机实现
+   - `Camera`类扩展: 支持深度参数
+   - CPU计算避免CUBLAS错误
+
+3. **姿态生成工具** (`r2_gaussian/utils/pose_utils.py`)
+   - `generate_random_poses_360()`: 360度环绕姿态
+   - `generate_random_poses_llff()`: LLFF风格姿态
+   - `generate_random_poses_pickle()`: Pickle数据姿态
+   - `generate_uniform_poses_forview()`: 均匀分布姿态
+
+4. **场景类增强** (`r2_gaussian/dataset/__init__.py`)
+   - `generate_multi_gaussian_cameras()`: 生成多高斯相机
+   - `generate_pseudo_labels()`: 生成伪标签
+
+5. **参数配置** (`r2_gaussian/arguments/__init__.py`)
+   - 新增多高斯、伪标签、深度相关参数
+   - 支持权重调节和阈值设置
+
+6. **训练脚本** (`train.py`)
+   - 集成多高斯训练逻辑
+   - 实现伪标签生成和使用
+   - 支持深度约束计算
+
+## 🚀 使用方法
+
+### 基础训练（不变）
+```bash
+python train.py -s data/369/chest_50_3views.pickle -m output/basic
+```
+
+### 多高斯训练
+```bash
+python train.py -s data/369/chest_50_3views.pickle -m output/multi --multi_gaussian
+```
+
+### 伪标签训练
+```bash
+python train.py -s data/369/chest_50_3views.pickle -m output/pseudo --pseudo_labels
+```
+
+### 深度约束训练
+```bash
+python train.py -s data/369/chest_50_3views.pickle -m output/depth --depth_constraint
+```
+
+### 组合训练
+```bash
+python train.py -s data/369/chest_50_3views.pickle -m output/combined \
+    --multi_gaussian --pseudo_labels --depth_constraint \
+    --num_additional_views 15 \
+    --multi_gaussian_weight 0.15 \
+    --pseudo_label_weight 0.08 \
+    --depth_loss_weight 0.12
+```
+
+## 📋 新增参数
+
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `--multi_gaussian` | bool | False | 启用多高斯训练 |
+| `--pseudo_labels` | bool | False | 启用伪标签训练 |
+| `--depth_constraint` | bool | False | 启用深度约束 |
+| `--num_additional_views` | int | 10 | 额外视角数量 |
+| `--pseudo_confidence_threshold` | float | 0.8 | 伪标签置信度阈值 |
+| `--multi_gaussian_weight` | float | 0.1 | 多高斯损失权重 |
+| `--pseudo_label_weight` | float | 0.05 | 伪标签损失权重 |
+| `--depth_loss_weight` | float | 0.1 | 深度损失权重 |
+
+## 🔄 向后兼容性
+
+- ✅ 完全向后兼容原始功能
+- ✅ 原有训练命令无需修改
+- ✅ 新功能通过参数控制启用
+- ✅ 不影响现有模型和结果
+
+## 🛠️ 环境要求
+
+- 与原始R2-Gaussian相同
+- Conda环境: `r2_gaussian_new`
+- CUDA 11.6
+- PyTorch 1.12.1
+
+## 📊 性能建议
+
+### 参数调优
+- **小数据集**: `num_additional_views = 5-10`
+- **大数据集**: `num_additional_views = 10-20`
+- **快速测试**: 只启用 `--multi_gaussian`
+- **高质量训练**: 组合使用所有功能
+- **内存不足**: 减少 `num_additional_views`
+
+### 训练策略
+1. 先使用基础功能验证数据
+2. 逐步启用多高斯训练
+3. 在模型稳定后启用伪标签
+4. 根据数据特点调整权重参数
+
+## 🔍 技术细节
+
+### CUBLAS错误修复
+- 所有矩阵乘法操作移到CPU执行
+- 避免 `CUBLAS_STATUS_NOT_SUPPORTED` 错误
+- 保持数值精度不变
+
+### 内存优化
+- 限制同时处理的额外视角数量
+- 使用梯度检查点减少内存占用
+- 支持动态调整batch大小
+
+### 训练稳定性
+- 伪标签延迟启动机制
+- 梯度裁剪防止训练不稳定
+- 学习率调度优化
+
+## 📝 参考实现
+
+本实现参考了X-Gaussian的多高斯、伪标签、深度功能：
+- PseudoCamera类设计
+- 损失函数实现
+- 训练策略优化
+- 参数配置方案
+
+## 🤝 贡献
+
+基于原始R2-Gaussian项目，在保持核心架构不变的前提下，扩展了多高斯训练能力。
+
+## 📄 许可证
+
+与原始R2-Gaussian项目保持一致的许可证。
+
+
+
+
