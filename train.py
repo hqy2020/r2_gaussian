@@ -380,6 +380,9 @@ def training(
                 # 创建副本（IPSM的做法）
                 pseudo_stack = pseudo_stack.copy()
                 closest_cam_stack = closest_cam_stack.copy()
+
+                pseudo_min_valid_ratio = max(0.0, getattr(args, 'pseudo_min_valid_ratio', 0.02)) if args else 0.02
+                pseudo_overlap_power = max(0.0, getattr(args, 'pseudo_overlap_power', 0.5)) if args else 0.5
                 
                 # 随机选择一个伪相机（IPSM的drop机制）
                 randint_idx = randint(0, len(pseudo_stack) - 1)
@@ -479,28 +482,37 @@ def training(
                     
                     # 计算masked损失（完全按照IPSM图片代码）
                     # 注意：mask是Float类型，使用乘法代替位运算&
-                    combined_mask = (warp_rst_1["mask_warp"] * warp_rst_1["mask_depth_strict"]).unsqueeze(0)  # (1, H, W)
-                    
-                    warped_masked_strict_image = warp_rst_1["warped_img"] * combined_mask
-                    pseudo_masked_strict_image = rendered_img_pseudo * combined_mask
-                    
+                    combined_mask = (warp_rst_1["mask_warp"] * warp_rst_1["mask_depth_strict"]).unsqueeze(0)
+                    combined_mask = combined_mask.to(rendered_img_pseudo.device, dtype=rendered_img_pseudo.dtype)  # (1, H, W)
+                    valid_mask_ratio = combined_mask.mean()
+
+                    if valid_mask_ratio.item() < pseudo_min_valid_ratio:
+                        if iteration % 500 == 0:
+                            print(f"[IPSM Drop] Iteration {iteration}, GS{j}: skipped pseudo loss, "
+                                  f"valid_mask_ratio={valid_mask_ratio.item():.3f} < min_ratio={pseudo_min_valid_ratio:.3f}")
+                        continue
+
                     # 损失缩放因子（逐渐增加，IPSM的做法）
                     loss_scale = min(iteration / 500.0, 1.0)
-                    
-                    # 计算masked L1损失
-                    Ll1_masked_pseudo = l1_loss_mask(
-                        pseudo_masked_strict_image,
-                        warped_masked_strict_image.detach()
+                    overlap_weight = valid_mask_ratio.clamp_min(1e-6).pow(pseudo_overlap_power)
+
+                    # 在有效warp区域上归一化伪标签损失，避免稀疏重叠时梯度过弱
+                    Ll1_masked_pseudo = pseudo_label_loss(
+                        rendered_img_pseudo,
+                        warp_rst_1["warped_img"].detach(),
+                        confidence_mask=combined_mask,
                     )
-                    
-                    # 添加到总损失（乘以loss_scale）
-                    LossDict[f"loss_gs{j}"] += dataset.pseudo_label_weight * loss_scale * Ll1_masked_pseudo
+
+                    # 添加到总损失（乘以loss_scale和overlap_weight）
+                    LossDict[f"loss_gs{j}"] += (
+                        dataset.pseudo_label_weight * loss_scale * overlap_weight * Ll1_masked_pseudo
+                    )
                     
                     # 可选：每500次迭代打印一次信息
                     if iteration % 500 == 0:
-                        mask_valid_ratio = combined_mask.sum().item() / (H * W)
                         print(f"[IPSM Drop] Iteration {iteration}, GS{j}: masked_loss={Ll1_masked_pseudo.item():.6f}, "
-                              f"loss_scale={loss_scale:.3f}, valid_mask_ratio={mask_valid_ratio:.3f}")
+                              f"loss_scale={loss_scale:.3f}, overlap_weight={overlap_weight.item():.3f}, "
+                              f"valid_mask_ratio={valid_mask_ratio.item():.3f}")
         
         # FSGS深度监督 (伪视角+训练视角深度约束)
         if enable_fsgs and depth_estimator and depth_estimator.enabled and iteration > fsgs_start_iter:
@@ -1213,6 +1225,8 @@ if __name__ == "__main__":
     parser.add_argument("--sghmc_burnin_steps", type=int, default=1000)  # SGHMC烧入步数
     parser.add_argument("--nu_lr_init", type=float, default=0.001)  # nu参数初始学习率
     parser.add_argument("--opacity_lr_init", type=float, default=0.01)  # opacity参数初始学习率
+    parser.add_argument("--pseudo_min_valid_ratio", type=float, default=0.02)  # 伪标签最小有效重叠比例
+    parser.add_argument("--pseudo_overlap_power", type=float, default=0.5)  # 伪标签重叠权重指数
     
     # FSGS Proximity-Guided Densification 参数在arguments/__init__.py中已定义
     

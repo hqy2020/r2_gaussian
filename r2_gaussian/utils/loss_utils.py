@@ -126,12 +126,17 @@ def depth_loss(predicted_depth, gt_depth, depth_bounds=None):
 
 def pseudo_label_loss(predicted_image, pseudo_label, confidence_mask=None):
     """Pseudo label loss - 伪标签损失函数"""
-    if confidence_mask is not None:
-        # 使用置信度mask加权
-        loss = torch.abs(predicted_image - pseudo_label) * confidence_mask
-        return loss.sum() / confidence_mask.sum()
-    else:
+    if confidence_mask is None:
         return l1_loss(predicted_image, pseudo_label)
+
+    confidence_mask = confidence_mask.to(predicted_image.device, dtype=predicted_image.dtype)
+    while confidence_mask.dim() < predicted_image.dim():
+        confidence_mask = confidence_mask.unsqueeze(0)
+    confidence_mask = confidence_mask.expand_as(predicted_image)
+
+    weighted_error = torch.abs(predicted_image - pseudo_label) * confidence_mask
+    normalization = confidence_mask.sum().clamp_min(1e-6)
+    return weighted_error.sum() / normalization
 
 
 def calculate_depth_loss(rendered_depth, gt_depth):
