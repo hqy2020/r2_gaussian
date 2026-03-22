@@ -23,6 +23,10 @@ Do not store API keys or auth tokens in this repository. Configure them on the h
 - `agent_loop/loop.log`
 - `agent_loop/status.json`
 
+At runtime the loop respects the configured provider `env_key` and drops the
+`OPENAI_API_KEY` fallback when a non-OpenAI auth variable is configured, so the
+startup result reflects the real provider path being tested.
+
 ## Start the continuous loop
 
 ```bash
@@ -38,3 +42,6 @@ python /Users/openingcloud/IdeaProjects/PG/r2_gaussian/spags_autoresearch/heartb
 ```
 
 This writes Markdown reports into `/Users/openingcloud/IdeaProjects/PG/reports/heartbeat/` and mirrors them into a dedicated Git worktree before pushing to `origin/main`.
+
+The same heartbeat entrypoint is what the local hourly Codex automation should
+run.

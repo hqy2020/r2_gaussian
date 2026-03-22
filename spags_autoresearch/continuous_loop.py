@@ -129,6 +129,11 @@ def load_codex_process_env(settings, runtime_home):
     for key, value in settings.get("shell_env", {}).items():
         if isinstance(value, str):
             env[key] = value
+    provider_env_key = settings.get("provider", {}).get("env_key")
+    if provider_env_key and provider_env_key != "OPENAI_API_KEY":
+        # Avoid silently falling back to an OpenAI-style key when the provider
+        # is explicitly configured to use a different auth variable.
+        env.pop("OPENAI_API_KEY", None)
     env["CODEX_HOME"] = runtime_home
     env.setdefault("GIT_TERMINAL_PROMPT", "0")
     env.setdefault("TERM", "dumb")
