@@ -284,6 +284,16 @@ def training(
         gaussians.restore(model_params, opt)
         print(f"Load checkpoint from {osp.basename(checkpoint)}.")
 
+    if (
+        dataset.multi_gaussian
+        and pseudo_cameras is not None
+        and gaussiansN > 1
+        and dataset.multi_gaussian_weight > 0
+    ):
+        print(
+            "Skipping legacy multi-gaussian pseudo identity renders to preserve fixed-budget iterations"
+        )
+
     # 设置损失函数（是否使用 TV 损失）
     use_tv = opt.lambda_tv > 0
     if use_tv:
@@ -386,22 +396,6 @@ def training(
                     if i != j:
                         coreg_loss = l1_loss(RenderDict[f"image_gs{i}"], RenderDict[f"image_gs{j}"].detach())
                         LossDict[f"loss_gs{i}"] += coreg_loss
-        
-        # 多高斯训练损失 - 原始版本（identity loss）
-        if dataset.multi_gaussian and pseudo_cameras is not None and gaussiansN > 1:
-            for pseudo_cam in pseudo_cameras[:3]:  # 限制数量避免计算过载
-                for i in range(gaussiansN):
-                    pseudo_render_pkg = render(
-                        pseudo_cam,
-                        GsDict[f'gs{i}'],
-                        pipe,
-                        enable_drop=args.enable_drop,
-                        drop_rate=args.drop_rate if hasattr(args, 'drop_rate') else 0.10,
-                        iteration=iteration,
-                    )
-                    pseudo_image = pseudo_render_pkg["render"]
-                    # 原始错误版本：identity loss（自己和自己比较）
-                    LossDict[f"loss_gs{i}"] += dataset.multi_gaussian_weight * l1_loss(pseudo_image, pseudo_image.detach())
         
         # FSGS伪标签训练损失 (可选，向下兼容)
         # FSGS延迟启动: 2000次迭代后启动 (原版: 1000次)
