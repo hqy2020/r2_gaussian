@@ -349,6 +349,22 @@ def training(
             scale = 1.75 + 1.25 * min((pressure - 1.0) / 0.5, 1.0)
         return base_threshold * scale
 
+    fsgs_start_iter = 2000 if enable_fsgs_proximity else 1000
+    pseudo_retry_after_iter = fsgs_start_iter
+    pseudo_empty_attempts = 0
+
+    def get_pseudo_backoff_interval(empty_attempts, elapsed_seconds):
+        interval = 50 * (2 ** min(max(empty_attempts - 1, 0), 4))
+
+        if time_budget_seconds is not None and time_budget_seconds > 0:
+            budget_ratio = min(max(elapsed_seconds / time_budget_seconds, 0.0), 1.0)
+            if budget_ratio >= 0.5:
+                interval *= 4
+            elif budget_ratio >= 0.25:
+                interval *= 2
+
+        return min(interval, 1500)
+
     for iteration in range(first_iter, opt.iterations + 1):
         iter_start.record()
 
@@ -398,9 +414,17 @@ def training(
                         LossDict[f"loss_gs{i}"] += coreg_loss
         
         # FSGS伪标签训练损失 (可选，向下兼容)
-        # FSGS延迟启动: 2000次迭代后启动 (原版: 1000次)
-        fsgs_start_iter = 2000 if enable_fsgs_proximity else 1000
-        if dataset.pseudo_labels and pseudo_cameras is not None and iteration > fsgs_start_iter:
+        # 对持续零重叠的伪监督启用退避，避免在固定预算内反复浪费迭代。
+        pseudo_supervision_attempted = False
+        pseudo_supervision_applied = False
+        if (
+            dataset.pseudo_labels
+            and pseudo_cameras is not None
+            and iteration > fsgs_start_iter
+            and iteration >= pseudo_retry_after_iter
+        ):
+            pseudo_supervision_attempted = True
+
             # 获取伪相机和对应的最近真实相机
             pseudo_stack, closest_cam_stack = scene.getPseudoCamerasWithClosestViews(pseudo_cameras)
             
@@ -535,12 +559,46 @@ def training(
                     LossDict[f"loss_gs{j}"] += (
                         dataset.pseudo_label_weight * loss_scale * overlap_weight * Ll1_masked_pseudo
                     )
+                    pseudo_supervision_applied = True
                     
                     # 可选：每500次迭代打印一次信息
                     if iteration % 500 == 0:
                         print(f"[IPSM Drop] Iteration {iteration}, GS{j}: masked_loss={Ll1_masked_pseudo.item():.6f}, "
                               f"loss_scale={loss_scale:.3f}, overlap_weight={overlap_weight.item():.3f}, "
                               f"valid_mask_ratio={valid_mask_ratio.item():.3f}")
+
+        if (
+            dataset.pseudo_labels
+            and pseudo_cameras is not None
+            and iteration > fsgs_start_iter
+            and iteration < pseudo_retry_after_iter
+            and iteration % 500 == 0
+        ):
+            print(
+                f"[IPSM Backoff] Iteration {iteration}: skipping pseudo supervision until {pseudo_retry_after_iter}"
+            )
+
+        if pseudo_supervision_attempted:
+            if pseudo_supervision_applied:
+                if pseudo_empty_attempts > 0 and iteration % 500 == 0:
+                    print(
+                        f"[IPSM Backoff] Iteration {iteration}: recovered valid pseudo overlap, resetting backoff"
+                    )
+                pseudo_empty_attempts = 0
+                pseudo_retry_after_iter = iteration + 1
+            else:
+                pseudo_empty_attempts += 1
+                pseudo_backoff_interval = get_pseudo_backoff_interval(
+                    pseudo_empty_attempts,
+                    time.time() - start_wall,
+                )
+                pseudo_retry_after_iter = iteration + pseudo_backoff_interval
+
+                if pseudo_empty_attempts <= 3 or iteration % 500 == 0:
+                    print(
+                        f"[IPSM Backoff] Iteration {iteration}: no valid pseudo overlap, "
+                        f"streak={pseudo_empty_attempts}, retry_in={pseudo_backoff_interval}"
+                    )
         
         # FSGS深度监督 (伪视角+训练视角深度约束)
         if enable_fsgs and depth_estimator and depth_estimator.enabled and iteration > fsgs_start_iter:
