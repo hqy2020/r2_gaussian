@@ -305,6 +305,40 @@ def training(
     if args is not None and getattr(args, "time_budget_minutes", None):
         time_budget_seconds = max(0.0, float(args.time_budget_minutes) * 60.0)
     start_wall = time.time()
+
+    densify_point_target = None
+    if time_budget_seconds is not None:
+        densify_point_target = min(
+            opt.max_num_gaussians,
+            220000 if gaussiansN > 1 else 300000,
+        )
+
+    def get_budget_densify_settings(elapsed_seconds):
+        if time_budget_seconds is None or time_budget_seconds <= 0:
+            return opt.densification_interval, True, None
+
+        budget_ratio = min(max(elapsed_seconds / time_budget_seconds, 0.0), 1.0)
+        if budget_ratio >= 0.65:
+            return opt.densification_interval * 3, False, budget_ratio
+        if budget_ratio >= 0.50:
+            return opt.densification_interval * 3, True, budget_ratio
+        if budget_ratio >= 0.25:
+            return opt.densification_interval * 2, True, budget_ratio
+        return opt.densification_interval, True, budget_ratio
+
+    def get_population_densify_threshold(base_threshold, current_points, target_points):
+        if target_points is None or target_points <= 0:
+            return base_threshold
+
+        pressure = float(current_points) / float(target_points)
+        if pressure <= 0.7:
+            return base_threshold
+        if pressure <= 1.0:
+            scale = 1.0 + 0.75 * ((pressure - 0.7) / 0.3)
+        else:
+            scale = 1.75 + 1.25 * min((pressure - 1.0) / 0.5, 1.0)
+        return base_threshold * scale
+
     for iteration in range(first_iter, opt.iterations + 1):
         iter_start.record()
 
@@ -534,7 +568,7 @@ def training(
                                 rendered_depth, estimated_depth.squeeze(0)
                             )
                             LossDict[f"loss_gs{j}"] += fsgs_depth_weight * depth_loss_train
-                            
+
                             if iteration % 500 == 0:
                                 print(f"[FSGS] Iteration {iteration}, GS{j}: train_depth_loss={depth_loss_train.item():.6f}")
                                 
@@ -771,11 +805,22 @@ def training(
                 GsDict[f"gs{i}"].add_densification_stats(viewspace_point_tensor, visibility_filter)
             
             # 高斯点稠密化与剪枝 - 为每个高斯场
-            if iteration < opt.densify_until_iter:
+            elapsed_wall = time.time() - start_wall
+            effective_densification_interval, densify_enabled, densify_budget_ratio = get_budget_densify_settings(
+                elapsed_wall
+            )
+
+            if densify_enabled and iteration < opt.densify_until_iter:
                 if (
                     iteration > opt.densify_from_iter
-                    and iteration % opt.densification_interval == 0
+                    and iteration % effective_densification_interval == 0
                 ):
+                    if densify_budget_ratio is not None and iteration % 500 == 0:
+                        print(
+                            f"[Budget Densify] Iteration {iteration}: budget_ratio={densify_budget_ratio:.3f}, "
+                            f"interval={effective_densification_interval}"
+                        )
+
                     # 🔬 Proximity-Guided Densification (医学感知密化) 
                     if (proximity_densifier is not None and 
                         hasattr(args, 'proximity_interval') and 
@@ -823,7 +868,10 @@ def training(
                             # Reduce max points for SSS to prevent performance issues
                             max_points_sss = min(opt.max_num_gaussians, 50000)  # Cap at 50k for SSS
                             current_points = GsDict[f"gs{i}"].get_xyz.shape[0]
-                            
+                            point_target = max_points_sss
+                            if densify_point_target is not None:
+                                point_target = min(point_target, densify_point_target)
+
                             # More aggressive pruning for SSS
                             if current_points > max_points_sss * 0.8:  # Start aggressive pruning at 80% 
                                 sss_grad_threshold = opt.densify_grad_threshold * 1.5  # Harder to densify
@@ -831,6 +879,12 @@ def training(
                             else:
                                 sss_grad_threshold = opt.densify_grad_threshold
                                 sss_density_threshold = opt.density_min_threshold
+
+                            sss_grad_threshold = get_population_densify_threshold(
+                                sss_grad_threshold,
+                                current_points,
+                                point_target,
+                            )
                             
                             print(f"🎓 [SSS-Control] Iter {iteration}: GS{i} has {current_points} points (max: {max_points_sss})")
                             
@@ -859,10 +913,17 @@ def training(
                                 )
                         else:
                             # Standard densification for non-SSS gaussians
+                            current_points = GsDict[f"gs{i}"].get_xyz.shape[0]
+                            adaptive_grad_threshold = get_population_densify_threshold(
+                                opt.densify_grad_threshold,
+                                current_points,
+                                densify_point_target,
+                            )
+
                             # 使用增强版密化函数 (FSGS proximity-guided)
                             if hasattr(GsDict[f"gs{i}"], 'enhanced_densify_and_prune'):
                                 GsDict[f"gs{i}"].enhanced_densify_and_prune(
-                                    opt.densify_grad_threshold,
+                                    adaptive_grad_threshold,
                                     opt.density_min_threshold,
                                     opt.max_screen_size,
                                     max_scale,
@@ -874,7 +935,7 @@ def training(
                             else:
                                 # 回退到标准密化
                                 GsDict[f"gs{i}"].densify_and_prune(
-                                    opt.densify_grad_threshold,
+                                    adaptive_grad_threshold,
                                     opt.density_min_threshold,
                                     opt.max_screen_size,
                                     max_scale,
