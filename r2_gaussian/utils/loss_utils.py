@@ -55,6 +55,28 @@ def l2_loss(network_output, gt):
     return ((network_output - gt) ** 2).mean()
 
 
+def image_gradient(tensor):
+    """Compute horizontal and vertical gradients for image tensors."""
+    if tensor.dim() == 4:
+        dx = tensor[..., :, 1:] - tensor[..., :, :-1]
+        dy = tensor[..., 1:, :] - tensor[..., :-1, :]
+    elif tensor.dim() == 3:
+        dx = tensor[:, :, 1:] - tensor[:, :, :-1]
+        dy = tensor[:, 1:, :] - tensor[:, :-1, :]
+    else:
+        raise ValueError(f"Unsupported tensor dimensions for gradient: {tensor.shape}")
+    return dx, dy
+
+
+def image_gradient_loss(predicted, target):
+    """L1 loss on image gradients to encourage edge alignment."""
+    pred_dx, pred_dy = image_gradient(predicted)
+    target_dx, target_dy = image_gradient(target)
+    loss_dx = F.l1_loss(pred_dx, target_dx)
+    loss_dy = F.l1_loss(pred_dy, target_dy)
+    return 0.5 * (loss_dx + loss_dy)
+
+
 def gaussian(window_size, sigma):
     gauss = torch.Tensor(
         [

@@ -29,7 +29,7 @@ from r2_gaussian.utils.general_utils import safe_state  # 随机种子等系统�
 from r2_gaussian.utils.cfg_utils import load_config  # 配置文件加载
 from r2_gaussian.utils.log_utils import prepare_output_and_logger  # 日志与输出
 from r2_gaussian.dataset import Scene  # 数据集场景
-from r2_gaussian.utils.loss_utils import l1_loss, ssim, tv_3d_loss, loss_photometric, l1_loss_mask, depth_loss, pseudo_label_loss, depth_loss_fn, compute_graph_laplacian_loss  # 损失函数
+from r2_gaussian.utils.loss_utils import l1_loss, ssim, tv_3d_loss, loss_photometric, l1_loss_mask, depth_loss, pseudo_label_loss, depth_loss_fn, compute_graph_laplacian_loss, image_gradient_loss  # 损失函数
 from r2_gaussian.utils.depth_utils import extract_depth_from_volume_ray_casting  # 深度提取函数
 from r2_gaussian.utils.warp_utils import inverse_warp  # 逆变形函数 - IPSM实现
 from r2_gaussian.utils.image_utils import metric_vol, metric_proj  # 评估指标
@@ -397,13 +397,21 @@ def training(
         LossDict = {}
         gt_image = viewpoint_cam.original_image.cuda()
         
+        edge_loss_weight = getattr(args, 'edge_loss_weight', 0.02) if args else 0.02
+        edge_loss_scale = min(iteration / 500.0, 1.0)
+
         for i in range(gaussiansN):
             LossDict[f"loss_gs{i}"] = l1_loss(RenderDict[f"image_gs{i}"], gt_image)
-            
+
             # DSSIM 损失
-        if opt.lambda_dssim > 0:
+            if opt.lambda_dssim > 0:
                 loss_dssim = 1.0 - ssim(RenderDict[f"image_gs{i}"], gt_image)
                 LossDict[f"loss_gs{i}"] += opt.lambda_dssim * loss_dssim
+
+            # Edge-aligned gradient loss for sharper projections
+            if edge_loss_weight > 0:
+                grad_loss = image_gradient_loss(RenderDict[f"image_gs{i}"], gt_image)
+                LossDict[f"loss_gs{i}"] += edge_loss_weight * edge_loss_scale * grad_loss
         
         # 协同训练 - 参考X-Gaussian-depth实现
         if coreg and gaussiansN > 1:
