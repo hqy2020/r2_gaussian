@@ -1,0 +1,8 @@
+depth_loss_weight: 0.0
+enable_depth: false
+enable_fsgs_depth: false
+enable_fsgs_proximity: false
+enable_fsgs_pseudo_views: false
+gaussiansN: 1
+multi_gaussian: false
+pseudo_labels: false

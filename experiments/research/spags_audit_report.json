@@ -1,0 +1,379 @@
+{
+  "generated_at": "2026-03-24T00:32:26Z",
+  "repo_root": "/Users/openingcloud/IdeaProjects/PG/r2_gaussian",
+  "modules": {
+    "SPS": {
+      "intent": "伪视角生成、伪标签监督、稀疏视角先验合成链路",
+      "code_paths": [
+        "/Users/openingcloud/IdeaProjects/PG/r2_gaussian/train.py",
+        "/Users/openingcloud/IdeaProjects/PG/r2_gaussian/r2_gaussian/utils/pseudo_view_utils.py",
+        "/Users/openingcloud/IdeaProjects/PG/r2_gaussian/r2_gaussian/utils/advanced_pseudo_label.py",
+        "/Users/openingcloud/IdeaProjects/PG/r2_gaussian/r2_gaussian/utils/warp_utils.py",
+        "/Users/openingcloud/IdeaProjects/PG/r2_gaussian/r2_gaussian/utils/depth_estimator.py",
+        "/Users/openingcloud/IdeaProjects/PG/r2_gaussian/r2_gaussian/utils/fsgs_complete.py"
+      ],
+      "missing_paths": [],
+      "flags": [
+        "pseudo_labels",
+        "pseudo_label_weight",
+        "enable_fsgs_pseudo",
+        "enable_fsgs_pseudo_views",
+        "num_fsgs_pseudo_views",
+        "fsgs_noise_std",
+        "fsgs_start_iter"
+      ],
+      "flag_references_in_train": {
+        "pseudo_labels": [
+          227,
+          235,
+          375
+        ],
+        "pseudo_label_weight": [
+          497
+        ],
+        "enable_fsgs_pseudo": [
+          233
+        ],
+        "fsgs_noise_std": [
+          250
+        ],
+        "fsgs_start_iter": [
+          374,
+          375,
+          506
+        ]
+      },
+      "participates_in_training": true,
+      "controlled_by_flags": true,
+      "status": "wired"
+    },
+    "ADM": {
+      "intent": "densification / prune / proximity-guided densification",
+      "code_paths": [
+        "/Users/openingcloud/IdeaProjects/PG/r2_gaussian/train.py",
+        "/Users/openingcloud/IdeaProjects/PG/r2_gaussian/r2_gaussian/utils/fsgs_proximity_optimized.py",
+        "/Users/openingcloud/IdeaProjects/PG/r2_gaussian/r2_gaussian/utils/fsgs_proximity.py",
+        "/Users/openingcloud/IdeaProjects/PG/r2_gaussian/r2_gaussian/utils/realistic_proximity_guided.py"
+      ],
+      "missing_paths": [],
+      "flags": [
+        "multi_gaussian",
+        "gaussiansN",
+        "enable_fsgs_proximity",
+        "enable_proximity_guided",
+        "proximity_threshold",
+        "densification_interval"
+      ],
+      "flag_references_in_train": {
+        "multi_gaussian": [
+          235,
+          277,
+          357,
+          370
+        ],
+        "gaussiansN": [
+          92,
+          179,
+          312,
+          322,
+          340,
+          349,
+          350,
+          351,
+          357,
+          359,
+          389,
+          509,
+          567,
+          593,
+          643,
+          644,
+          658,
+          674,
+          743,
+          744,
+          751,
+          775,
+          808,
+          877,
+          881,
+          889,
+          923,
+          924,
+          933,
+          941,
+          942,
+          948,
+          957,
+          977,
+          990,
+          991,
+          1011,
+          1025,
+          1257
+        ],
+        "enable_fsgs_proximity": [
+          150,
+          152,
+          166,
+          195,
+          374,
+          835,
+          860
+        ],
+        "enable_proximity_guided": [
+          170,
+          174,
+          1220
+        ],
+        "proximity_threshold": [
+          154,
+          161,
+          165
+        ],
+        "densification_interval": [
+          765
+        ]
+      },
+      "participates_in_training": true,
+      "controlled_by_flags": true,
+      "status": "wired"
+    },
+    "GAR": {
+      "intent": "depth / graph Laplacian / smoothness / geometry-aware regularization",
+      "code_paths": [
+        "/Users/openingcloud/IdeaProjects/PG/r2_gaussian/train.py",
+        "/Users/openingcloud/IdeaProjects/PG/r2_gaussian/r2_gaussian/utils/loss_utils.py",
+        "/Users/openingcloud/IdeaProjects/PG/r2_gaussian/r2_gaussian/utils/depth_estimator.py",
+        "/Users/openingcloud/IdeaProjects/PG/r2_gaussian/r2_gaussian/utils/fsgs_depth_renderer.py",
+        "/Users/openingcloud/IdeaProjects/PG/r2_gaussian/r2_gaussian/utils/fsgs_complete.py"
+      ],
+      "missing_paths": [],
+      "flags": [
+        "enable_depth",
+        "depth_loss_weight",
+        "depth_loss_type",
+        "enable_fsgs_depth",
+        "fsgs_depth_model",
+        "fsgs_depth_weight"
+      ],
+      "flag_references_in_train": {
+        "enable_depth": [
+          215,
+          592,
+          641
+        ],
+        "depth_loss_weight": [
+          592,
+          621,
+          631,
+          641
+        ],
+        "depth_loss_type": [
+          619
+        ],
+        "enable_fsgs_depth": [
+          197,
+          268
+        ],
+        "fsgs_depth_model": [
+          263
+        ],
+        "fsgs_depth_weight": [
+          507,
+          524,
+          554
+        ]
+      },
+      "participates_in_training": true,
+      "controlled_by_flags": true,
+      "status": "wired"
+    }
+  },
+  "findings": [
+    {
+      "id": "multi_gaussian_identity_loss",
+      "severity": "high",
+      "title": "multi_gaussian 伪视角 loss 退化为自比较",
+      "file": "/Users/openingcloud/IdeaProjects/PG/r2_gaussian/train.py",
+      "lines": [
+        370
+      ],
+      "summary": "当前 pseudo-view loss 把 pseudo_image 与自身 detach 后做 L1，几乎不提供有效监督信号，属于优先修复项。"
+    },
+    {
+      "id": "argument_default_conflicts",
+      "severity": "high",
+      "title": "arguments 默认值重复定义且后值覆盖前值",
+      "file": "/Users/openingcloud/IdeaProjects/PG/r2_gaussian/r2_gaussian/arguments/__init__.py",
+      "lines": [
+        48,
+        60,
+        65,
+        67,
+        68,
+        69,
+        80,
+        81,
+        84,
+        85
+      ],
+      "summary": "多个 FSGS/depth 参数在 ModelParams 中被重复赋值，导致配置意图和实际默认行为可能不一致。",
+      "details": {
+        "depth_loss_weight": [
+          {
+            "line": 48,
+            "value": "0.0"
+          },
+          {
+            "line": 60,
+            "value": "0.0"
+          }
+        ],
+        "fsgs_noise_std": [
+          {
+            "line": 65,
+            "value": "0.05"
+          },
+          {
+            "line": 84,
+            "value": "0.05"
+          }
+        ],
+        "fsgs_depth_model": [
+          {
+            "line": 67,
+            "value": "\"dpt_large\""
+          },
+          {
+            "line": 80,
+            "value": "\"dpt_large\""
+          }
+        ],
+        "fsgs_depth_weight": [
+          {
+            "line": 68,
+            "value": "0.05"
+          },
+          {
+            "line": 81,
+            "value": "0.05"
+          }
+        ],
+        "fsgs_start_iter": [
+          {
+            "line": 69,
+            "value": "2000"
+          },
+          {
+            "line": 85,
+            "value": "2000"
+          }
+        ]
+      }
+    },
+    {
+      "id": "sss_optimizer_not_used",
+      "severity": "high",
+      "title": "SSS hybrid optimizer 已创建但训练更新仍走原 optimizer",
+      "file": "/Users/openingcloud/IdeaProjects/PG/r2_gaussian/train.py",
+      "lines": [
+        37,
+        144,
+        914
+      ],
+      "summary": "训练循环里没有看到 sss_optimizer.step()，这意味着 SSS 相关优化器可能根本没有参与参数更新。"
+    },
+    {
+      "id": "risky_boolean_defaults",
+      "severity": "medium",
+      "title": "多个研究开关默认启用，容易发生隐式串扰",
+      "file": "/Users/openingcloud/IdeaProjects/PG/r2_gaussian/r2_gaussian/arguments/__init__.py",
+      "lines": [
+        53,
+        58,
+        54,
+        79,
+        82
+      ],
+      "summary": "默认开启会让 SPAGS 候选配置难以做到显式 on/off，对快筛和矩阵基线都不友好。",
+      "details": {
+        "multi_gaussian": true,
+        "pseudo_labels": true,
+        "enable_fsgs_depth": true,
+        "enable_fsgs_pseudo_views": true
+      }
+    },
+    {
+      "id": "fsgs_mode_layering",
+      "severity": "medium",
+      "title": "FSGS complete / pseudo / depth 多层启用逻辑存在重叠风险",
+      "file": "/Users/openingcloud/IdeaProjects/PG/r2_gaussian/train.py",
+      "lines": [
+        194,
+        200,
+        223,
+        231,
+        564,
+        231
+      ],
+      "summary": "完整系统、旧版 pseudo 路径和 depth 监督路径并行存在，默认值稍有变化就可能造成隐式串扰或行为回退。"
+    }
+  ],
+  "duplicate_defaults": {
+    "depth_loss_weight": [
+      {
+        "line": 48,
+        "value": "0.0"
+      },
+      {
+        "line": 60,
+        "value": "0.0"
+      }
+    ],
+    "fsgs_noise_std": [
+      {
+        "line": 65,
+        "value": "0.05"
+      },
+      {
+        "line": 84,
+        "value": "0.05"
+      }
+    ],
+    "fsgs_depth_model": [
+      {
+        "line": 67,
+        "value": "\"dpt_large\""
+      },
+      {
+        "line": 80,
+        "value": "\"dpt_large\""
+      }
+    ],
+    "fsgs_depth_weight": [
+      {
+        "line": 68,
+        "value": "0.05"
+      },
+      {
+        "line": 81,
+        "value": "0.05"
+      }
+    ],
+    "fsgs_start_iter": [
+      {
+        "line": 69,
+        "value": "2000"
+      },
+      {
+        "line": 85,
+        "value": "2000"
+      }
+    ]
+  },
+  "minimal_validation": {
+    "all_expected_files_present": true
+  },
+  "signature": "cb2b9a6f9707"
+}
