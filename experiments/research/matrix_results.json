@@ -440,7 +440,7 @@
       "eval_path": "/root/r2_gaussian/experiments/matrix_results/FSGS/chest_3views/eval/iter_30000/eval2d_render_test.yml",
       "output_dir": "/root/r2_gaussian/experiments/matrix_results/FSGS/chest_3views",
       "source": "runner",
-      "finished_at": "2026-03-24T07:58:33Z"
+      "finished_at": "2026-03-24T08:15:45Z"
     },
     {
       "job_id": "FSGS__chest__6views",
@@ -976,7 +976,7 @@
       "finished_at": "2026-03-24T00:32:26Z"
     }
   ],
-  "generated_at": "2026-03-24T07:58:33Z",
+  "generated_at": "2026-03-24T08:15:45Z",
   "completed_jobs": 60,
   "total_jobs": 75,
   "progress_ratio": 0.8,
