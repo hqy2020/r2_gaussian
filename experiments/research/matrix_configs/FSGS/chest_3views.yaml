@@ -1,0 +1,11 @@
+gaussiansN: 1
+multi_gaussian: false
+pseudo_labels: false
+enable_depth: false
+depth_loss_weight: 0.0
+enable_fsgs_proximity: true
+enable_medical_constraints: false
+enable_fsgs_depth: true
+enable_fsgs_pseudo_views: true
+fsgs_depth_weight: 0.05
+fsgs_start_iter: 2000

@@ -1,0 +1,10 @@
+{
+  "status": "ok",
+  "schedule_mode": "supervisor",
+  "dry_run_stdout": [
+    "{\"state_path\": \"/root/r2_gaussian/experiments/research_runtime/state.json\", \"queue_path\": \"/root/r2_gaussian/experiments/research_runtime/task_queue.json\", \"active_lane\": \"baseline\", \"overall_status\": \"healthy\", \"baseline_progress\": 60, \"baseline_total\": 75, \"spags_runs\": 4, \"action\": {\"recorded_at\": \"2026-03-24T07:56:40Z\", \"lane\": \"baseline\", \"executed\": false, \"task_id\": \"baseline::FSGS__chest__3views\", \"status\": \"planned\"}}"
+  ],
+  "dry_run_stderr": [],
+  "recorded_at": "2026-03-24T07:56:40Z",
+  "command": "setup"
+}

@@ -1,0 +1,22 @@
+Traceback (most recent call last):
+  File "/Users/openingcloud/IdeaProjects/PG/r2_gaussian/train.py", line 27, in <module>
+    from r2_gaussian.gaussian import GaussianModel, render, query, initialize_gaussian  # 高斯模型相关
+  File "/Users/openingcloud/IdeaProjects/PG/r2_gaussian/r2_gaussian/gaussian/__init__.py", line 1, in <module>
+    from .gaussian_model import GaussianModel
+  File "/Users/openingcloud/IdeaProjects/PG/r2_gaussian/r2_gaussian/gaussian/gaussian_model.py", line 21, in <module>
+    from simple_knn._C import distCUDA2
+ModuleNotFoundError: No module named 'simple_knn'
+
+ERROR conda.cli.main_run:execute(127): `conda run python train.py -s /Users/openingcloud/IdeaProjects/PG/data/chest_50_3views.pickle -m /Users/openingcloud/IdeaProjects/PG/r2_gaussian/experiments/research/candidates/spags_full_balanced --iterations 30000 --time_budget_minutes 15.0 --config /Users/openingcloud/IdeaProjects/PG/r2_gaussian/experiments/research/logs/20260324_084428_config.yaml` failed. (See above for error)
+Traceback (most recent call last):
+  File "/Users/openingcloud/IdeaProjects/PG/r2_gaussian/test.py", line 32, in <module>
+    from r2_gaussian.dataset import Scene
+  File "/Users/openingcloud/IdeaProjects/PG/r2_gaussian/r2_gaussian/dataset/__init__.py", line 19, in <module>
+    from r2_gaussian.gaussian import GaussianModel
+  File "/Users/openingcloud/IdeaProjects/PG/r2_gaussian/r2_gaussian/gaussian/__init__.py", line 1, in <module>
+    from .gaussian_model import GaussianModel
+  File "/Users/openingcloud/IdeaProjects/PG/r2_gaussian/r2_gaussian/gaussian/gaussian_model.py", line 21, in <module>
+    from simple_knn._C import distCUDA2
+ModuleNotFoundError: No module named 'simple_knn'
+
+ERROR conda.cli.main_run:execute(127): `conda run python test.py -m /Users/openingcloud/IdeaProjects/PG/r2_gaussian/experiments/research/candidates/spags_full_balanced` failed. (See above for error)
