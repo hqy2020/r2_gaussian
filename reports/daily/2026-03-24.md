@@ -1,12 +1,12 @@
 # PG Daily Brief — 2026-03-24
 
-- Generated at: `2026-03-24 15:59:49 CST`
+- Generated at: `2026-03-24 16:12:08 CST`
 - Overall status: `healthy`
 - Active lane: `baseline`
 
 ## 昨日完成
 
-- Heartbeat entries: `18`
+- Heartbeat entries: `21`
 - Baseline 新增完成 job: `60`
 - SPAGS 新增 candidate 记录: `4`
 
@@ -34,4 +34,4 @@
 ## 结论
 
 - 当前最佳 SPAGS 配置：`None` / `None` / psnr=`None` / ssim=`None`。
-- 最新 push 状态：`blocked`。
+- 最新 push 状态：`pushed`。
