@@ -1,6 +1,6 @@
 # SPAGS Heartbeat — 2026-03-24 16:00 CST
 
-- Generated at: `2026-03-24 16:00:03 CST`
+- Generated at: `2026-03-24 16:11:58 CST`
 - Overall status: `healthy`
 - Active lane: `baseline`
 - Remote: `codex/autoresearch/live20260322b` @ `181503c`
@@ -14,7 +14,7 @@
 - SPAGS 当前最佳配置是 `None` / `None`，psnr=`None`，ssim=`None`。
 - SPAGS 已进入 `blocked_on_fix`，因为训练主链路相关的高风险审计发现仍有 `3` 条。
 - 当前待处理队列共 `23` 项，状态分布 `{'pending': 15, 'blocked': 8}`。
-- 最近一次 GitHub push 状态是 `blocked`。
+- 最近一次 GitHub push 状态是 `pushed`。
 
 ## 双主线进度
 
@@ -87,9 +87,9 @@
 
 ## Push 状态
 
-- Last push status: `blocked`
-- Last push commit: `n/a`
-- Last push at: `2026-03-24 15:59:52 CST`
+- Last push status: `pushed`
+- Last push commit: `395ef6a`
+- Last push at: `2026-03-24 16:00:08 CST`
 
 ## 调试附录
 
