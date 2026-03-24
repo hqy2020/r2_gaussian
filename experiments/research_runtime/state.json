@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-03-24T07:59:49Z",
+  "generated_at": "2026-03-24T08:00:03Z",
   "overall_status": "healthy",
   "active_lane": "baseline",
   "baseline_progress": {
@@ -1360,10 +1360,10 @@
   },
   "last_success": null,
   "last_push": {
-    "at": "2026-03-24T07:59:29Z",
+    "at": "2026-03-24T07:59:52Z",
     "status": "blocked",
     "stage": "worktree_sync",
-    "error": "command failed (1): error: pathspec 'codex/research-reports' did not match any file(s) known to git"
+    "error": "command failed (128): From https://github.com/hqy2020/r2_gaussian\n * branch            main       -> FETCH_HEAD\nwarning: fetch updated the current branch head.\nfast-forwarding your working tree from\ncommit 7f20bae4ea148c78f7ee6c6781d53b3b38553a36.\nerror: Your local changes to the following files would be overwritten by merge:\n\treports/heartbeat/history.jsonl\n\treports/heartbeat/journal.md\n\treports/heartbeat/latest.json\n\treports/heartbeat/latest.md\nPlease commit your changes or stash them before you merge.\nerror: The following untracked working tree files would be overwritten by merge:\n\texperiments/research/logs/20260324_083226_config.yaml\n\texperiments/research/logs/20260324_083821.log\n\texperiments/research/logs/20260324_083821_config.yaml\n\texperiments/research/logs/20260324_084318_config.yaml\n\texperiments/research/logs/20260324_084328.log\n\texperiments/research/logs/20260324_084328_config.yaml\n\texperiments/research/logs/20260324_084428.log\n\texperiments/research/logs/20260324_084428_config.yaml\n\texperiments/research/matrix_configs/FSGS/chest_3views.yaml\n\texperiments/research/matrix_results.csv\n\texperiments/research/matrix_results.json\n\texperiments/research/matrix_results.jsonl\n\texperiments/research/matrix_results.md\n\texperiments/research/spags_audit_report.json\n\texperiments/research/spags_audit_report.md\n\texperiments/research/spags_best_config.json\n\texperiments/research/spags_candidates.jsonl\n\texperiments/research/spags_results.tsv\n\texperiments/research_runtime/._state.json\n\texperiments/research_runtime/recovery_log.jsonl\n\texperiments/research_runtime/remote_sync_status.json\n\texperiments/research_runtime/state.json\n\texperiments/research_runtime/task_queue.json\n\treports/daily/2026-03-24.md\n\treports/daily/latest.json\n\treports/daily/latest.md\n\treports/heartbeat/.DS_Store\n\treports/heartbeat/2026-03-24/0900.md\n\treports/heartbeat/2026-03-24/1000.md\n\treports/heartbeat/2026-03-24/1100.md\n\treports/heartbeat/2026-03-24/1200.md\n\treports/heartbeat/2026-03-24/1300.md\n\treports/heartbeat/2026-03-24/1400.md\n\treports/heartbeat/2026-03-24/1500.md\nPlease move or remove them before you merge.\nAborting\nfatal: Cannot fast-forward your working tree.\nAfter making sure that you saved anything precious from\n$ git diff 7f20bae4ea148c78f7ee6c6781d53b3b38553a36\noutput, run\n$ git reset --hard\nto recover."
   },
   "last_remote_probe": {
     "status_json": {
